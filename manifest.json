@@ -1,0 +1,78 @@
+{
+    "$version": "1",
+
+    "name": "Rinkhals apps",
+    "description": "3rd party apps for Rinkhals custom firmware",
+
+    "repository": "https://github.com/jbatonnet/Rinkhals.apps",
+    "self": "https://raw.githubusercontent.com/jbatonnet/Rinkhals.apps/refs/heads/master/manifest.json",
+
+    "apps": {
+        "cloud2lan-bridge": {
+            "name": "Cloud to LAN bridge",
+            "description": "Enable most Cloud features to still work even when LAN mode is enabled. This app will bridge all Cloud messages to the LAN, enabling control from Anycubic apps in LAN mode. It will only work if LAN mode is enabled",
+            "maintainer": "julien.batonnet@gmail.com",
+            "version": "0.1",
+            "changes": "",
+            "url": "https://github.com/jbatonnet/Rinkhals.apps/tree/master/apps/cloud2lan-bridge"
+        },
+        "cloudflare-tunnel": {
+            "name": "Cloudflare Tunnel",
+            "description": "Manages Cloudflare tunnels for remote access to the printer",
+            "maintainer": "https://github.com/dan3805",
+            "version": "1.0",
+            "changes": "",
+            "url": "https://github.com/jbatonnet/Rinkhals.apps/tree/master/apps/cloudflare-tunnel"
+        },
+        "discovery-helper": {
+            "name": "Discovery helper",
+            "description": "Improves LAN mode discovery of the printer in Anycubic Slicer Next",
+            "maintainer": "https://github.com/basvd",
+            "version": "1.0",
+            "changes": "",
+            "url": "https://github.com/jbatonnet/Rinkhals.apps/tree/master/apps/discovery-helper"
+        },
+        "example": {
+            "name": "Example app",
+            "description": "Simple example app to showcase the app system",
+            "maintainer": "julien.batonnet@gmail.com",
+            "version": "1.0",
+            "changes": "",
+            "url": "https://github.com/jbatonnet/Rinkhals.apps/tree/master/apps/example"
+        },
+        "nfs-mount": {
+            "name": "NFS Mount",
+            "description": "Replace local gcode storage with NFS to offload I/O",
+            "maintainer": "https://github.com/dniminenn",
+            "version": "1.0",
+            "changes": "",
+            "url": "https://github.com/jbatonnet/Rinkhals.apps/tree/master/apps/nfs-mount"
+        },
+        "octoapp": {
+            "name": "OctoApp companion",
+            "description": "Companion for the OctoApp mobile application",
+            "maintainer": "julien.batonnet@gmail.com",
+            "version": "2.1.10",
+            "changes": "",
+            "url": "https://github.com/jbatonnet/Rinkhals.apps/tree/master/apps/octoapp"
+        },
+        "octoeverywhere": {
+            "name": "OctoEverywhere",
+            "description": "A maker community project that enables free remote access, AI failure detection, print notifications, live streaming and more.",
+            "maintainer": "julien.batonnet@gmail.com",
+            "version": "4.1.0",
+            "changes": "",
+            "url": "https://github.com/jbatonnet/Rinkhals.apps/tree/master/apps/octoeverywhere"
+        },
+        // remote-debugging: Too dangerous to publicly advertise
+        "tailscale": {
+            "name": "Tailscale",
+            "description": "Secure, private network connectivity using Tailscale VPN",
+            "maintainer": "julien.batonnet@gmail.com",
+            "version": "1.84.0",
+            "changes": "",
+            "url": "https://github.com/jbatonnet/Rinkhals.apps/tree/master/apps/tailscale"
+        }
+        // vanilla-klipper: Not ready to publicly advertise
+    }
+}
