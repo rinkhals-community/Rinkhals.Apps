@@ -1,0 +1,7 @@
+{
+    "$version": "1",
+
+    "name": "tunneled-klipper",
+    "description": "Tunnels the MCU serial ports via socat (supports:KS1,K3,K3V2,K2P)",
+    "version": "2.0"
+}
