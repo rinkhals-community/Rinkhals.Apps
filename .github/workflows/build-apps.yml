@@ -9,6 +9,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - run: |
           docker run --rm -e KOBRA_MODEL_CODE="K3" -v ${{ github.workspace }}/build:/build -v ${{ github.workspace }}/apps:/apps ghcr.io/rinkhals-community/rinkhals/build /bin/bash -c "chmod +x /build/build-swu.sh && /build/build-swu.sh /apps/example /build/dist/update-k2p-k3.swu"
           docker run --rm -e KOBRA_MODEL_CODE="KS1" -v ${{ github.workspace }}/build:/build -v ${{ github.workspace }}/apps:/apps ghcr.io/rinkhals-community/rinkhals/build /bin/bash -c "chmod +x /build/build-swu.sh && /build/build-swu.sh /apps/example /build/dist/update-ks1.swu"
@@ -23,6 +29,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - run: |
           docker run --rm -e KOBRA_MODEL_CODE="K3" -v ${{ github.workspace }}/build:/build -v ${{ github.workspace }}/apps:/apps ghcr.io/rinkhals-community/rinkhals/build /bin/bash -c "chmod +x /build/build-swu.sh && /build/build-swu.sh /apps/octoapp /build/dist/update-k2p-k3.swu"
           docker run --rm -e KOBRA_MODEL_CODE="KS1" -v ${{ github.workspace }}/build:/build -v ${{ github.workspace }}/apps:/apps ghcr.io/rinkhals-community/rinkhals/build /bin/bash -c "chmod +x /build/build-swu.sh && /build/build-swu.sh /apps/octoapp /build/dist/update-ks1.swu"
@@ -37,6 +49,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - run: |
           docker run --rm -e KOBRA_MODEL_CODE="K3" -v ${{ github.workspace }}/build:/build -v ${{ github.workspace }}/apps:/apps ghcr.io/rinkhals-community/rinkhals/build /bin/bash -c "chmod +x /build/build-swu.sh && /build/build-swu.sh /apps/octoeverywhere /build/dist/update-k2p-k3.swu"
           docker run --rm -e KOBRA_MODEL_CODE="KS1" -v ${{ github.workspace }}/build:/build -v ${{ github.workspace }}/apps:/apps ghcr.io/rinkhals-community/rinkhals/build /bin/bash -c "chmod +x /build/build-swu.sh && /build/build-swu.sh /apps/octoeverywhere /build/dist/update-ks1.swu"
@@ -51,6 +69,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - run: |
           docker run --rm -e KOBRA_MODEL_CODE="K3" -v ${{ github.workspace }}/build:/build -v ${{ github.workspace }}/apps:/apps ghcr.io/rinkhals-community/rinkhals/build /bin/bash -c "chmod +x /build/build-swu.sh && /build/build-swu.sh /apps/cloudflare-tunnel /build/dist/update-k2p-k3.swu"
           docker run --rm -e KOBRA_MODEL_CODE="KS1" -v ${{ github.workspace }}/build:/build -v ${{ github.workspace }}/apps:/apps ghcr.io/rinkhals-community/rinkhals/build /bin/bash -c "chmod +x /build/build-swu.sh && /build/build-swu.sh /apps/cloudflare-tunnel /build/dist/update-ks1.swu"
@@ -65,6 +89,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - run: |
           docker run --rm -e KOBRA_MODEL_CODE="K3" -v ${{ github.workspace }}/build:/build -v ${{ github.workspace }}/apps:/apps ghcr.io/rinkhals-community/rinkhals/build /bin/bash -c "chmod +x /build/build-swu.sh && /build/build-swu.sh /apps/tailscale /build/dist/update-k2p-k3.swu"
           docker run --rm -e KOBRA_MODEL_CODE="KS1" -v ${{ github.workspace }}/build:/build -v ${{ github.workspace }}/apps:/apps ghcr.io/rinkhals-community/rinkhals/build /bin/bash -c "chmod +x /build/build-swu.sh && /build/build-swu.sh /apps/tailscale /build/dist/update-ks1.swu"
@@ -79,6 +109,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - run: |
           docker run --rm -e KOBRA_MODEL_CODE="K3" -v ${{ github.workspace }}/build:/build -v ${{ github.workspace }}/apps:/apps ghcr.io/rinkhals-community/rinkhals/build /bin/bash -c "chmod +x /build/build-swu.sh && /build/build-swu.sh /apps/discovery-helper /build/dist/update-k2p-k3.swu"
           docker run --rm -e KOBRA_MODEL_CODE="KS1" -v ${{ github.workspace }}/build:/build -v ${{ github.workspace }}/apps:/apps ghcr.io/rinkhals-community/rinkhals/build /bin/bash -c "chmod +x /build/build-swu.sh && /build/build-swu.sh /apps/discovery-helper /build/dist/update-ks1.swu"
@@ -93,6 +129,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - run: |
           docker run --rm -e KOBRA_MODEL_CODE="K3" -v ${{ github.workspace }}/build:/build -v ${{ github.workspace }}/apps:/apps ghcr.io/rinkhals-community/rinkhals/build /bin/bash -c "chmod +x /build/build-swu.sh && /build/build-swu.sh /apps/vanilla-klipper /build/dist/update-k2p-k3.swu"
           docker run --rm -e KOBRA_MODEL_CODE="KS1" -v ${{ github.workspace }}/build:/build -v ${{ github.workspace }}/apps:/apps ghcr.io/rinkhals-community/rinkhals/build /bin/bash -c "chmod +x /build/build-swu.sh && /build/build-swu.sh /apps/vanilla-klipper /build/dist/update-ks1.swu"
@@ -107,6 +149,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - run: |
           docker run --rm -e KOBRA_MODEL_CODE="K3" -v ${{ github.workspace }}/build:/build -v ${{ github.workspace }}/apps:/apps ghcr.io/rinkhals-community/rinkhals/build /bin/bash -c "chmod +x /build/build-swu.sh && /build/build-swu.sh /apps/remote-debugging /build/dist/update-k2p-k3.swu"
           docker run --rm -e KOBRA_MODEL_CODE="KS1" -v ${{ github.workspace }}/build:/build -v ${{ github.workspace }}/apps:/apps ghcr.io/rinkhals-community/rinkhals/build /bin/bash -c "chmod +x /build/build-swu.sh && /build/build-swu.sh /apps/remote-debugging /build/dist/update-ks1.swu"

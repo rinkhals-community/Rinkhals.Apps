@@ -13,6 +13,13 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
+    - name: Login to GitHub Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
     - run: |
         docker run --rm -v ${{ github.workspace }}/build:/build -v ${{ github.workspace }}/apps:/apps ghcr.io/rinkhals-community/rinkhals/build /bin/bash -c "chmod +x /build/build-all-swus.sh && /build/build-all-swus.sh"
 
