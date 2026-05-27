@@ -1,0 +1,64 @@
+name: App feature request
+description: Suggest a new app or improvement to an existing one
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before you file
+      options:
+        - label: I searched [existing issues](https://github.com/rinkhals-community/Rinkhals.Apps/issues) and found no duplicate
+          required: true
+
+  - type: dropdown
+    id: request-type
+    attributes:
+      label: What kind of request
+      options:
+        - New app idea
+        - Improvement to an existing app
+        - New printer model support for an existing app
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: app-name
+    attributes:
+      label: Which app (if applicable)
+      options:
+        - Not applicable (new app)
+        - Cloud to LAN Bridge
+        - Cloudflare Tunnel
+        - Discovery Helper
+        - Klipper (vanilla)
+        - NFS Mount
+        - OctoApp Companion
+        - OctoEverywhere
+        - Remote Debugging
+        - stunnel (TLS add-on)
+        - Tailscale
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve
+      description: Describe the use case, not just the feature. Why do you need this?
+      placeholder: When I want to do X, I currently have to ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What should change or what should the new app do?
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Links to similar projects, reference implementations, technical constraints you are aware of.
