@@ -1,11 +1,11 @@
-This repository contains apps for [Rinkhals](https://github.com/jbatonnet/Rinkhals), a custom firmware for the Anycubic Kobra 3 3D printer.
+This repository contains apps for [Rinkhals](https://github.com/rinkhals-community/Rinkhals), a custom firmware for the Anycubic Kobra 3 3D printer.
 
 Rinkhals allows side-loading custom apps to add more features to the printer.
 Feel free to use install them, use them and add more apps to this repository, PR are welcome!
 
 
 <p align="center">
-    <img width="48" src="https://github.com/jbatonnet/Rinkhals/blob/master/icon.png?raw=true" />
+    <img width="48" src="https://github.com/rinkhals-community/Rinkhals/blob/master/icon.png?raw=true" />
 </p>
 
 
@@ -15,7 +15,7 @@ There are 2 options to install Rinkhals apps on your printer. You will obviously
 
 ### Using SWU packages
 
-You can use the SWU packages provided in the releases page: https://github.com/jbatonnet/Rinkhals.apps/releases
+You can use the SWU packages provided in the releases page: https://github.com/rinkhals-community/Rinkhals.Apps/releases
 
 You can download the SWU file for the app you want and the printer you have, copy it as **update.swu** on a FAT32 USB drive in a **aGVscF9zb3Nf** directory, plug the USB drive in the Kobra and it just works. You will ear two beeps, the second one will tell you that the app is installed. There is no need to reboot afterwards.
 
@@ -28,7 +28,7 @@ You can connect to SSH / SFTP and copy the app directory in **/useremain/home/ri
 
 
 <p align="center">
-    <img width="48" src="https://github.com/jbatonnet/Rinkhals/blob/master/icon.png?raw=true" />
+    <img width="48" src="https://github.com/rinkhals-community/Rinkhals/blob/master/icon.png?raw=true" />
 </p>
 
 
@@ -88,12 +88,12 @@ They will need to enable the app as described above if you didn't explicitely en
 
 To use it, you will need Docker or a Linux machine. For Windows, run:
 ```
-docker run --rm -it -v .\build:/build -v .\files:/files -v .\apps:/apps ghcr.io/jbatonnet/rinkhals/build /build/build-swu.sh "APP_ROOT"
+docker run --rm -it -v .\build:/build -v .\files:/files -v .\apps:/apps ghcr.io/rinkhals-community/rinkhals/build /build/build-swu.sh "APP_ROOT"
 ```
 
 
 <p align="center">
-    <img width="48" src="https://github.com/jbatonnet/Rinkhals/blob/master/icon.png?raw=true" />
+    <img width="48" src="https://github.com/rinkhals-community/Rinkhals/blob/master/icon.png?raw=true" />
 </p>
 
 

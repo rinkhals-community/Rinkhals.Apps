@@ -2,7 +2,7 @@
 
 # From a Windows machine:
 #   <cd to this git repo root>
-#   docker run --rm -it -v .\apps:/apps ghcr.io/jbatonnet/rinkhals/build /apps/tailscale/get-tailscale.sh
+#   docker run --rm -it -v .\apps:/apps ghcr.io/rinkhals-community/rinkhals/build /apps/tailscale/get-tailscale.sh
 
 mkdir /work
 cd /work

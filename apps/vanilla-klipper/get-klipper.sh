@@ -1,7 +1,7 @@
 #!/bin/sh
 
 # Run from Docker:
-#   docker run --rm -it -v .\apps:/apps ghcr.io/jbatonnet/rinkhals/build /apps/vanilla-klipper/get-klipper.sh
+#   docker run --rm -it -v .\apps:/apps ghcr.io/rinkhals-community/rinkhals/build /apps/vanilla-klipper/get-klipper.sh
 
 mkdir /work
 cd /work

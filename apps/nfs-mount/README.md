@@ -24,6 +24,6 @@ Replace local gcode storage with NFS to offload I/O operations from the printer'
 4. Build the SWU package for your printer model:
    ```bash
    export KOBRA_MODEL_CODE="YOUR_MODEL"  # K2P, K3, KS1, or K3M
-   docker run --rm -e KOBRA_MODEL_CODE="$KOBRA_MODEL_CODE" -v $(pwd)/build:/build -v $(pwd)/apps:/apps ghcr.io/jbatonnet/rinkhals/build /bin/bash -c "chmod +x /build/build-swu.sh && /build/build-swu.sh apps/nfs-mount"
+   docker run --rm -e KOBRA_MODEL_CODE="$KOBRA_MODEL_CODE" -v $(pwd)/build:/build -v $(pwd)/apps:/apps ghcr.io/rinkhals-community/rinkhals/build /bin/bash -c "chmod +x /build/build-swu.sh && /build/build-swu.sh apps/nfs-mount"
    ```
-5. Install the SWU file following the [official Rinkhals installation guide](https://jbatonnet.github.io/Rinkhals/Rinkhals/installation-and-firmware-updates/)
+5. Install the SWU file following the [official Rinkhals installation guide](https://rinkhals-community.github.io/Rinkhals/Rinkhals/installation-and-firmware-updates/)

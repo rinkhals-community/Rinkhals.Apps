@@ -14,7 +14,7 @@ jobs:
     - uses: actions/checkout@v4
 
     - run: |
-        docker run --rm -v ${{ github.workspace }}/build:/build -v ${{ github.workspace }}/apps:/apps ghcr.io/jbatonnet/rinkhals/build /bin/bash -c "chmod +x /build/build-all-swus.sh && /build/build-all-swus.sh"
+        docker run --rm -v ${{ github.workspace }}/build:/build -v ${{ github.workspace }}/apps:/apps ghcr.io/rinkhals-community/rinkhals/build /bin/bash -c "chmod +x /build/build-all-swus.sh && /build/build-all-swus.sh"
 
     - name: Create release
       env:
