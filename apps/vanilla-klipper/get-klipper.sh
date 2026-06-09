@@ -11,7 +11,7 @@ cd /work
 # reproducible. The Rinkhals.Apps auto-bump bot watches this against
 # Klipper3d/klipper master and opens a PR when upstream moves; do not
 # revert to master.zip without disabling the bot for this app.
-KLIPPER_VERSION="b7c0329f"
+KLIPPER_VERSION="2fb3d54e"
 KLIPPER_DIRECTORY=/apps/vanilla-klipper
 
 
