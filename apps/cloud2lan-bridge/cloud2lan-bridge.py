@@ -193,6 +193,7 @@ class Program:
         
         # Intercept stream start event to boot the local bridge pipeline
         if isinstance(payload, dict) and payload.get('action') == 'startCapture':
+            log(LOG_INFO, f"[ROUTER] Intercepted startCapture payload: {json.dumps(payload)}")
             shengwang_data = payload.get('data', {}).get('shengwang', {})
             
             # Ignore simple trailing heartbeat acknowledgments
@@ -344,7 +345,7 @@ class Program:
             except Exception as e:
                 log(LOG_ERROR, f'[lan] Failed to handle message on {msg.topic}: {e}')
 
-        self.lan_client = mqtt.Client(protocol=mqtt.MQTTv5, client_id=self.lan_device_id)
+        self.lan_client = mqtt.Client(protocol=mqtt.MQTTv5, client_id=self.lan_device_id + "-bridge")
         self.lan_client.tls_set_context(self.get_ssl_context())
         self.lan_client.tls_insecure_set(True)
         self.lan_client.on_connect = mqtt_on_connect
@@ -393,12 +394,17 @@ class Program:
         try:
             env = os.environ.copy()
             env['AGORA_AREA_CODE'] = self.area_code
+            # Redirect stdout/stderr of auto_stream.sh to a diagnostic log file
+            try:
+                log_file = open('/tmp/rinkhals/auto_stream.log', 'a', buffering=1)
+            except Exception:
+                log_file = subprocess.DEVNULL
             self.auto_stream_proc = subprocess.Popen(
                 ['/bin/sh', auto_stream_path],
                 cwd=script_dir,
                 env=env,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stdout=log_file,
+                stderr=log_file,
                 preexec_fn=os.setsid
             )
             log(LOG_INFO, f"[SYSTEM] auto_stream.sh started with PID {self.auto_stream_proc.pid}")

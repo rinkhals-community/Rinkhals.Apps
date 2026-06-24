@@ -1,0 +1,7 @@
+# About audio codec
+
+For audio encoding, you can choose a self-developed audio encoder, which can be a soft encoder or a hard encoder. The RTSA Lite SDK supports the transmission of encoded AAC, Opus or G.722 formats. If you do not have the ability to self-develop audio encoding, you can also directly transmit the PCM format, and the RTSA Lite SDK will use the built-in Opus encoder to complete the audio encoding. In fact, unless your hardware platform supports AAC hardware encoder (generally very few hardware supports Opus or G.722 hardware encoding), we highly recommend that you transmit PCM format directly and encode audio by RTSA Lite SDK.
+
+The same is true for audio decoding. Unless your hardware platform supports AAC hardware decoder (generally few hardware supports Opus or G.722 hardware decoding), we highly recommend that you directly receive PCM format, and the RTSA Lite SDK is responsible for audio decoding.
+
+It is easy to enable the built-in codec of RTSA Lite SDK, just turn on the `audio_codec_type` option in the channel option parameter of `agora_rtc_join_channel` in the interface call `agora_rtc_join_channel`. For details, please refer to our sample code (hello_rtsa.c).

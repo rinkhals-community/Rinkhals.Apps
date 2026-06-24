@@ -8,6 +8,7 @@ log_sh "Initializing auto_stream pipeline script..."
 
 GKCAM_BIN="/userdata/app/gk/gkcam"
 REMOTE_CTRL_MODE_FILE="/useremain/dev/remote_ctrl_mode"
+APP_ROOT=$(cd "$(dirname "$0")" && pwd)
 
 is_lan_mode() {
   if [ -f "$REMOTE_CTRL_MODE_FILE" ]; then
@@ -48,7 +49,7 @@ launch_custom_bridge() {
   log_sh "Starting custom LAN-to-Agora cloud bridge (Direct VENC with HTTP/FLV STDIN fallback)..."
   
   # Run agora_pusher in VENC mode (channel 0) fed by ffmpeg over HTTP/FLV STDIN fallback
-  ffmpeg -nostdin -loglevel quiet -i http://127.0.0.1:18088/flv -vcodec copy -f h264 - | /useremain/home/rinkhals/apps/cloud2lan-bridge/agora_pusher "$APPID" "$CHANNEL" "$TOKEN" "$LICENSE" "$AGORA_UID" 0 "$ENC_MODE" "$ENC_KEY" "$ENC_SALT" &
+  ffmpeg -nostdin -loglevel quiet -i http://127.0.0.1:18088/flv -vcodec copy -f h264 - | "$APP_ROOT/agora_pusher" "$APPID" "$CHANNEL" "$TOKEN" "$LICENSE" "$AGORA_UID" 0 "$ENC_MODE" "$ENC_KEY" "$ENC_SALT" &
   BRIDGE_PID=$!
   log_sh "Launched custom cloud bridge process (PID: $BRIDGE_PID)."
 }
