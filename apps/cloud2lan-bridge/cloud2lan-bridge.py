@@ -58,6 +58,17 @@ def wait_for_tcp(host: str, port: int, timeout: float = 120.0, poll_interval: fl
                 return False
             time.sleep(poll_interval)
 
+def is_lan_mode() -> bool:
+    mode_file = "/useremain/dev/remote_ctrl_mode"
+    if os.path.exists(mode_file):
+        try:
+            with open(mode_file, "r") as f:
+                val = f.read().strip().lower()
+            return val in ["1", "lan", "true"]
+        except Exception:
+            pass
+    return False
+
 # ==============================================================================
 # DOCUMENTED CLOUD-TO-LAN TELEMETRY RELAY & CAMERA CORE ACTIVATOR
 # ==============================================================================
@@ -419,6 +430,10 @@ class Program:
         
         try:
             while True:
+                if not is_lan_mode():
+                    log(LOG_INFO, "[SYSTEM] remote_ctrl_mode is cloud. Exiting normal runtime...")
+                    break
+
                 time.sleep(5)
                 
                 # Check connection status
@@ -473,8 +488,27 @@ class Program:
                         self.auto_stream_proc.kill()
                     except Exception:
                         pass
+            
+            # Cleanly disconnect MQTT clients so they release local ports and client IDs
+            if self.cloud_client:
+                try:
+                    self.cloud_client.disconnect()
+                    self.cloud_client.loop_stop()
+                except Exception:
+                    pass
+            if self.lan_client:
+                try:
+                    self.lan_client.disconnect()
+                    self.lan_client.loop_stop()
+                except Exception:
+                    pass
 
 if __name__ == "__main__":
+    log(LOG_INFO, "[SYSTEM] Starting remote_ctrl_mode watchdog...")
+    while not is_lan_mode():
+        time.sleep(15)
+
+    log(LOG_INFO, "[SYSTEM] Printer is in LAN Mode. Starting normal runtime...")
     program = None
     try:
         program = Program()
