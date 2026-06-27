@@ -3,7 +3,7 @@
 APP_ROOT=$(dirname $(realpath $0))
 
 status() {
-    PID=$(get_by_name cloud2lan-bridge.py)
+    PID=$(get_by_name mode_watchdog.py)
 
     if [ "$PID" == "" ]; then
         report_status $APP_STATUS_STOPPED
@@ -16,19 +16,17 @@ start() {
 
     cd $APP_ROOT
 
-    chmod +x cloud2lan-bridge.sh
-    ./cloud2lan-bridge.sh &
+    chmod +x cloud2lan-supervisor.sh
+    python3 ./mode_watchdog.py >> "${RINKHALS_LOGS:-/tmp/rinkhals}/app-cloud2lan-bridge.log" 2>&1 &
 }
 stop() {
-    # Kill the supervisor first so it doesn't immediately respawn the python.
-    kill_by_name cloud2lan-bridge.sh
+    # Kill from the top down — watchdog kills its children via process group
+    kill_by_name mode_watchdog.py
+    # Belt-and-suspenders: kill anything that survived
+    kill_by_name cloud2lan-supervisor.sh
     kill_by_name cloud2lan-bridge.py
-    
-    # Clean up the streaming pipeline and helper processes
-    pkill -f auto_stream.sh 2>/dev/null
-    pkill -f agora_pusher 2>/dev/null
-    pkill -f "ffmpeg -nostdin -loglevel quiet -i http://127.0.0.1:18088/flv" 2>/dev/null
-    pkill -f "nc 127.0.0.1 18086" 2>/dev/null
+    kill_by_name agora_pusher
+    kill_by_name "ffmpeg -nostdin -loglevel quiet -i http://127.0.0.1:18088/flv"
 }
 
 case "$1" in

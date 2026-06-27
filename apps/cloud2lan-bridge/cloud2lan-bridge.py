@@ -31,23 +31,8 @@ def md5(input_str: str) -> str:
 def now() -> int:
     return round(time.time() * 1000)
 
-def wait_for_file(path: str, timeout: float = 120.0, poll_interval: float = 1.0) -> bool:
-    """
-    Block until `path` exists. Returns True if it appeared within `timeout`
-    seconds, False on timeout.
-    """
-    deadline = time.time() + timeout
-    while not os.path.exists(path):
-        if time.time() >= deadline:
-            return False
-        time.sleep(poll_interval)
-    return True
-
 def wait_for_tcp(host: str, port: int, timeout: float = 120.0, poll_interval: float = 1.0) -> bool:
-    """
-    Block until host:port accepts a TCP connection. Returns True if reachable
-    within `timeout` seconds, False on timeout.
-    """
+    """Block until host:port accepts a TCP connection."""
     deadline = time.time() + timeout
     while True:
         try:
@@ -58,19 +43,8 @@ def wait_for_tcp(host: str, port: int, timeout: float = 120.0, poll_interval: fl
                 return False
             time.sleep(poll_interval)
 
-def is_lan_mode() -> bool:
-    mode_file = "/useremain/dev/remote_ctrl_mode"
-    if os.path.exists(mode_file):
-        try:
-            with open(mode_file, "r") as f:
-                val = f.read().strip().lower()
-            return val in ["1", "lan", "true"]
-        except Exception:
-            pass
-    return False
-
 # ==============================================================================
-# DOCUMENTED CLOUD-TO-LAN TELEMETRY RELAY & CAMERA CORE ACTIVATOR
+# CLOUD-TO-LAN MQTT BRIDGE
 # ==============================================================================
 class Program:
     cloud_config = None
@@ -83,17 +57,9 @@ class Program:
     lan_client = None
     section_name = None
     area_code = None
+    agora_proc = None  # ffmpeg | agora_pusher pipeline
 
     def __init__(self):
-        # Clean up any lingering or orphaned instances from previous runs to prevent OOM/resource leaks
-        log(LOG_INFO, "[SYSTEM] Cleaning up any stale bridge processes from previous runs...")
-        for pattern in ['auto_stream.sh', 'agora_pusher', 'ffmpeg -nostdin -loglevel quiet -i http://127.0.0.1:18088/flv', 'nc 127.0.0.1 18086']:
-            try:
-                subprocess.run(['pkill', '-f', pattern], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            except Exception:
-                pass
-
-        # Wait for the boot-time files we depend on to prevent boot races.
         required_files = [
             '/userdata/app/gk/config/device.ini',
             '/userdata/app/gk/config/api.cfg',
@@ -103,8 +69,11 @@ class Program:
         ]
         for path in required_files:
             log(LOG_INFO, f'Waiting for {path}...')
-            if not wait_for_file(path, timeout=120):
-                raise RuntimeError(f'Timed out waiting for {path}')
+            deadline = time.time() + 120
+            while not os.path.exists(path):
+                if time.time() >= deadline:
+                    raise RuntimeError(f'Timed out waiting for {path}')
+                time.sleep(1)
 
         self.cloud_config, self.section_name = self.get_cloud_config()
         self.api_config = self.get_api_config()
@@ -114,6 +83,9 @@ class Program:
         self.lan_device_id = self.get_lan_device_id()
         self.area_code = self.get_area_code()
 
+    # ------------------------------------------------------------------
+    # Config helpers
+    # ------------------------------------------------------------------
     def get_cloud_config(self):
         config = configparser.ConfigParser()
         config.read('/userdata/app/gk/config/device.ini')
@@ -178,6 +150,9 @@ class Program:
             data = json.loads(f.read())
         return (data['username'], data['password'])
 
+    # ------------------------------------------------------------------
+    # MQTT message handling
+    # ------------------------------------------------------------------
     def send_message(self, client, topic, payload):
         mode = 'cloud' if client == self.cloud_client else 'lan'
         log(LOG_DEBUG, f'[{mode}] Sent {topic} = {str(payload)}')
@@ -202,18 +177,17 @@ class Program:
             else:
                 log(LOG_INFO, f'[cloud] Received {payload.get("type")}/{payload.get("action")}')
         
-        # Intercept stream start event to boot the local bridge pipeline
+        # Intercept stream start event — launch agora_pusher
         if isinstance(payload, dict) and payload.get('action') == 'startCapture':
             log(LOG_INFO, f"[ROUTER] Intercepted startCapture payload: {json.dumps(payload)}")
             shengwang_data = payload.get('data', {}).get('shengwang', {})
             
-            # Ignore simple trailing heartbeat acknowledgments
             if not shengwang_data:
                 log(LOG_DEBUG, "[ROUTER] Dropping join status message echo.")
             else:
-                log(LOG_INFO, "[ROUTER] Intercepted stream request payload. Passing core configuration signals down...")
+                log(LOG_INFO, "[ROUTER] Intercepted stream request. Starting agora_pusher...")
                 try:
-                    # Map the local profile to LAN target to spin up camera pipeline
+                    # Forward startCapture to LAN so gkapi starts the camera pipeline
                     local_video_payload = {
                         "type": "video",
                         "action": "startCapture",
@@ -221,15 +195,22 @@ class Program:
                         "msgid": str(payload.get('msgid', uuid.uuid4())),
                         "data": None
                     }
-                    
                     self.send_message(
                         self.lan_client, 
                         f"anycubic/anycubicCloud/v1/web/printer/20025/{self.lan_device_id}/video", 
                         local_video_payload
                     )
-                    log(LOG_INFO, "[ROUTER] Dispatched internal camera sensor activation safely.")
+                    log(LOG_INFO, "[ROUTER] Dispatched camera activation to LAN.")
                 except Exception as e:
-                    log(LOG_ERROR, f"[ROUTER] Internal camera bootstrap call failed: {str(e)}")
+                    log(LOG_ERROR, f"[ROUTER] Camera activation failed: {str(e)}")
+                
+                # Launch the streaming pipeline
+                self.launch_agora_pusher(shengwang_data)
+
+        # Intercept stop event — kill agora_pusher
+        elif isinstance(payload, dict) and payload.get('action') == 'stopCapture':
+            log(LOG_INFO, "[ROUTER] Intercepted stopCapture. Stopping agora_pusher...")
+            self.stop_agora_pusher()
 
         if not topic.endswith('/response'):
             self.send_message(self.lan_client, topic.replace(self.cloud_device_id, self.lan_device_id), payload)
@@ -254,17 +235,83 @@ class Program:
         if topic.endswith('/report') or topic.endswith('/response'):
             self.send_message(self.cloud_client, topic.replace(self.lan_device_id, self.cloud_device_id), payload)
 
+    # ------------------------------------------------------------------
+    # Agora pusher lifecycle
+    # ------------------------------------------------------------------
+    def launch_agora_pusher(self, shengwang_data):
+        """Launch the ffmpeg | agora_pusher streaming pipeline."""
+        self.stop_agora_pusher()  # kill any existing pipeline first
+
+        script_dir = os.path.dirname(os.path.realpath(__file__))
+        pusher_path = os.path.join(script_dir, 'agora_pusher')
+
+        appid = shengwang_data.get('appid', '')
+        channel = shengwang_data.get('channel', '')
+        token = shengwang_data.get('rtc_token', '') or shengwang_data.get('token', '')
+        license_key = shengwang_data.get('license', '')
+        uid = str(shengwang_data.get('uid', 0))
+        enc_mode = shengwang_data.get('encryption_mode', '') or shengwang_data.get('mode', '')
+        enc_key = shengwang_data.get('encryption_key', '') or shengwang_data.get('key', '')
+        enc_salt = shengwang_data.get('encryption_kdf_salt', '') or shengwang_data.get('salt', '')
+
+        if not appid or not channel:
+            log(LOG_WARNING, "[AGORA] Missing appid or channel, cannot start pusher.")
+            return
+
+        log(LOG_INFO, f"[AGORA] Credentials: appid={appid[:8]}... channel={channel[:8]}... uid={uid} enc_mode={enc_mode}")
+
+        # Build: ffmpeg ... | agora_pusher ...
+        # Quote each arg to handle special chars in token/salt (contains +, /, =)
+        cmd = (
+            f"ffmpeg -nostdin -loglevel quiet -i http://127.0.0.1:18088/flv "
+            f"-vcodec copy -f h264 - | "
+            f"'{pusher_path}' '{appid}' '{channel}' '{token}' '{license_key}' '{uid}' 0 "
+            f"'{enc_mode}' '{enc_key}' '{enc_salt}'"
+        )
+
+        log(LOG_INFO, f"[AGORA] Launching pipeline: ffmpeg | agora_pusher (channel={channel})")
+        try:
+            self.agora_proc = subprocess.Popen(
+                cmd, shell=True,
+                cwd=script_dir,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                preexec_fn=os.setsid,
+            )
+            log(LOG_INFO, f"[AGORA] Pipeline started (PID {self.agora_proc.pid})")
+        except Exception as e:
+            log(LOG_ERROR, f"[AGORA] Failed to start pipeline: {e}")
+
+    def stop_agora_pusher(self):
+        """Kill the ffmpeg | agora_pusher pipeline if running."""
+        if self.agora_proc is not None:
+            log(LOG_INFO, f"[AGORA] Stopping pipeline (PID {self.agora_proc.pid})...")
+            try:
+                pgid = os.getpgid(self.agora_proc.pid)
+                os.killpg(pgid, signal.SIGKILL)
+            except OSError:
+                pass
+            try:
+                self.agora_proc.wait(timeout=2)
+            except Exception:
+                pass
+            self.agora_proc = None
+            log(LOG_INFO, "[AGORA] Pipeline stopped.")
+
+    # ------------------------------------------------------------------
+    # MQTT connections
+    # ------------------------------------------------------------------
     def connect_cloud_mqtt(self):
         mqtt_broker = self.cloud_config['mqttBroker']
         mqtt_username, mqtt_password = self.get_cloud_mqtt_credentials()
         
         def mqtt_on_connect(client, userdata, flags, rc, *args, **kwargs):
-            log(LOG_INFO, '[cloud] Connected / Handshake established with upstream cluster endpoint.')
+            log(LOG_INFO, '[cloud] Connected.')
             self.cloud_client.subscribe(f'anycubic/anycubicCloud/v1/+/printer/{self.model_id}/{self.cloud_device_id}/#')
         def mqtt_on_connect_fail(client, userdata, *args, **kwargs):
             log(LOG_WARNING, '[cloud] Failed to connect')
         def mqtt_on_disconnect(client, userdata, rc, *args, **kwargs):
-            log(LOG_WARNING, f'[cloud] Disconnected (reason: {rc}); paho will retry')
+            log(LOG_WARNING, f'[cloud] Disconnected (reason: {rc})')
         def mqtt_on_message(client, userdata, msg):
             try:
                 payload = json.loads(msg.payload.decode("utf-8"))
@@ -313,7 +360,7 @@ class Program:
         mqtt_username, mqtt_password = self.get_lan_mqtt_credentials()
 
         def mqtt_on_connect(client, userdata, flags, rc, *args, **kwargs):
-            log(LOG_INFO, '[lan] Handshake established with localized host execution loop / Connected.')
+            log(LOG_INFO, '[lan] Connected.')
             self.lan_client.subscribe(f'anycubic/anycubicCloud/v1/printer/public/{self.model_id}/{self.lan_device_id}/#')
             
             # Deploy state notification reports
@@ -348,7 +395,7 @@ class Program:
         def mqtt_on_connect_fail(client, userdata, *args, **kwargs):
             log(LOG_WARNING, '[lan] Failed to connect')
         def mqtt_on_disconnect(client, userdata, rc, *args, **kwargs):
-            log(LOG_WARNING, f'[lan] Disconnected (reason: {rc}); paho will retry')
+            log(LOG_WARNING, f'[lan] Disconnected (reason: {rc})')
         def mqtt_on_message(client, userdata, msg):
             try:
                 payload = json.loads(msg.payload.decode("utf-8"))
@@ -385,151 +432,58 @@ class Program:
                 raise RuntimeError('Local MQTT TCP connected but never got CONNACK')
             time.sleep(0.25)
 
+    # ------------------------------------------------------------------
+    # Main entry
+    # ------------------------------------------------------------------
     def main(self):
-        # Setup signal handler to ensure finally block runs on SIGTERM/SIGINT
-        def sig_handler(signum, frame):
-            log(LOG_INFO, f"[SYSTEM] Received signal {signum}, exiting...")
-            raise SystemExit(0)
-            
-        signal.signal(signal.SIGTERM, sig_handler)
-        signal.signal(signal.SIGINT, sig_handler)
-
         self.connect_cloud_mqtt()
         self.connect_lan_mqtt()
 
-        # Start auto_stream.sh in the background with AGORA_AREA_CODE environment variable
-        script_dir = os.path.dirname(os.path.realpath(__file__))
-        auto_stream_path = os.path.join(script_dir, 'auto_stream.sh')
-        log(LOG_INFO, f"[SYSTEM] Launching {auto_stream_path} with AGORA_AREA_CODE={self.area_code}...")
-        self.auto_stream_proc = None
-        try:
-            env = os.environ.copy()
-            env['AGORA_AREA_CODE'] = self.area_code
-            # Redirect stdout/stderr of auto_stream.sh to a diagnostic log file
+        log(LOG_INFO, "[SYSTEM] MQTT bridge is running. Waiting for messages...")
+
+        # Block forever — paho runs in background threads.
+        # The mode_watchdog will SIGKILL us if the mode changes.
+        # The supervisor will restart us if we crash.
+        while True:
+            time.sleep(60)
+
+    def cleanup(self):
+        """Best-effort cleanup on graceful shutdown."""
+        self.stop_agora_pusher()
+        if self.cloud_client:
             try:
-                log_file = open('/tmp/rinkhals/auto_stream.log', 'a', buffering=1)
+                self.cloud_client.disconnect()
+                self.cloud_client.loop_stop()
             except Exception:
-                log_file = subprocess.DEVNULL
-            self.auto_stream_proc = subprocess.Popen(
-                ['/bin/sh', auto_stream_path],
-                cwd=script_dir,
-                env=env,
-                stdout=log_file,
-                stderr=log_file,
-                preexec_fn=os.setsid
-            )
-            log(LOG_INFO, f"[SYSTEM] auto_stream.sh started with PID {self.auto_stream_proc.pid}")
-        except Exception as e:
-            log(LOG_ERROR, f"[SYSTEM] Failed to start auto_stream.sh: {str(e)}")
+                pass
+        if self.lan_client:
+            try:
+                self.lan_client.disconnect()
+                self.lan_client.loop_stop()
+            except Exception:
+                pass
 
-        # Watchdog loop
-        log(LOG_INFO, "[SYSTEM] Entering main watchdog loop...")
-        last_heartbeat = time.time()
-        disconnect_start = None
-        max_disconnect_duration = 30.0 # Exit if disconnected for more than 30 seconds
-        
-        try:
-            while True:
-                if not is_lan_mode():
-                    log(LOG_INFO, "[SYSTEM] remote_ctrl_mode is cloud. Exiting normal runtime...")
-                    break
-
-                time.sleep(5)
-                
-                # Check connection status
-                cloud_ok = self.cloud_client.is_connected() if self.cloud_client else False
-                lan_ok = self.lan_client.is_connected() if self.lan_client else False
-                
-                # Check thread liveness to detect crashed loop threads
-                cloud_thread_ok = self.cloud_client._thread.is_alive() if (self.cloud_client and getattr(self.cloud_client, '_thread', None)) else True
-                lan_thread_ok = self.lan_client._thread.is_alive() if (self.lan_client and getattr(self.lan_client, '_thread', None)) else True
-                
-                if not cloud_thread_ok:
-                    log(LOG_ERROR, "[watchdog] Cloud MQTT loop thread is dead!")
-                    cloud_ok = False
-                if not lan_thread_ok:
-                    log(LOG_ERROR, "[watchdog] LAN MQTT loop thread is dead!")
-                    lan_ok = False
-                
-                # Heartbeat logging every 5 minutes
-                if time.time() - last_heartbeat >= 300:
-                    log(LOG_INFO, f'[heartbeat] cloud={"up" if cloud_ok else "DOWN"} lan={"up" if lan_ok else "DOWN"}')
-                    last_heartbeat = time.time()
-                
-                if not cloud_ok or not lan_ok:
-                    if disconnect_start is None:
-                        disconnect_start = time.time()
-                        log(LOG_WARNING, f"[watchdog] Detected disconnection (cloud_ok={cloud_ok}, lan_ok={lan_ok}). Starting recovery window...")
-                    else:
-                        duration = time.time() - disconnect_start
-                        if duration >= max_disconnect_duration:
-                            raise RuntimeError(f"Connection lost or loop thread crashed for {duration:.1f}s (cloud_ok={cloud_ok}, lan_ok={lan_ok}). Restarting app...")
-                else:
-                    if disconnect_start is not None:
-                        log(LOG_INFO, "[watchdog] Connection recovered cleanly.")
-                        disconnect_start = None
-        finally:
-            if self.auto_stream_proc:
-                log(LOG_INFO, "[SYSTEM] Terminating auto_stream.sh process group...")
-                try:
-                    pgid = os.getpgid(self.auto_stream_proc.pid)
-                    os.killpg(pgid, signal.SIGTERM)
-                    self.auto_stream_proc.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    log(LOG_WARNING, "[SYSTEM] Process group did not terminate. Killing it...")
-                    try:
-                        os.killpg(pgid, signal.SIGKILL)
-                        self.auto_stream_proc.wait(timeout=2)
-                    except Exception:
-                        pass
-                except Exception as e:
-                    log(LOG_ERROR, f"[SYSTEM] Failed to cleanly terminate process group: {e}")
-                    try:
-                        self.auto_stream_proc.kill()
-                    except Exception:
-                        pass
-            
-            # Cleanly disconnect MQTT clients so they release local ports and client IDs
-            if self.cloud_client:
-                try:
-                    self.cloud_client.disconnect()
-                    self.cloud_client.loop_stop()
-                except Exception:
-                    pass
-            if self.lan_client:
-                try:
-                    self.lan_client.disconnect()
-                    self.lan_client.loop_stop()
-                except Exception:
-                    pass
 
 if __name__ == "__main__":
-    log(LOG_INFO, "[SYSTEM] Starting remote_ctrl_mode watchdog...")
-    while not is_lan_mode():
-        time.sleep(15)
-
-    log(LOG_INFO, "[SYSTEM] Printer is in LAN Mode. Starting normal runtime...")
     program = None
+    
+    def sig_handler(signum, frame):
+        log(LOG_INFO, f"[SYSTEM] Received signal {signum}, cleaning up...")
+        if program:
+            program.cleanup()
+        sys.exit(0)
+    
+    signal.signal(signal.SIGTERM, sig_handler)
+    signal.signal(signal.SIGINT, sig_handler)
+
     try:
         program = Program()
         program.main()
+    except SystemExit:
+        raise
     except Exception as e:
-        log(LOG_ERROR, str(e))
+        log(LOG_ERROR, f"[SYSTEM] Fatal: {e}")
         log(LOG_ERROR, traceback.format_exc())
-        if program and hasattr(program, 'auto_stream_proc') and program.auto_stream_proc:
-            log(LOG_INFO, "[SYSTEM] Exception cleanup: Terminating auto_stream.sh process group...")
-            try:
-                pgid = os.getpgid(program.auto_stream_proc.pid)
-                os.killpg(pgid, signal.SIGTERM)
-                program.auto_stream_proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                try:
-                    os.killpg(pgid, signal.SIGKILL)
-                except Exception:
-                    pass
-            except Exception:
-                try:
-                    program.auto_stream_proc.kill()
-                except Exception:
-                    pass
+        if program:
+            program.cleanup()
         sys.exit(1)
