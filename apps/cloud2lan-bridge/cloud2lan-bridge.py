@@ -319,11 +319,13 @@ class Program:
         log(LOG_INFO, f"[AGORA] Credentials: appid={appid[:8]}... channel={channel[:8]}... uid={uid} enc_mode={enc_mode}")
 
         # Build: ffmpeg ... | agora_pusher ...
-        # Quote each arg to handle special chars in token/salt (contains +, /, =)
+        # Add nobuffer, low_delay, and analyzeduration 0 to completely eliminate ffmpeg startup lag
         cmd = (
-            f"ffmpeg -nostdin -loglevel quiet -i http://127.0.0.1:18088/flv "
+            f"ffmpeg -nostdin -loglevel quiet "
+            f"-fflags nobuffer -flags low_delay -analyzeduration 0 -probesize 32 "
+            f"-i http://127.0.0.1:18088/flv "
             f"-vcodec copy -f h264 - | "
-            f"'{pusher_path}' '{appid}' '{channel}' '{token}' '{license_key}' '{uid}' 0 "
+            f"'{pusher_path}' '{appid}' '{channel}' '{token}' '{license_key}' '{uid}' -1 "
             f"'{enc_mode}' '{enc_key}' '{enc_salt}'"
         )
 
