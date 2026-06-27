@@ -55,6 +55,12 @@ void on_reconnect(connection_id_t conn_id) {
   log_time("[CALLBACK] on_reconnecting event fired.");
 }
 
+void on_user_offline(connection_id_t conn_id, uint32_t uid, int reason) {
+  (void)conn_id;
+  fprintf(stderr, "[CALLBACK] on_user_offline event fired (uid=%u, reason=%d). Exiting pipeline.\n", uid, reason);
+  exit(0);
+}
+
 typedef struct {
   void (*on_error)(connection_id_t conn_id, int err,
                    const char *msg); // Index 0 (offset 0)
@@ -64,7 +70,10 @@ typedef struct {
   void (*on_connection_lost)(connection_id_t conn_id); // Index 3 (offset 12)
   void (*on_rejoin_channel_success)(connection_id_t conn_id, uint32_t uid,
                                     int elapsed_ms); // Index 4 (offset 16)
-  void *pad[21]; // Padding to match 104 bytes
+  void *pad1[4]; // Indices 5, 6, 7, 8
+  void (*on_user_offline)(connection_id_t conn_id, uint32_t uid,
+                          int reason); // Index 9 (offset 36)
+  void *pad2[16]; // Indices 10-25
 } custom_event_handler_t;
 
 typedef struct {
@@ -324,7 +333,7 @@ int main(int argc, char *argv[]) {
   handler.on_reconnecting = on_reconnect;
   handler.on_connection_lost = on_conn_lost;
   handler.on_rejoin_channel_success = on_rejoin;
-
+  handler.on_user_offline = on_user_offline;
   uint32_t area_code = 0xFFFFFFFF; // Default to AREA_CODE_GLOB
   const char *area_env = getenv("AGORA_AREA_CODE");
   if (area_env) {
