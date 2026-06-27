@@ -70,10 +70,10 @@ typedef struct {
   void (*on_connection_lost)(connection_id_t conn_id); // Index 3 (offset 12)
   void (*on_rejoin_channel_success)(connection_id_t conn_id, uint32_t uid,
                                     int elapsed_ms); // Index 4 (offset 16)
-  void *pad1[4]; // Indices 5, 6, 7, 8
+  void *pad1[3]; // Indices 5, 6, 7
   void (*on_user_offline)(connection_id_t conn_id, uint32_t uid,
-                          int reason); // Index 9 (offset 36)
-  void *pad2[16]; // Indices 10-25
+                          int reason); // Index 8 (offset 32)
+  void *pad2[17]; // Indices 9-25
 } custom_event_handler_t;
 
 typedef struct {
