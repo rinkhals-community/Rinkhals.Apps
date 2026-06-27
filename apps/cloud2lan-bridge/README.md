@@ -7,7 +7,7 @@ The application runs as a strict parent→child process tree managed by a inotif
 
 ```text
 app.sh start
-  └── mode_watchdog.py                  ← Inotify watcher for remote_ctrl_mode, starts cloud2lan-bridge or kills child processes
+  └── mode_watchdog.py                  ← Inotify watcher for remote_ctrl_mode, starts cloud2lan-supervisor or kills child processes
         └── cloud2lan-supervisor.sh         ← Crash-loop restarter
               └── cloud2lan-bridge.py           ← MQTT bridge & payload interceptor
                     └── agora_pusher              ← Video streaming

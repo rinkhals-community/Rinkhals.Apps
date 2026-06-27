@@ -181,36 +181,94 @@ class Program:
         if isinstance(payload, dict) and payload.get('action') == 'startCapture':
             log(LOG_INFO, f"[ROUTER] Intercepted startCapture payload: {json.dumps(payload)}")
             shengwang_data = payload.get('data', {}).get('shengwang', {})
-            
             if not shengwang_data:
                 log(LOG_DEBUG, "[ROUTER] Dropping join status message echo.")
+                return
             else:
                 log(LOG_INFO, "[ROUTER] Intercepted stream request. Starting agora_pusher...")
-                try:
-                    # Forward startCapture to LAN so gkapi starts the camera pipeline
-                    local_video_payload = {
-                        "type": "video",
-                        "action": "startCapture",
-                        "timestamp": now(),
-                        "msgid": str(payload.get('msgid', uuid.uuid4())),
-                        "data": None
-                    }
-                    self.send_message(
-                        self.lan_client, 
-                        f"anycubic/anycubicCloud/v1/web/printer/20025/{self.lan_device_id}/video", 
-                        local_video_payload
-                    )
-                    log(LOG_INFO, "[ROUTER] Dispatched camera activation to LAN.")
-                except Exception as e:
-                    log(LOG_ERROR, f"[ROUTER] Camera activation failed: {str(e)}")
-                
-                # Launch the streaming pipeline
                 self.launch_agora_pusher(shengwang_data)
+                
+                report_topic = topic.replace('/web/', '/app/')
+                if report_topic.endswith('/control') or report_topic.endswith('/request'):
+                    report_topic = report_topic.rsplit('/', 1)[0]
+                if not report_topic.endswith('/report'):
+                    report_topic += '/report'
+
+                report_payload = {
+                    "type": "video",
+                    "action": "startCapture",
+                    "msgid": payload.get("msgid", ""),
+                    "state": "joinSuccess",
+                    "timestamp": now(),
+                    "code": 200,
+                    "msg": ""
+                }
+                self.send_message(self.cloud_client, report_topic, report_payload)
+                
+                # Wake up the local camera pipeline by sending startCapture to LAN.
+                # We use dummy credentials so gkapi doesn't crash (which happens if data is None)
+                # and so the native agora_pusher fails instantly instead of competing with ours.
+                local_video_payload = {
+                    "action": "startCapture",
+                    "type": "video",
+                    "msgid": str(payload.get('msgid', uuid.uuid4())),
+                    "data": {
+                        "shengwang": {
+                            "appid": "dummy",
+                            "channel": "dummy",
+                            "rtc_token": "dummy",
+                            "uid": 123,
+                            "license": "dummy",
+                            "encryption_mode": "",
+                            "encryption_key": "",
+                            "encryption_kdf_salt": ""
+                        }
+                    }
+                }
+                self.send_message(
+                    self.lan_client, 
+                    f"anycubic/anycubicCloud/v1/web/printer/20025/{self.lan_device_id}/video", 
+                    local_video_payload
+                )
+                log(LOG_INFO, "[ROUTER] Dispatched startCapture with dummy credentials to wake up gkcam.")
+                return
 
         # Intercept stop event — kill agora_pusher
         elif isinstance(payload, dict) and payload.get('action') == 'stopCapture':
             log(LOG_INFO, "[ROUTER] Intercepted stopCapture. Stopping agora_pusher...")
             self.stop_agora_pusher()
+            
+            report_topic = topic.replace('/web/', '/app/')
+            if report_topic.endswith('/control') or report_topic.endswith('/request'):
+                report_topic = report_topic.rsplit('/', 1)[0]
+            if not report_topic.endswith('/report'):
+                report_topic += '/report'
+
+            report_payload = {
+                "type": "video",
+                "action": "stopCapture",
+                "msgid": payload.get("msgid", ""),
+                "state": "leaveSuccess",
+                "timestamp": now(),
+                "code": 200,
+                "msg": ""
+            }
+            self.send_message(self.cloud_client, report_topic, report_payload)
+            
+            # Put the local camera pipeline to sleep using the standard command
+            local_video_payload = {
+                "action": "stopCapture",
+                "type": "video",
+                "msgid": str(payload.get('msgid', uuid.uuid4())),
+                "data": None
+            }
+            self.send_message(
+                self.lan_client, 
+                f"anycubic/anycubicCloud/v1/web/printer/20025/{self.lan_device_id}/video", 
+                local_video_payload
+            )
+            log(LOG_INFO, "[ROUTER] Dispatched stopCapture to LAN to sleep gkcam.")
+            return
 
         if not topic.endswith('/response'):
             self.send_message(self.lan_client, topic.replace(self.cloud_device_id, self.lan_device_id), payload)
