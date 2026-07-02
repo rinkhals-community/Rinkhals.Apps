@@ -501,11 +501,22 @@ class Program:
 
         log(LOG_INFO, "[SYSTEM] MQTT bridge is running. Waiting for messages...")
 
-        # Block forever — paho runs in background threads.
+        # Health-check loop — paho runs in background threads.
         # The mode_watchdog will SIGKILL us if the mode changes.
         # The supervisor will restart us if we crash.
+        last_cloud_connected = time.time()
         while True:
-            time.sleep(60)
+            if self.cloud_client.is_connected():
+                last_cloud_connected = time.time()
+            else:
+                disconnected_for = int(time.time() - last_cloud_connected)
+                if disconnected_for > 120:
+                    log(LOG_ERROR, f"[SYSTEM] Cloud MQTT disconnected for >{disconnected_for}s, exiting for supervisor restart")
+                    self.cleanup()
+                    sys.exit(1)
+                elif disconnected_for > 10:
+                    log(LOG_WARNING, f"[SYSTEM] Cloud MQTT disconnected for {disconnected_for}s, waiting for reconnect...")
+            time.sleep(10)
 
     def cleanup(self):
         """Best-effort cleanup on graceful shutdown."""
