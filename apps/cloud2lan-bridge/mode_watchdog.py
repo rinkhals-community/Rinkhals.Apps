@@ -18,7 +18,6 @@ import signal
 import subprocess
 import ctypes
 import ctypes.util
-import struct
 import time
 from datetime import datetime
 
