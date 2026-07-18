@@ -1,6 +1,6 @@
 . /useremain/rinkhals/.current/tools.sh
 
-APP_ROOT=$(dirname $(realpath $0))
+APP_ROOT="$(dirname "$(realpath "$0")")"
 
 status() {
     PID=$(get_by_name mode_watchdog.py)
@@ -14,7 +14,7 @@ status() {
 start() {
     stop
 
-    cd $APP_ROOT
+    cd "$APP_ROOT"
 
     chmod +x cloud2lan-supervisor.sh
     python3 ./mode_watchdog.py >> "${RINKHALS_LOGS:-/tmp/rinkhals}/app-cloud2lan-bridge.log" 2>&1 &

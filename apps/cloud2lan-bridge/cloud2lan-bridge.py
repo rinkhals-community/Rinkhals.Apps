@@ -2,6 +2,7 @@ import os
 import sys
 import socket
 import configparser
+import shlex
 import subprocess
 import hashlib
 import signal
@@ -140,8 +141,24 @@ class Program:
     def get_cloud_mqtt_credentials(self):
         device_key = self.cloud_config['deviceKey']
         cert_path = self.cloud_config['certPath']
-        command = f'printf "{device_key}" | openssl rsautl -encrypt -inkey {cert_path}/caCrt -certin -pkcs | base64 -w 0'
-        encrypted_device_key = subprocess.check_output(['sh', '-c', command]).decode('utf-8').strip()
+
+        openssl_proc = subprocess.Popen(
+            ['openssl', 'rsautl', '-encrypt', '-inkey', f'{cert_path}/caCrt', '-certin', '-pkcs'],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+        encrypted_bytes, openssl_err = openssl_proc.communicate(input=device_key.encode('utf-8'))
+        if openssl_proc.returncode != 0:
+            raise RuntimeError(f'openssl rsautl failed: {openssl_err.decode("utf-8", errors="replace")}')
+
+        base64_proc = subprocess.Popen(
+            ['base64', '-w', '0'],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+        encoded_bytes, base64_err = base64_proc.communicate(input=encrypted_bytes)
+        if base64_proc.returncode != 0:
+            raise RuntimeError(f'base64 failed: {base64_err.decode("utf-8", errors="replace")}')
+
+        encrypted_device_key = encoded_bytes.decode('utf-8').strip()
         taco = f'{self.cloud_device_id}{encrypted_device_key}{self.cloud_device_id}'
         return (f'dev|fdm|{self.model_id}|{md5(taco)}', encrypted_device_key)
 
@@ -227,7 +244,7 @@ class Program:
                 }
                 self.send_message(
                     self.lan_client, 
-                    f"anycubic/anycubicCloud/v1/web/printer/20025/{self.lan_device_id}/video", 
+                    f"anycubic/anycubicCloud/v1/web/printer/{self.model_id}/{self.lan_device_id}/video", 
                     local_video_payload
                 )
                 log(LOG_INFO, "[ROUTER] Dispatched startCapture with dummy credentials to wake up gkcam.")
@@ -264,7 +281,7 @@ class Program:
             }
             self.send_message(
                 self.lan_client, 
-                f"anycubic/anycubicCloud/v1/web/printer/20025/{self.lan_device_id}/video", 
+                f"anycubic/anycubicCloud/v1/web/printer/{self.model_id}/{self.lan_device_id}/video", 
                 local_video_payload
             )
             log(LOG_INFO, "[ROUTER] Dispatched stopCapture to LAN to sleep gkcam.")
@@ -325,8 +342,9 @@ class Program:
             f"-fflags nobuffer -flags low_delay -analyzeduration 0 -probesize 32 "
             f"-i http://127.0.0.1:18088/flv "
             f"-vcodec copy -f h264 - | "
-            f"'{pusher_path}' '{appid}' '{channel}' '{token}' '{license_key}' '{uid}' -1 "
-            f"'{enc_mode}' '{enc_key}' '{enc_salt}'"
+            f"{shlex.quote(pusher_path)} {shlex.quote(appid)} {shlex.quote(channel)} "
+            f"{shlex.quote(token)} {shlex.quote(license_key)} {shlex.quote(uid)} -1 "
+            f"{shlex.quote(enc_mode)} {shlex.quote(enc_key)} {shlex.quote(enc_salt)}"
         )
 
         log(LOG_INFO, f"[AGORA] Launching pipeline: ffmpeg | agora_pusher (channel={channel})")

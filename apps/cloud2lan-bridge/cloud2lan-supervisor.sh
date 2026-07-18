@@ -7,7 +7,7 @@
 # watchdog detects a mode switch, it kills this script's entire process
 # group, so we don't need any cleanup logic here.
 
-APP_ROOT=$(dirname $(realpath $0))
+APP_ROOT="$(dirname "$(realpath "$0")")"
 cd "$APP_ROOT"
 
 crash_count=0
