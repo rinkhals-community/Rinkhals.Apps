@@ -57,7 +57,10 @@ void on_reconnect(connection_id_t conn_id) {
 
 void on_user_offline(connection_id_t conn_id, uint32_t uid, int reason) {
   (void)conn_id;
-  fprintf(stderr, "[CALLBACK] on_user_offline event fired (uid=%u, reason=%d). Exiting pipeline.\n", uid, reason);
+  fprintf(stderr,
+          "[CALLBACK] on_user_offline event fired (uid=%u, reason=%d). Exiting "
+          "pipeline.\n",
+          uid, reason);
   exit(0);
 }
 
@@ -70,10 +73,10 @@ typedef struct {
   void (*on_connection_lost)(connection_id_t conn_id); // Index 3 (offset 12)
   void (*on_rejoin_channel_success)(connection_id_t conn_id, uint32_t uid,
                                     int elapsed_ms); // Index 4 (offset 16)
-  void *pad1[3]; // Indices 5, 6, 7
+  void *pad1[3];                                     // Indices 5, 6, 7
   void (*on_user_offline)(connection_id_t conn_id, uint32_t uid,
                           int reason); // Index 8 (offset 32)
-  void *pad2[17]; // Indices 9-25
+  void *pad2[17];                      // Indices 9-25
 } custom_event_handler_t;
 
 typedef struct {
@@ -349,7 +352,7 @@ int main(int argc, char *argv[]) {
   if (enable_sdk_log) {
     service_options[68] = 0; // service_options[log_disable] = true
     service_options[69] = 0; // log_disable_desensitize = true
-    *(uint32_t *)(service_options + 72) = 8; // log_level = RTC_LOG_DEFAULT
+    *(uint32_t *)(service_options + 72) = 8; // log_level = RTC_LOG_DEBUG
     *(const char **)(service_options + 76) = "/tmp"; // log_path = NULL
   } else {
     service_options[68] = 1;                 // log_disable = true

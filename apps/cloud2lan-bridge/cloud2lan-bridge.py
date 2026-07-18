@@ -1,3 +1,7 @@
+# cloud2lan-bridge.py
+# This bridges the Anycubic Kobra S1 Cloud and LAN MQTT brokers.
+# It forwards some printer commands from the Cloud broker to the LAN MQTT broker.
+
 import os
 import sys
 import socket

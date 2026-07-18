@@ -2,12 +2,6 @@
 """
 mode_watchdog.py — inotify-based watcher for /useremain/dev/remote_ctrl_mode
 
-Process tree:
-    mode_watchdog.py
-      └── [LAN only] cloud2lan-supervisor.sh (in its own process group)
-            └── cloud2lan-bridge.py
-                  └── ffmpeg | agora_pusher
-
 When the mode file changes to CLOUD, the entire child process group is killed
 with SIGKILL. When it changes back to LAN, the supervisor is respawned.
 """
