@@ -1,0 +1,566 @@
+"""
+Configuration and constants for ACE Pro module.
+
+Holds shared constants, configuration loading, and utility functions
+that don't depend on specific instances.
+"""
+
+import re
+from enum import Enum
+
+from .protocol import get_default_baud_for_protocol
+
+
+# ========== ACE Instance Constants ==========
+
+# Filament position state constants
+FILAMENT_STATE_BOWDEN = "bowden"        # In bowden before splitter (unloaded, path free)
+FILAMENT_STATE_SPLITTER = "splitter"    # Possibly in splitter (between RDM and toolhead (loaded))
+FILAMENT_STATE_TOOLHEAD = "toolhead"    # At toolhead sensor
+FILAMENT_STATE_NOZZLE = "nozzle"        # In hotend/nozzle
+
+# Sensor name constants
+SENSOR_TOOLHEAD = 'toolhead_sensor'
+SENSOR_RDM = 'return_module'
+
+# Slots per ACE unit (fixed)
+SLOTS_PER_ACE = 4
+
+# Retry configuration for unload/load operations
+UNLOAD_RETRY_ATTEMPTS = 3              # Number of retry attempts
+UNLOAD_RETRY_DELAY = 0.5               # Seconds between attempts
+UNLOAD_INITIAL_LENGTH = 50             # mm for first attempt
+UNLOAD_SPEED_MULTIPLIERS = [1.0, 0.7, 0.4]  # Speed factors per attempt
+
+# Max retries for ACE command operations (feed/retract)
+MAX_RETRIES = 6
+# RFID state constants (from ACE hardware status responses)
+RFID_STATE_NO_INFO = 0         # Information not found (no RFID tag)
+RFID_STATE_FAILED = 1          # Failed to identify tag
+RFID_STATE_IDENTIFIED = 2      # Successfully identified tag
+RFID_STATE_IDENTIFYING = 3     # Currently identifying tag
+
+# RFID inventory sync configuration
+# When enabled, ACE hardware status updates (from RFID or manual changes)
+# automatically sync material/color data to Klipper inventory
+RFID_INVENTORY_SYNC_ENABLED = True  # Default: enabled
+
+
+class AceSlotStateMachineState(str, Enum):
+    """ACE hardware per-slot state machine states (from get_status slot.status)."""
+
+    EMPTY = "empty"
+    READY = "ready"
+    FEEDING = "feeding"
+    UNWINDING = "unwinding"
+    SHIFTING = "shifting"
+    GEAR_ERR = "gear_err"
+    PRELOAD = "preload"
+    IDENTIFYING = "identifying"
+    TMC_ERR = "tmc_err"
+
+
+ACE_SLOT_STATE_MACHINE_STATE_BY_CODE = {
+    0: AceSlotStateMachineState.EMPTY,
+    1: AceSlotStateMachineState.READY,
+    2: AceSlotStateMachineState.FEEDING,
+    3: AceSlotStateMachineState.UNWINDING,
+    4: AceSlotStateMachineState.SHIFTING,
+    5: AceSlotStateMachineState.GEAR_ERR,
+    6: AceSlotStateMachineState.PRELOAD,
+    7: AceSlotStateMachineState.IDENTIFYING,
+    8: AceSlotStateMachineState.TMC_ERR,
+}
+
+
+def normalize_ace_slot_state(raw_state, default=AceSlotStateMachineState.EMPTY.value):
+    """
+    Normalize ACE slot state-machine state from numeric code or string to a lowercase string.
+
+    Returns:
+        str: normalized state name (e.g. "ready"), or a best-effort lowercase string.
+    """
+    if raw_state is None:
+        return default
+    if isinstance(raw_state, AceSlotStateMachineState):
+        return raw_state.value
+    if isinstance(raw_state, int):
+        state = ACE_SLOT_STATE_MACHINE_STATE_BY_CODE.get(raw_state)
+        return state.value if state else str(raw_state)
+    return str(raw_state).strip().lower()
+
+
+# Global registry for instances (populated at load time)
+ACE_INSTANCES = {}
+INSTANCE_MANAGERS = {}  # Maps instance_num -> AceManager
+
+# Purge settings (can be overridden globally via gcode command)
+GLOBAL_PURGE_LENGTH = None
+GLOBAL_PURGE_SPEED = None
+
+
+# ========== Configuration Helpers ==========
+def read_ace_config(config):
+    """
+    Read and validate all ACE config values, return as dict.
+    Config values support per-instance overrides.
+    """
+    ace_config = {}
+
+    # Non-overridable settings (apply to all instances)
+    ace_config["ace_count"] = config.getint("ace_count", 1)
+    # Keep baud protocol-aware by default. When omitted, resolve per-instance
+    # from the active protocol (ACE1=115200, ACE2=230400).
+    raw_baud = config.get("baud", "auto")
+    ace_config["baud"] = raw_baud
+    ace_config["filament_runout_sensor_name_rdm"] = config.get(
+        "filament_runout_sensor_name_rdm", None
+    )
+    ace_config["filament_runout_sensor_name_nozzle"] = config.get(
+        "filament_runout_sensor_name_nozzle", "filament_runout_nozzle"
+    )
+    ace_config["feed_assist_active_after_ace_connect"] = config.getboolean(
+        "feed_assist_active_after_ace_connect", True
+    )
+    ace_config["rfid_inventory_sync_enabled"] = config.getboolean(
+        "rfid_inventory_sync_enabled", True
+    )
+    ace_config["ace2_feed_check_length"] = config.getint(
+        "ace2_feed_check_length", 110
+    )
+    ace_config["ace2_feed_error_length"] = config.getint(
+        "ace2_feed_error_length", 100
+    )
+    # RFID temperature mode: how to calculate print temp from min/max
+    # Options: "average" (default), "min", "max"
+    ace_config["rfid_temp_mode"] = config.get("rfid_temp_mode", "average").lower()
+    if ace_config["rfid_temp_mode"] not in ("average", "min", "max"):
+        ace_config["rfid_temp_mode"] = "average"
+
+    ace_config["parkposition_to_toolhead_length"] = config.getint("parkposition_to_toolhead_length", 1000)
+    ace_config["parkposition_to_rdm_length"] = config.getint("parkposition_to_rdm_length", 150)
+    # Extra retraction (mm) after the RDM sensor clears during unload (safety
+    # margin past the splitter exit). Only used when an RDM sensor is present.
+    ace_config["rdm_overshoot_length"] = config.getfloat("rdm_overshoot_length", 50.0)
+    ace_config["toolhead_retraction_speed"] = config.getint("toolhead_retraction_speed", 10)
+    ace_config["toolhead_retraction_length"] = config.getint("toolhead_retraction_length", 40)
+    ace_config["toolhead_full_purge_length"] = config.getint("toolhead_full_purge_length", 22)
+    ace_config["toolhead_slow_loading_speed"] = config.getint("toolhead_slow_loading_speed", 5)
+    ace_config["extruder_feeding_length"] = config.getint("extruder_feeding_length", 1)
+    ace_config["extruder_feeding_speed"] = config.getint("extruder_feeding_speed", 5)
+    ace_config["timeout_multiplier"] = config.getint("timeout_multiplier", 2)
+    ace_config["default_color_change_purge_length"] = config.getint("default_color_change_purge_length", "50")
+    ace_config["default_color_change_purge_speed"] = config.getint("default_color_change_purge_speed", "400")
+    ace_config["purge_max_chunk_length"] = config.getint("purge_max_chunk_length", "300")
+    ace_config["purge_multiplier"] = config.getfloat("purge_multiplier", "1.0")
+    ace_config["pre_cut_retract_length"] = config.getint("pre_cut_retract_length", "2")
+    ace_config["status_debug_logging"] = config.getboolean("status_debug_logging", False)
+    ace_config["runout_debounce_count"] = config.getint("runout_debounce_count", 1)
+    ace_config["ace_connection_supervision"] = config.getboolean(
+        "ace_connection_supervision", True
+    )
+    # Orca filament sync via Moonraker database namespace "lane_data"
+    # Enabled by default to keep Orca lane data up to date. Set to False to opt-out
+    # of Moonraker writes.
+    ace_config["moonraker_lane_sync_enabled"] = config.getboolean(
+        "moonraker_lane_sync_enabled", True
+    )
+    ace_config["moonraker_lane_sync_url"] = config.get(
+        "moonraker_lane_sync_url", "http://127.0.0.1:7125"
+    )
+    ace_config["moonraker_lane_sync_namespace"] = config.get(
+        "moonraker_lane_sync_namespace", "lane_data"
+    )
+    ace_config["moonraker_lane_sync_api_key"] = config.get(
+        "moonraker_lane_sync_api_key", None
+    )
+    ace_config["moonraker_lane_sync_timeout"] = config.getfloat(
+        "moonraker_lane_sync_timeout", 2.0
+    )
+    # Handling for placeholder/unknown material labels when publishing to lane_data.
+    # - passthrough: publish value as-is
+    # - empty:       publish as empty material
+    # - map:         publish moonraker_lane_sync_unknown_material_map_to
+    ace_config["moonraker_lane_sync_unknown_material_mode"] = config.get(
+        "moonraker_lane_sync_unknown_material_mode", "empty"
+    ).strip().lower()
+    if ace_config["moonraker_lane_sync_unknown_material_mode"] not in (
+        "passthrough",
+        "empty",
+        "map",
+    ):
+        ace_config["moonraker_lane_sync_unknown_material_mode"] = "empty"
+    ace_config["moonraker_lane_sync_unknown_material_markers"] = config.get(
+        "moonraker_lane_sync_unknown_material_markers", "???,unknown,n/a,none"
+    )
+    ace_config["moonraker_lane_sync_unknown_material_map_to"] = config.get(
+        "moonraker_lane_sync_unknown_material_map_to", ""
+    )
+    ace_config["tangle_detection"] = config.getboolean(
+        "tangle_detection", False
+    )
+    # Threshold default/floor are hardware-derived: ACE2 firmware's STARVED
+    # assist retry (spool ran out at the ACE) self-resets cont_assist_time at
+    # ~3.9 s (fw V1.1.31), so thresholds below ~4 s sit inside that band and
+    # rely solely on the empty-slot gate to avoid false pauses on every ACE2
+    # runout.  RunoutMonitor clamps to its TANGLE_PUMP_TIME_FLOOR.
+    ace_config["tangle_pump_time"] = config.getfloat(
+        "tangle_pump_time", 5.0
+    )
+    # Verdict window after a threshold crossing: wait this long for the
+    # slot-empty runout signal (ACE1 reports it ~4 s after the crossing)
+    # before pausing as a confirmed tangle.  Fallback only — most tangles
+    # exit earlier via tangle_pump_time_hard, and ACE2 (sensor-live slot
+    # state) pauses at the crossing itself.  0 = pause immediately at the
+    # threshold (false-pauses on ACE1 spool runouts).
+    ace_config["tangle_verify_time"] = config.getfloat(
+        "tangle_verify_time", 7.0
+    )
+    # Continuous-pumping hard ceiling: starved pumping is firmware-capped
+    # (ACE1 give-up ~5-6 s, ACE2 retry cap ~3.9 s), so reaching this value
+    # proves a real blockage — pause immediately, bypassing the verify
+    # window.  RunoutMonitor clamps to its TANGLE_HARD_LIMIT_FLOOR (6.5).
+    ace_config["tangle_pump_time_hard"] = config.getfloat(
+        "tangle_pump_time_hard", 8.0
+    )
+    # Fast disconnect pause: seconds of continuous mid-print disconnection of
+    # the ACTIVE tool's instance before pausing.  Negative = auto (protocol
+    # default: ACE1 30 s, ACE2 5 s — ACE2 clamps filament when not feeding),
+    # 0 disables the fast path.  Per-instance overridable ("30,1:5").
+    ace_config["disconnect_pause_timeout"] = config.get(
+        "disconnect_pause_timeout", "-1"
+    )
+    # Persistence mode controls when set_and_save() actually writes to disk.
+    # - deferred:  set_and_save() behaves like set() — RAM + dirty mark only;
+    #              disk write is deferred until flush() (print end / disconnect).
+    #              Safest option: never blocks the Klipper reactor mid-print.
+    # - immediate: set_and_save() writes to disk right away (legacy behaviour).
+    #              Suitable if you want key state persisted even without a clean shutdown.
+    ace_config["persistence_mode"] = config.get(
+        "persistence_mode", "deferred"
+    ).strip().lower()
+    if ace_config["persistence_mode"] not in ("deferred", "immediate"):
+        ace_config["persistence_mode"] = "deferred"
+    ace_config["protocol"] = config.get("protocol", "auto")
+    # STORE RAW CONFIG STRINGS (will be parsed per-instance)
+    # These support instance-specific overrides via "value" or "value,inst:override"
+    ace_config["feed_speed"] = config.get("feed_speed", "60")
+    ace_config["retract_speed"] = config.get("retract_speed", "50")
+    ace_config["total_max_feeding_length"] = config.get("total_max_feeding_length", "2500")
+    ace_config["toolchange_load_length"] = config.get("toolchange_load_length", "3000")
+    ace_config["incremental_feeding_length"] = config.get("incremental_feeding_length", "50")
+    ace_config["incremental_feeding_speed"] = config.get("incremental_feeding_speed", "30")
+    ace_config["heartbeat_interval"] = config.get("heartbeat_interval", "1.0")
+    ace_config["max_dryer_temperature"] = config.get("max_dryer_temperature", "60")
+
+    return ace_config
+
+
+def get_tool_offset(instance_num):
+    """Get the first tool index managed by this instance."""
+    return instance_num * SLOTS_PER_ACE
+
+
+def get_ace_instance_and_slot_for_tool(tool):
+    """
+    Find ACE instance and local slot for a given tool index.
+
+    Args:
+        tool: Global tool index (0+)
+
+    Returns:
+        tuple: (ace_instance, local_slot) or (None, -1) if not found
+    """
+    instance_num = get_instance_from_tool(tool)
+
+    if instance_num == -1:
+        return None, -1
+
+    local_slot = get_local_slot(tool, instance_num)
+
+    if local_slot == -1:
+        return None, -1
+
+    current_ace = ACE_INSTANCES.get(instance_num)
+
+    return current_ace, local_slot
+
+
+def get_instance_from_tool(tool_index):
+    """
+    Find which ACE instance manages a given tool index.
+
+    Args:
+        tool_index: Global tool index (0+)
+
+    Returns:
+        int: Instance number, or -1 if not managed by any instance
+    """
+    if tool_index < 0:
+        return -1
+
+    instance_num = tool_index // SLOTS_PER_ACE
+
+    # Verify instance exists
+    if instance_num in ACE_INSTANCES:
+        return instance_num
+
+    return -1
+
+
+def get_local_slot(tool_index, instance_num):
+    """
+    Get local slot (0-3) for a tool index on a given instance.
+
+    Args:
+        tool_index: Global tool index
+        instance_num: ACE instance number
+
+    Returns:
+        int: Local slot (0-3), or -1 if tool not managed by instance
+    """
+    instance_offset = instance_num * SLOTS_PER_ACE
+    local_slot = tool_index - instance_offset
+
+    if 0 <= local_slot < SLOTS_PER_ACE:
+        return local_slot
+
+    return -1
+
+
+def parse_instance_number(name):
+    """
+    Parse ACE instance number from config section name.
+
+    Examples:
+        "ace" → 0
+        "ace 0" → 0
+        "ace1" → 1
+        "ace 3" → 3
+
+    Args:
+        name: Config section name
+
+    Returns:
+        int: Instance number
+    """
+    if not name:
+        return 0
+
+    name = name.strip().lower()
+
+    if name == "ace":
+        return 0
+
+    m = re.match(r'^ace(?:[\s_]+)?(\d+)?$', name)
+    if m:
+        suffix = m.group(1)
+        if suffix is not None:
+            return int(suffix)
+
+    return 0
+
+
+def create_empty_inventory_slot():
+    """Create empty inventory slot dict."""
+    return {
+        "status": "empty",
+        "color": [0, 0, 0],
+        "material": "",
+        "temp": 0,
+        "rfid": False,
+    }
+
+
+def create_inventory(slot_count=SLOTS_PER_ACE):
+    """Create empty inventory for all slots."""
+    return [create_empty_inventory_slot() for _ in range(slot_count)]
+
+
+def create_status_dict(slot_count=SLOTS_PER_ACE):
+    """Create empty status dict."""
+    return {
+        'status': 'ready',
+        'dryer': {
+            'status': 'stop',
+            'target_temp': 0,
+            'duration': 0,
+            'remain_time': 0
+        },
+        'temp': 0,
+        'enable_rfid': 1,
+        'fan_speed': 7000,
+        'feed_assist_count': 0,
+        'cont_assist_time': 0.0,
+        'slots': [
+            {
+                'index': i,
+                'status': 'empty',
+                'sku': '',
+                'type': '',
+                'color': [0, 0, 0]
+            } for i in range(slot_count)
+        ]
+    }
+
+
+def parse_instance_config(config_value, instance_num, param_name):
+    """
+    Parse config value that may contain per-instance overrides.
+
+    Formats supported:
+      - Simple: "1000" → use 1000 for all instances
+      - Global + override: "1000,2:500" → 1000 for all except instance 2 (uses 500)
+      - Explicit all: "0:1000,1:400,2:2000" → per-instance values
+
+    Args:
+        config_value: String from config file
+        instance_num: Instance number (0, 1, 2, ...)
+        param_name: Parameter name (for error messages)
+
+    Returns:
+        int/float: Resolved value for this instance
+
+    Examples:
+        >>> parse_instance_config("1000", 0, "length")
+        1000
+        >>> parse_instance_config("1000,2:500", 2, "length")
+        500
+        >>> parse_instance_config("1000,2:500", 0, "length")
+        1000
+        >>> parse_instance_config("0:1000,1:400,2:2000", 1, "length")
+        400
+    """
+    value_str = str(config_value).strip()
+
+    # Check if it contains instance overrides (has colons)
+    if ':' not in value_str:
+        # Simple value - use for all instances
+        try:
+            return int(value_str) if '.' not in value_str else float(value_str)
+        except ValueError:
+            raise ValueError(
+                f"Invalid config value for {param_name}: '{value_str}'"
+            )
+
+    # Parse instance-specific overrides
+    parts = value_str.split(',')
+    instance_map = {}
+    global_default = None
+
+    for part in parts:
+        part = part.strip()
+        if ':' in part:
+            # Instance-specific: "2:500"
+            inst_str, val_str = part.split(':', 1)
+            try:
+                inst = int(inst_str.strip())
+                val = int(val_str.strip()) if '.' not in val_str else float(val_str.strip())
+                instance_map[inst] = val
+            except ValueError:
+                raise ValueError(
+                    f"Invalid instance override for {param_name}: '{part}'"
+                )
+        else:
+            # Global default (must be first part)
+            if global_default is not None:
+                raise ValueError(
+                    f"Multiple global defaults for {param_name}: '{value_str}'"
+                )
+            try:
+                global_default = int(part) if '.' not in part else float(part)
+            except ValueError:
+                raise ValueError(
+                    f"Invalid global default for {param_name}: '{part}'"
+                )
+
+    # Return value for this instance
+    if instance_num in instance_map:
+        return instance_map[instance_num]
+    elif global_default is not None:
+        return global_default
+    else:
+        raise ValueError(
+            f"No value found for instance {instance_num} in {param_name}: '{value_str}'"
+        )
+
+
+def parse_instance_choice_config(config_value, instance_num, param_name):
+    """Parse string config values that support per-instance overrides."""
+    value_str = str(config_value).strip()
+
+    if ':' not in value_str:
+        if not value_str:
+            raise ValueError(f"Invalid config value for {param_name}: '{value_str}'")
+        return value_str
+
+    parts = value_str.split(',')
+    instance_map = {}
+    global_default = None
+
+    for part in parts:
+        part = part.strip()
+        if ':' in part:
+            inst_str, val_str = part.split(':', 1)
+            try:
+                inst = int(inst_str.strip())
+            except ValueError as exc:
+                raise ValueError(
+                    f"Invalid instance override for {param_name}: '{part}'"
+                ) from exc
+
+            value = val_str.strip()
+            if not value:
+                raise ValueError(
+                    f"Invalid instance override for {param_name}: '{part}'"
+                )
+            instance_map[inst] = value
+            continue
+
+        if global_default is not None:
+            raise ValueError(
+                f"Multiple global defaults for {param_name}: '{value_str}'"
+            )
+        if not part:
+            raise ValueError(f"Invalid global default for {param_name}: '{part}'")
+        global_default = part
+
+    if instance_num in instance_map:
+        return instance_map[instance_num]
+    if global_default is not None:
+        return global_default
+    raise ValueError(
+        f"No value found for instance {instance_num} in {param_name}: '{value_str}'"
+    )
+
+
+def parse_instance_baud_config(config_value, instance_num, protocol_name):
+    """Parse per-instance baud config with protocol-aware defaults."""
+    raw_value = parse_instance_choice_config(config_value, instance_num, "baud")
+    normalized = str(raw_value).strip().lower()
+
+    if normalized == "auto":
+        return get_default_baud_for_protocol(protocol_name)
+
+    try:
+        return int(str(raw_value).strip())
+    except ValueError as exc:
+        raise ValueError(f"Invalid config value for baud: '{raw_value}'") from exc
+
+
+OVERRIDABLE_PARAMS = [
+    "feed_speed",
+    "retract_speed",
+    "total_max_feeding_length",
+    "toolchange_load_length",
+    "incremental_feeding_length",
+    "incremental_feeding_speed",
+    "heartbeat_interval",
+    "max_dryer_temperature",
+    "disconnect_pause_timeout"
+]
+
+
+CHOICE_OVERRIDABLE_PARAMS = [
+    "protocol",
+]
