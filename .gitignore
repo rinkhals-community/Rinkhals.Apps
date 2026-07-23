@@ -5,4 +5,4 @@ files/4-rinkhals/usr/share/data/framebuffer.bmp
 .DS_Store
 build/cache
 build/dev.md
-agora_rtc_api.h
+apps/cloud2lan-bridge/agora_rtc_api.h
