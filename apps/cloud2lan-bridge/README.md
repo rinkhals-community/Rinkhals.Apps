@@ -13,3 +13,7 @@ app.sh start
                     └── agora_pusher              ← Video streaming
                         └── ffmpeg                    ← Video capture and encoding
 ```
+
+## Developing
+
+The agora header file can be sourced from the [agora linux SDK docs](https://api-ref.agora.io/en/iot-sdk/linux/1.x/agora__rtc__api_8h_source.html).
