@@ -8,7 +8,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 
-#include "./agora_rtc_api.h"
+#include "./agora_rtc_api_interop_rinkhals.h"
 
 // Microsecond-accurate diagnostic log helper
 void log_time(const char *label) {
