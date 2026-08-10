@@ -3,7 +3,7 @@
 
     "name": "Tailscale",
     "description": "Secure, private network connectivity using Tailscale VPN",
-    "version": "1.98.8",
+    "version": "1.102.2",
     "depends": [],
 
     "upstream": {
