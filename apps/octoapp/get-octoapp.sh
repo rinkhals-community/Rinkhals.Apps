@@ -7,7 +7,7 @@ mkdir /work
 cd /work
 
 
-OCTOAPP_VERSION=3.2.2
+OCTOAPP_VERSION=3.2.3
 OCTOAPP_DIRECTORY=/apps/octoapp
 
 
