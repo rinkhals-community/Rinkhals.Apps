@@ -1,0 +1,20 @@
+{
+    "$version": "1",
+
+    "name": "Unbiased Bed Mesh",
+    "description": "Requires restart after run: the new mesh only applies once you restart Klipper manually. Probes a full bed mesh with a tension-relaxing spiral approach per point, eliminating directional probe bias at the source, then writes the result into printer_mutable.cfg. One-shot: invoke manually from the UI or via SSH when you want a fresh mesh.",
+    "version": "0.1.0",
+    "url": "https://github.com/rinkhals-community/Rinkhals.Apps/tree/master/apps/unbiased-bed-mesh",
+
+    "requirements": {
+        "cpu": 1,
+        "memory": 10
+    },
+
+    "properties": {
+        "last_result": {
+            "display": "Last run",
+            "type": "report"
+        }
+    }
+}
