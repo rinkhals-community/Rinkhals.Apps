@@ -32,6 +32,14 @@ def now() -> int:
     return round(time.time() * 1000)
 
 
+def get_remote_mode() -> str:
+    # Same default as rinkhals-ui.py: no file means the printer is in cloud mode
+    if os.path.isfile('/useremain/dev/remote_ctrl_mode'):
+        with open('/useremain/dev/remote_ctrl_mode', 'r') as f:
+            return f.read().strip()
+    return 'cloud'
+
+
 def wait_for_file(path: str, timeout: float = 120.0, poll_interval: float = 1.0) -> bool:
     """
     Block until `path` exists. Returns True if it appeared within `timeout`
@@ -239,7 +247,11 @@ class Program:
 
         mqtt_broker_endpoint = urllib.parse.urlparse(mqtt_broker)
 
-        self.cloud_client = mqtt.Client(protocol=mqtt.MQTTv5, client_id=self.cloud_device_id)
+        # The callbacks above use paho's VERSION2 signatures. Without asking for
+        # it, paho 2.x falls back to VERSION1, calls on_disconnect with one
+        # argument fewer, and the TypeError kills the network thread on the
+        # first disconnect, so the client never reconnects.
+        self.cloud_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, protocol=mqtt.MQTTv5, client_id=self.cloud_device_id)
         self.cloud_client.enable_logger()
 
         if mqtt_broker_endpoint.scheme == 'ssl':
@@ -306,7 +318,7 @@ class Program:
             except Exception as e:
                 log(LOG_ERROR, f'[lan] Failed to handle {msg.topic}: {e}')
 
-        self.lan_client = mqtt.Client(protocol=mqtt.MQTTv5, client_id=self.lan_device_id)
+        self.lan_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, protocol=mqtt.MQTTv5, client_id=self.lan_device_id)
         self.lan_client.enable_logger()
 
         self.lan_client.tls_set_context(self.get_ssl_context())
@@ -393,15 +405,38 @@ class Program:
         # Heartbeat loop. Logging the connection state every few minutes
         # makes it possible to tell from the app log whether the bridge is
         # actually alive and which side dropped if something stops working.
+        # Also watch for a switch back to cloud mode: the firmware then logs in
+        # to the cloud with the same client id, and the two would keep knocking
+        # each other off the broker.
         HEARTBEAT_INTERVAL = 300
+        MODE_CHECK_INTERVAL = 5
+        last_heartbeat = time.time()
         while True:
-            time.sleep(HEARTBEAT_INTERVAL)
-            cloud_ok = self.cloud_client.is_connected() if self.cloud_client else False
-            lan_ok = self.lan_client.is_connected() if self.lan_client else False
-            log(LOG_INFO, f'[heartbeat] cloud={"up" if cloud_ok else "DOWN"} lan={"up" if lan_ok else "DOWN"}')
+            time.sleep(MODE_CHECK_INTERVAL)
+
+            mode = get_remote_mode()
+            if mode != 'lan':
+                log(LOG_WARNING, f'Printer switched to {mode} mode, stopping. Start the app again or reboot once LAN mode is back on')
+                self.cloud_client.disconnect()
+                self.lan_client.disconnect()
+                return
+
+            if time.time() - last_heartbeat >= HEARTBEAT_INTERVAL:
+                last_heartbeat = time.time()
+                cloud_ok = self.cloud_client.is_connected() if self.cloud_client else False
+                lan_ok = self.lan_client.is_connected() if self.lan_client else False
+                log(LOG_INFO, f'[heartbeat] cloud={"up" if cloud_ok else "DOWN"} lan={"up" if lan_ok else "DOWN"}')
 
 
 if __name__ == "__main__":
+    # In cloud mode the firmware is already logged in to the cloud as this
+    # printer and there is no local broker to bridge to. Exit 0 so the
+    # supervisor doesn't respawn us
+    mode = get_remote_mode()
+    if mode != 'lan':
+        log(LOG_WARNING, f'Printer is in {mode} mode, the bridge only runs in LAN mode. Enable LAN mode, then start the app again or reboot')
+        sys.exit(0)
+
     try:
         program = Program()
         program.main()
