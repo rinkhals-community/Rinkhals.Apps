@@ -33,10 +33,10 @@ class ISDN(dns.rdata.Rdata):
 
     def __init__(self, rdclass, rdtype, address, subaddress):
         super().__init__(rdclass, rdtype)
-        self.address = self._as_bytes(address, True, 255)
-        self.subaddress = self._as_bytes(subaddress, True, 255)
+        self.address: bytes = self._as_bytes(address, True, 255)
+        self.subaddress: bytes = self._as_bytes(subaddress, True, 255)
 
-    def to_text(self, origin=None, relativize=True, **kw):
+    def to_styled_text(self, style: dns.rdata.RdataStyle) -> str:
         if self.subaddress:
             return (
                 f'"{dns.rdata._escapify(self.address)}" '
@@ -49,12 +49,12 @@ class ISDN(dns.rdata.Rdata):
     def from_text(
         cls, rdclass, rdtype, tok, origin=None, relativize=True, relativize_to=None
     ):
-        address = tok.get_string()
+        address = tok.get_bytes(max_length=255)
         tokens = tok.get_remaining(max_tokens=1)
         if len(tokens) >= 1:
-            subaddress = tokens[0].unescape().value
+            subaddress = tokens[0].unescape_to_bytes().value
         else:
-            subaddress = ""
+            subaddress = b""
         return cls(rdclass, rdtype, address, subaddress)
 
     def _to_wire(self, file, compress=None, origin=None, canonicalize=False):

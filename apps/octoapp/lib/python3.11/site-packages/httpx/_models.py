@@ -1,6 +1,10 @@
+from __future__ import annotations
+
+import codecs
 import datetime
 import email.message
 import json as jsonlib
+import re
 import typing
 import urllib.request
 from collections.abc import Mapping
@@ -42,15 +46,94 @@ from ._types import (
     SyncByteStream,
 )
 from ._urls import URL
-from ._utils import (
-    guess_json_utf,
-    is_known_encoding,
-    normalize_header_key,
-    normalize_header_value,
-    obfuscate_sensitive_headers,
-    parse_content_type_charset,
-    parse_header_links,
-)
+from ._utils import to_bytes_or_str, to_str
+
+__all__ = ["Cookies", "Headers", "Request", "Response"]
+
+SENSITIVE_HEADERS = {"authorization", "proxy-authorization"}
+
+
+def _is_known_encoding(encoding: str) -> bool:
+    """
+    Return `True` if `encoding` is a known codec.
+    """
+    try:
+        codecs.lookup(encoding)
+    except LookupError:
+        return False
+    return True
+
+
+def _normalize_header_key(key: str | bytes, encoding: str | None = None) -> bytes:
+    """
+    Coerce str/bytes into a strictly byte-wise HTTP header key.
+    """
+    return key if isinstance(key, bytes) else key.encode(encoding or "ascii")
+
+
+def _normalize_header_value(value: str | bytes, encoding: str | None = None) -> bytes:
+    """
+    Coerce str/bytes into a strictly byte-wise HTTP header value.
+    """
+    if isinstance(value, bytes):
+        return value
+    if not isinstance(value, str):
+        raise TypeError(f"Header value must be str or bytes, not {type(value)}")
+    return value.encode(encoding or "ascii")
+
+
+def _parse_content_type_charset(content_type: str) -> str | None:
+    # We used to use `cgi.parse_header()` here, but `cgi` became a dead battery.
+    # See: https://peps.python.org/pep-0594/#cgi
+    msg = email.message.Message()
+    msg["content-type"] = content_type
+    return msg.get_content_charset(failobj=None)
+
+
+def _parse_header_links(value: str) -> list[dict[str, str]]:
+    """
+    Returns a list of parsed link headers, for more info see:
+    https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Link
+    The generic syntax of those is:
+    Link: < uri-reference >; param1=value1; param2="value2"
+    So for instance:
+    Link; '<http:/.../front.jpeg>; type="image/jpeg",<http://.../back.jpeg>;'
+    would return
+        [
+            {"url": "http:/.../front.jpeg", "type": "image/jpeg"},
+            {"url": "http://.../back.jpeg"},
+        ]
+    :param value: HTTP Link entity-header field
+    :return: list of parsed link headers
+    """
+    links: list[dict[str, str]] = []
+    replace_chars = " '\""
+    value = value.strip(replace_chars)
+    if not value:
+        return links
+    for val in re.split(", *<", value):
+        try:
+            url, params = val.split(";", 1)
+        except ValueError:
+            url, params = val, ""
+        link = {"url": url.strip("<> '\"")}
+        for param in params.split(";"):
+            try:
+                key, value = param.split("=")
+            except ValueError:
+                break
+            link[key.strip(replace_chars)] = value.strip(replace_chars)
+        links.append(link)
+    return links
+
+
+def _obfuscate_sensitive_headers(
+    items: typing.Iterable[tuple[typing.AnyStr, typing.AnyStr]],
+) -> typing.Iterator[tuple[typing.AnyStr, typing.AnyStr]]:
+    for k, v in items:
+        if to_str(k.lower()) in SENSITIVE_HEADERS:
+            v = to_bytes_or_str("[secure]", match_type_of=v)
+        yield k, v
 
 
 class Headers(typing.MutableMapping[str, str]):
@@ -60,31 +143,23 @@ class Headers(typing.MutableMapping[str, str]):
 
     def __init__(
         self,
-        headers: typing.Optional[HeaderTypes] = None,
-        encoding: typing.Optional[str] = None,
+        headers: HeaderTypes | None = None,
+        encoding: str | None = None,
     ) -> None:
-        if headers is None:
-            self._list = []  # type: typing.List[typing.Tuple[bytes, bytes, bytes]]
-        elif isinstance(headers, Headers):
+        self._list = []  # type: typing.List[typing.Tuple[bytes, bytes, bytes]]
+
+        if isinstance(headers, Headers):
             self._list = list(headers._list)
         elif isinstance(headers, Mapping):
-            self._list = [
-                (
-                    normalize_header_key(k, lower=False, encoding=encoding),
-                    normalize_header_key(k, lower=True, encoding=encoding),
-                    normalize_header_value(v, encoding),
-                )
-                for k, v in headers.items()
-            ]
-        else:
-            self._list = [
-                (
-                    normalize_header_key(k, lower=False, encoding=encoding),
-                    normalize_header_key(k, lower=True, encoding=encoding),
-                    normalize_header_value(v, encoding),
-                )
-                for k, v in headers
-            ]
+            for k, v in headers.items():
+                bytes_key = _normalize_header_key(k, encoding)
+                bytes_value = _normalize_header_value(v, encoding)
+                self._list.append((bytes_key, bytes_key.lower(), bytes_value))
+        elif headers is not None:
+            for k, v in headers:
+                bytes_key = _normalize_header_key(k, encoding)
+                bytes_value = _normalize_header_value(v, encoding)
+                self._list.append((bytes_key, bytes_key.lower(), bytes_value))
 
         self._encoding = encoding
 
@@ -118,7 +193,7 @@ class Headers(typing.MutableMapping[str, str]):
         self._encoding = value
 
     @property
-    def raw(self) -> typing.List[typing.Tuple[bytes, bytes]]:
+    def raw(self) -> list[tuple[bytes, bytes]]:
         """
         Returns a list of the raw header items, as byte pairs.
         """
@@ -128,7 +203,7 @@ class Headers(typing.MutableMapping[str, str]):
         return {key.decode(self.encoding): None for _, key, value in self._list}.keys()
 
     def values(self) -> typing.ValuesView[str]:
-        values_dict: typing.Dict[str, str] = {}
+        values_dict: dict[str, str] = {}
         for _, key, value in self._list:
             str_key = key.decode(self.encoding)
             str_value = value.decode(self.encoding)
@@ -143,7 +218,7 @@ class Headers(typing.MutableMapping[str, str]):
         Return `(key, value)` items of headers. Concatenate headers
         into a single comma separated value when a key occurs multiple times.
         """
-        values_dict: typing.Dict[str, str] = {}
+        values_dict: dict[str, str] = {}
         for _, key, value in self._list:
             str_key = key.decode(self.encoding)
             str_value = value.decode(self.encoding)
@@ -153,7 +228,7 @@ class Headers(typing.MutableMapping[str, str]):
                 values_dict[str_key] = str_value
         return values_dict.items()
 
-    def multi_items(self) -> typing.List[typing.Tuple[str, str]]:
+    def multi_items(self) -> list[tuple[str, str]]:
         """
         Return a list of `(key, value)` pairs of headers. Allow multiple
         occurrences of the same key without concatenating into a single
@@ -174,7 +249,7 @@ class Headers(typing.MutableMapping[str, str]):
         except KeyError:
             return default
 
-    def get_list(self, key: str, split_commas: bool = False) -> typing.List[str]:
+    def get_list(self, key: str, split_commas: bool = False) -> list[str]:
         """
         Return a list of all header values for a given key.
         If `split_commas=True` is passed, then any comma separated header
@@ -196,14 +271,14 @@ class Headers(typing.MutableMapping[str, str]):
             split_values.extend([item.strip() for item in value.split(",")])
         return split_values
 
-    def update(self, headers: typing.Optional[HeaderTypes] = None) -> None:  # type: ignore
+    def update(self, headers: HeaderTypes | None = None) -> None:  # type: ignore
         headers = Headers(headers)
         for key in headers.keys():
             if key in self:
                 self.pop(key)
         self._list.extend(headers._list)
 
-    def copy(self) -> "Headers":
+    def copy(self) -> Headers:
         return Headers(self, encoding=self.encoding)
 
     def __getitem__(self, key: str) -> str:
@@ -295,7 +370,7 @@ class Headers(typing.MutableMapping[str, str]):
         if self.encoding != "ascii":
             encoding_str = f", encoding={self.encoding!r}"
 
-        as_list = list(obfuscate_sensitive_headers(self.multi_items()))
+        as_list = list(_obfuscate_sensitive_headers(self.multi_items()))
         as_dict = dict(as_list)
 
         no_duplicate_keys = len(as_dict) == len(as_list)
@@ -307,35 +382,29 @@ class Headers(typing.MutableMapping[str, str]):
 class Request:
     def __init__(
         self,
-        method: typing.Union[str, bytes],
-        url: typing.Union["URL", str],
+        method: str,
+        url: URL | str,
         *,
-        params: typing.Optional[QueryParamTypes] = None,
-        headers: typing.Optional[HeaderTypes] = None,
-        cookies: typing.Optional[CookieTypes] = None,
-        content: typing.Optional[RequestContent] = None,
-        data: typing.Optional[RequestData] = None,
-        files: typing.Optional[RequestFiles] = None,
-        json: typing.Optional[typing.Any] = None,
-        stream: typing.Union[SyncByteStream, AsyncByteStream, None] = None,
-        extensions: typing.Optional[RequestExtensions] = None,
-    ):
-        self.method = (
-            method.decode("ascii").upper()
-            if isinstance(method, bytes)
-            else method.upper()
-        )
-        self.url = URL(url)
-        if params is not None:
-            self.url = self.url.copy_merge_params(params=params)
+        params: QueryParamTypes | None = None,
+        headers: HeaderTypes | None = None,
+        cookies: CookieTypes | None = None,
+        content: RequestContent | None = None,
+        data: RequestData | None = None,
+        files: RequestFiles | None = None,
+        json: typing.Any | None = None,
+        stream: SyncByteStream | AsyncByteStream | None = None,
+        extensions: RequestExtensions | None = None,
+    ) -> None:
+        self.method = method.upper()
+        self.url = URL(url) if params is None else URL(url, params=params)
         self.headers = Headers(headers)
-        self.extensions = {} if extensions is None else extensions
+        self.extensions = {} if extensions is None else dict(extensions)
 
         if cookies:
             Cookies(cookies).set_cookie_header(self)
 
         if stream is None:
-            content_type: typing.Optional[str] = self.headers.get("content-type")
+            content_type: str | None = self.headers.get("content-type")
             headers, stream = encode_request(
                 content=content,
                 data=data,
@@ -359,7 +428,8 @@ class Request:
             # Using `content=...` implies automatically populated `Host` and content
             # headers, of either `Content-Length: ...` or `Transfer-Encoding: chunked`.
             #
-            # Using `stream=...` will not automatically include *any* auto-populated headers.
+            # Using `stream=...` will not automatically include *any*
+            # auto-populated headers.
             #
             # As an end-user you don't really need `stream=...`. It's only
             # useful when:
@@ -368,14 +438,14 @@ class Request:
             # * Creating request instances on the *server-side* of the transport API.
             self.stream = stream
 
-    def _prepare(self, default_headers: typing.Dict[str, str]) -> None:
+    def _prepare(self, default_headers: dict[str, str]) -> None:
         for key, value in default_headers.items():
             # Ignore Transfer-Encoding if the Content-Length has been set explicitly.
             if key.lower() == "transfer-encoding" and "Content-Length" in self.headers:
                 continue
             self.headers.setdefault(key, value)
 
-        auto_headers: typing.List[typing.Tuple[bytes, bytes]] = []
+        auto_headers: list[tuple[bytes, bytes]] = []
 
         has_host = "Host" in self.headers
         has_content_length = (
@@ -428,14 +498,14 @@ class Request:
         url = str(self.url)
         return f"<{class_name}({self.method!r}, {url!r})>"
 
-    def __getstate__(self) -> typing.Dict[str, typing.Any]:
+    def __getstate__(self) -> dict[str, typing.Any]:
         return {
             name: value
             for name, value in self.__dict__.items()
             if name not in ["extensions", "stream"]
         }
 
-    def __setstate__(self, state: typing.Dict[str, typing.Any]) -> None:
+    def __setstate__(self, state: dict[str, typing.Any]) -> None:
         for name, value in state.items():
             setattr(self, name, value)
         self.extensions = {}
@@ -447,27 +517,27 @@ class Response:
         self,
         status_code: int,
         *,
-        headers: typing.Optional[HeaderTypes] = None,
-        content: typing.Optional[ResponseContent] = None,
-        text: typing.Optional[str] = None,
-        html: typing.Optional[str] = None,
+        headers: HeaderTypes | None = None,
+        content: ResponseContent | None = None,
+        text: str | None = None,
+        html: str | None = None,
         json: typing.Any = None,
-        stream: typing.Union[SyncByteStream, AsyncByteStream, None] = None,
-        request: typing.Optional[Request] = None,
-        extensions: typing.Optional[ResponseExtensions] = None,
-        history: typing.Optional[typing.List["Response"]] = None,
-        default_encoding: typing.Union[str, typing.Callable[[bytes], str]] = "utf-8",
-    ):
+        stream: SyncByteStream | AsyncByteStream | None = None,
+        request: Request | None = None,
+        extensions: ResponseExtensions | None = None,
+        history: list[Response] | None = None,
+        default_encoding: str | typing.Callable[[bytes], str] = "utf-8",
+    ) -> None:
         self.status_code = status_code
         self.headers = Headers(headers)
 
-        self._request: typing.Optional[Request] = request
+        self._request: Request | None = request
 
         # When follow_redirects=False and a redirect is received,
         # the client will set `response.next_request`.
-        self.next_request: typing.Optional[Request] = None
+        self.next_request: Request | None = None
 
-        self.extensions = {} if extensions is None else extensions
+        self.extensions = {} if extensions is None else dict(extensions)
         self.history = [] if history is None else list(history)
 
         self.is_closed = False
@@ -498,7 +568,7 @@ class Response:
 
         self._num_bytes_downloaded = 0
 
-    def _prepare(self, default_headers: typing.Dict[str, str]) -> None:
+    def _prepare(self, default_headers: dict[str, str]) -> None:
         for key, value in default_headers.items():
             # Ignore Transfer-Encoding if the Content-Length has been set explicitly.
             if key.lower() == "transfer-encoding" and "content-length" in self.headers:
@@ -580,7 +650,7 @@ class Response:
         return self._text
 
     @property
-    def encoding(self) -> typing.Optional[str]:
+    def encoding(self) -> str | None:
         """
         Return an encoding to use for decoding the byte content into text.
         The priority for determining this is given by...
@@ -593,7 +663,7 @@ class Response:
         """
         if not hasattr(self, "_encoding"):
             encoding = self.charset_encoding
-            if encoding is None or not is_known_encoding(encoding):
+            if encoding is None or not _is_known_encoding(encoding):
                 if isinstance(self.default_encoding, str):
                     encoding = self.default_encoding
                 elif hasattr(self, "_content"):
@@ -603,10 +673,20 @@ class Response:
 
     @encoding.setter
     def encoding(self, value: str) -> None:
+        """
+        Set the encoding to use for decoding the byte content into text.
+
+        If the `text` attribute has been accessed, attempting to set the
+        encoding will throw a ValueError.
+        """
+        if hasattr(self, "_text"):
+            raise ValueError(
+                "Setting encoding after `text` has been accessed is not allowed."
+            )
         self._encoding = value
 
     @property
-    def charset_encoding(self) -> typing.Optional[str]:
+    def charset_encoding(self) -> str | None:
         """
         Return the encoding, as specified by the Content-Type header.
         """
@@ -614,7 +694,7 @@ class Response:
         if content_type is None:
             return None
 
-        return parse_content_type_charset(content_type)
+        return _parse_content_type_charset(content_type)
 
     def _get_content_decoder(self) -> ContentDecoder:
         """
@@ -622,7 +702,7 @@ class Response:
         content, depending on the Content-Encoding used in the response.
         """
         if not hasattr(self, "_decoder"):
-            decoders: typing.List[ContentDecoder] = []
+            decoders: list[ContentDecoder] = []
             values = self.headers.get_list("content-encoding", split_commas=True)
             for value in values:
                 value = value.strip().lower()
@@ -711,7 +791,7 @@ class Response:
             and "Location" in self.headers
         )
 
-    def raise_for_status(self) -> None:
+    def raise_for_status(self) -> Response:
         """
         Raise the `HTTPStatusError` if one occurred.
         """
@@ -723,18 +803,18 @@ class Response:
             )
 
         if self.is_success:
-            return
+            return self
 
         if self.has_redirect_location:
             message = (
                 "{error_type} '{0.status_code} {0.reason_phrase}' for url '{0.url}'\n"
                 "Redirect location: '{0.headers[location]}'\n"
-                "For more information check: https://httpstatuses.com/{0.status_code}"
+                "For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/{0.status_code}"
             )
         else:
             message = (
                 "{error_type} '{0.status_code} {0.reason_phrase}' for url '{0.url}'\n"
-                "For more information check: https://httpstatuses.com/{0.status_code}"
+                "For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/{0.status_code}"
             )
 
         status_class = self.status_code // 100
@@ -749,32 +829,28 @@ class Response:
         raise HTTPStatusError(message, request=request, response=self)
 
     def json(self, **kwargs: typing.Any) -> typing.Any:
-        if self.charset_encoding is None and self.content and len(self.content) > 3:
-            encoding = guess_json_utf(self.content)
-            if encoding is not None:
-                return jsonlib.loads(self.content.decode(encoding), **kwargs)
-        return jsonlib.loads(self.text, **kwargs)
+        return jsonlib.loads(self.content, **kwargs)
 
     @property
-    def cookies(self) -> "Cookies":
+    def cookies(self) -> Cookies:
         if not hasattr(self, "_cookies"):
             self._cookies = Cookies()
             self._cookies.extract_cookies(self)
         return self._cookies
 
     @property
-    def links(self) -> typing.Dict[typing.Optional[str], typing.Dict[str, str]]:
+    def links(self) -> dict[str | None, dict[str, str]]:
         """
         Returns the parsed header links of the response, if any
         """
         header = self.headers.get("link")
-        ldict = {}
-        if header:
-            links = parse_header_links(header)
-            for link in links:
-                key = link.get("rel") or link.get("url")
-                ldict[key] = link
-        return ldict
+        if header is None:
+            return {}
+
+        return {
+            (link.get("rel") or link.get("url")): link
+            for link in _parse_header_links(header)
+        }
 
     @property
     def num_bytes_downloaded(self) -> int:
@@ -783,14 +859,14 @@ class Response:
     def __repr__(self) -> str:
         return f"<Response [{self.status_code} {self.reason_phrase}]>"
 
-    def __getstate__(self) -> typing.Dict[str, typing.Any]:
+    def __getstate__(self) -> dict[str, typing.Any]:
         return {
             name: value
             for name, value in self.__dict__.items()
             if name not in ["extensions", "stream", "is_closed", "_decoder"]
         }
 
-    def __setstate__(self, state: typing.Dict[str, typing.Any]) -> None:
+    def __setstate__(self, state: dict[str, typing.Any]) -> None:
         for name, value in state.items():
             setattr(self, name, value)
         self.is_closed = True
@@ -805,12 +881,10 @@ class Response:
             self._content = b"".join(self.iter_bytes())
         return self._content
 
-    def iter_bytes(
-        self, chunk_size: typing.Optional[int] = None
-    ) -> typing.Iterator[bytes]:
+    def iter_bytes(self, chunk_size: int | None = None) -> typing.Iterator[bytes]:
         """
         A byte-iterator over the decoded response content.
-        This allows us to handle gzip, deflate, and brotli encoded responses.
+        This allows us to handle gzip, deflate, brotli, and zstd encoded responses.
         """
         if hasattr(self, "_content"):
             chunk_size = len(self._content) if chunk_size is None else chunk_size
@@ -830,9 +904,7 @@ class Response:
                 for chunk in chunker.flush():
                     yield chunk
 
-    def iter_text(
-        self, chunk_size: typing.Optional[int] = None
-    ) -> typing.Iterator[str]:
+    def iter_text(self, chunk_size: int | None = None) -> typing.Iterator[str]:
         """
         A str-iterator over the decoded response content
         that handles both gzip, deflate, etc but also detects the content's
@@ -847,7 +919,7 @@ class Response:
                     yield chunk
             text_content = decoder.flush()
             for chunk in chunker.decode(text_content):
-                yield chunk
+                yield chunk  # pragma: no cover
             for chunk in chunker.flush():
                 yield chunk
 
@@ -860,9 +932,7 @@ class Response:
             for line in decoder.flush():
                 yield line
 
-    def iter_raw(
-        self, chunk_size: typing.Optional[int] = None
-    ) -> typing.Iterator[bytes]:
+    def iter_raw(self, chunk_size: int | None = None) -> typing.Iterator[bytes]:
         """
         A byte-iterator over the raw response content.
         """
@@ -910,11 +980,11 @@ class Response:
         return self._content
 
     async def aiter_bytes(
-        self, chunk_size: typing.Optional[int] = None
+        self, chunk_size: int | None = None
     ) -> typing.AsyncIterator[bytes]:
         """
         A byte-iterator over the decoded response content.
-        This allows us to handle gzip, deflate, and brotli encoded responses.
+        This allows us to handle gzip, deflate, brotli, and zstd encoded responses.
         """
         if hasattr(self, "_content"):
             chunk_size = len(self._content) if chunk_size is None else chunk_size
@@ -935,7 +1005,7 @@ class Response:
                     yield chunk
 
     async def aiter_text(
-        self, chunk_size: typing.Optional[int] = None
+        self, chunk_size: int | None = None
     ) -> typing.AsyncIterator[str]:
         """
         A str-iterator over the decoded response content
@@ -951,7 +1021,7 @@ class Response:
                     yield chunk
             text_content = decoder.flush()
             for chunk in chunker.decode(text_content):
-                yield chunk
+                yield chunk  # pragma: no cover
             for chunk in chunker.flush():
                 yield chunk
 
@@ -965,7 +1035,7 @@ class Response:
                 yield line
 
     async def aiter_raw(
-        self, chunk_size: typing.Optional[int] = None
+        self, chunk_size: int | None = None
     ) -> typing.AsyncIterator[bytes]:
         """
         A byte-iterator over the raw response content.
@@ -1011,7 +1081,7 @@ class Cookies(typing.MutableMapping[str, str]):
     HTTP Cookies, as a mutable mapping.
     """
 
-    def __init__(self, cookies: typing.Optional[CookieTypes] = None) -> None:
+    def __init__(self, cookies: CookieTypes | None = None) -> None:
         if cookies is None or isinstance(cookies, dict):
             self.jar = CookieJar()
             if isinstance(cookies, dict):
@@ -1073,10 +1143,10 @@ class Cookies(typing.MutableMapping[str, str]):
     def get(  # type: ignore
         self,
         name: str,
-        default: typing.Optional[str] = None,
-        domain: typing.Optional[str] = None,
-        path: typing.Optional[str] = None,
-    ) -> typing.Optional[str]:
+        default: str | None = None,
+        domain: str | None = None,
+        path: str | None = None,
+    ) -> str | None:
         """
         Get a cookie by name. May optionally include domain and path
         in order to specify exactly which cookie to retrieve.
@@ -1098,8 +1168,8 @@ class Cookies(typing.MutableMapping[str, str]):
     def delete(
         self,
         name: str,
-        domain: typing.Optional[str] = None,
-        path: typing.Optional[str] = None,
+        domain: str | None = None,
+        path: str | None = None,
     ) -> None:
         """
         Delete a cookie by name. May optionally include domain and path
@@ -1119,9 +1189,7 @@ class Cookies(typing.MutableMapping[str, str]):
         for cookie in remove:
             self.jar.clear(cookie.domain, cookie.path, cookie.name)
 
-    def clear(
-        self, domain: typing.Optional[str] = None, path: typing.Optional[str] = None
-    ) -> None:
+    def clear(self, domain: str | None = None, path: str | None = None) -> None:
         """
         Delete all cookies. Optionally include a domain and path in
         order to only delete a subset of all the cookies.
@@ -1134,7 +1202,7 @@ class Cookies(typing.MutableMapping[str, str]):
             args.append(path)
         self.jar.clear(*args)
 
-    def update(self, cookies: typing.Optional[CookieTypes] = None) -> None:  # type: ignore
+    def update(self, cookies: CookieTypes | None = None) -> None:  # type: ignore
         cookies = Cookies(cookies)
         for cookie in cookies.jar:
             self.jar.set_cookie(cookie)
@@ -1196,7 +1264,7 @@ class Cookies(typing.MutableMapping[str, str]):
         for use with `CookieJar` operations.
         """
 
-        def __init__(self, response: Response):
+        def __init__(self, response: Response) -> None:
             self.response = response
 
         def info(self) -> email.message.Message:

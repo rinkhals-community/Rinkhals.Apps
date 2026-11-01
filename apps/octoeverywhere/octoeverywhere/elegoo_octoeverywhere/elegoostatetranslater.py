@@ -1,18 +1,32 @@
+import logging
+import threading
+from typing import Optional, Tuple
+
 from octoeverywhere.notificationshandler import NotificationsHandler
+from octoeverywhere.interfaces import IPrinterStateReporter
+from octoeverywhere.util.delayedcallback import DelayedCallback
 
 from .elegooclient import ElegooClient
 from .elegoomodels import PrinterState
 from .elegoofilemanager import ElegooFileManager, FileInfo
+from .interfaces import IStateTranslator
+
 
 # This class is responsible for listening to the mqtt messages to fire off notifications
 # and to act as the printer state interface for Bambu printers.
-class ElegooStateTranslator:
+class ElegooStateTranslator(IPrinterStateReporter, IStateTranslator):
 
-    def __init__(self, logger) -> None:
+    # The amount of time we will wait for a reconnect before we fire the disconnected notification.
+    c_ConnectionLostNotificationDelaySec = 10.0
+
+
+    def __init__(self, logger:logging.Logger) -> None:
         self.Logger = logger
-        self.NotificationsHandler:NotificationsHandler = None
-        self.LastStatus:str = None
+        self.NotificationsHandler:NotificationsHandler = None #pyright: ignore[reportAttributeAccessIssue]
+        self.LastStatus:Optional[str] = None
         self.IsWaitingOnPrintInfoToFirePrintStart = False
+        self.DelayedConnectionLostCallback:Optional[DelayedCallback] = None
+        self.DelayedConnectionLostCallbackLock = threading.Lock()
 
 
     def SetNotificationHandler(self, notificationHandler:NotificationsHandler):
@@ -26,17 +40,33 @@ class ElegooStateTranslator:
         # If we were fully connected and were printing or warming up, then report  the connection loss.
         # Otherwise, don't bother, since it might just be the user turning off the printer.
         if wasFullyConnected and (PrinterState.IsPrepareOrSlicingState(self.LastStatus) or PrinterState.IsPrintingState(self.LastStatus, False)):
-            self.NotificationsHandler.OnError("Connection to printer lost during a print.")
+            # There seems to be a bug while printing where we will get disconnected from the printer's server but then reconnected with no effect on the print.
+            # To combat a spammy notifications, we use a delayed callback to only fire after we know we have been disconnected for some time.
+            with self.DelayedConnectionLostCallbackLock:
+                if self.DelayedConnectionLostCallback is not None:
+                    self.DelayedConnectionLostCallback.Cancel()
+                self.DelayedConnectionLostCallback = DelayedCallback.Create(self.Logger, "ElegooDelayedConnectionLostCallback", self.c_ConnectionLostNotificationDelaySec, self._DelayedConnectionLostCallback)
 
         # Always reset our state.
         self.LastStatus = None
         self.IsWaitingOnPrintInfoToFirePrintStart = False
 
 
+    def _DelayedConnectionLostCallback(self):
+        # If this fired, the amount of time passed before a reconnect where we should fire the notification.
+        self.NotificationsHandler.OnError("Connection to printer lost during a print.", platformErrorCode="connection_lost")
+
+
     # Fired when any mqtt message comes in.
     # State will always be NOT NONE, since it's going to be created before this call.
     # The isFirstFullSyncResponse flag indicates if this is the first full state sync of a new connection.
-    def OnStatusUpdate(self, pState:PrinterState, isFirstFullSyncResponse:bool):
+    def OnStatusUpdate(self, pState:PrinterState, isFirstFullSyncResponse:bool) -> None:
+
+        # Ensure if we have a connection lost delay in progress, to cancel it.
+        with self.DelayedConnectionLostCallbackLock:
+            if self.DelayedConnectionLostCallback is not None:
+                self.DelayedConnectionLostCallback.Cancel()
+                self.DelayedConnectionLostCallback = None
 
         # First, if we have a new connection and we just synced, make sure the notification handler is in sync.
         if isFirstFullSyncResponse:
@@ -48,7 +78,13 @@ class ElegooStateTranslator:
         # Based on the old state and the new state, we can determine what to do.
         if self.LastStatus != newStatus:
             # We know the state changed.
-            self.Logger.debug(f"Elegoo printer state change: {self.LastStatus} -> {newStatus} - New Print Info Status: {pState.PrintInfoStatus} New Current Status: {pState.CurrentStatus}")
+            self.Logger.debug(
+                "Elegoo printer state change: %s -> %s - New Print Info Status: %s New Current Status: %s",
+                self.LastStatus,
+                newStatus,
+                pState.PrintInfoStatus,
+                pState.CurrentStatus,
+            )
             if self.LastStatus is None:
                 # If the last state is None, this is mostly likely the first time we've seen a state.
                 # All we want to do here is update last state to the new state.
@@ -111,7 +147,7 @@ class ElegooStateTranslator:
         fileSizeKb = 0
         totalFilamentWeightMg = 0
         # Try to get the file info if we can - this will come from a in-memory cache if we have it.
-        fileInfo:FileInfo = ElegooFileManager.Get().GetFileInfoFromState(printerState)
+        fileInfo:Optional[FileInfo] = ElegooFileManager.Get().GetFileInfoFromState(printerState)
         if fileInfo is not None:
             if fileInfo.FileSizeKb is not None:
                 fileSizeKb = fileInfo.FileSizeKb
@@ -131,7 +167,11 @@ class ElegooStateTranslator:
     def OnPauseOrTempError(self, printerState:PrinterState):
         # Use the most recent print info, to ensure the data still exists. It gets cleared out of the print info sometimes
         mostRecentPrint = printerState.GetMostRecentPrintInfo()
-        self.NotificationsHandler.OnPaused(mostRecentPrint.GetFileNameWithNoExtension())
+        self.NotificationsHandler.OnPaused(
+            mostRecentPrint.GetFileNameWithNoExtension(),
+            platformErrorCode=self._GetElegooPlatformErrorCode(printerState),
+            error=self._GetElegooError(printerState)
+        )
         # TODO - Right now we don't seem to have a way to get error states, they just always "pause"
         # For errors that are user fixable, like filament run outs, the printer will go into a paused state with
         # a printer error message. In this case we want to fire different things.
@@ -158,13 +198,38 @@ class ElegooStateTranslator:
     def OnCancelled(self, printerState:PrinterState):
         # Use the most recent print info, to ensure the data still exists. It gets cleared out of the print info sometimes
         mostRecentPrint = printerState.GetMostRecentPrintInfo()
-        self.NotificationsHandler.OnFailed(mostRecentPrint.GetFileNameWithNoExtension(), None, "cancelled")
+        self.NotificationsHandler.OnFailed(
+            mostRecentPrint.GetFileNameWithNoExtension(),
+            None,
+            "cancelled",
+            platformErrorCode=self._GetElegooPlatformErrorCode(printerState),
+            error=self._GetElegooError(printerState)
+        )
 
 
     def OnPrintProgress(self, printerState:PrinterState):
         # We use the "moonrakerProgressFloat" because it's really means a progress that's
         # 100% correct and there's no estimations needed.
-        self.NotificationsHandler.OnPrintProgress(None, float(printerState.Progress))
+        progress = printerState.Progress
+        if progress is None:
+            progress = 0.0
+        self.NotificationsHandler.OnPrintProgress(None, float(progress))
+
+
+    def _GetElegooPlatformErrorCode(self, printerState:PrinterState) -> Optional[str]:
+        parts = []
+        if printerState.CurrentStatus is not None:
+            parts.append("CurrentStatus=" + str(printerState.CurrentStatus))
+        if printerState.PrintInfoStatus is not None:
+            parts.append("PrintInfoStatus=" + str(printerState.PrintInfoStatus))
+        if len(parts) == 0:
+            return None
+        return ";".join(parts)
+
+
+    def _GetElegooError(self, printerState:PrinterState) -> Optional[str]:
+        (_, subStatus) = printerState.GetCurrentStatus()
+        return subStatus
 
 
     #
@@ -176,7 +241,7 @@ class ElegooStateTranslator:
     # ! Interface Function ! The entire interface must change if the function is changed.
     # This function will get the estimated time remaining for the current print.
     # Returns -1 if the estimate is unknown.
-    def GetPrintTimeRemainingEstimateInSeconds(self):
+    def GetPrintTimeRemainingEstimateInSeconds(self) -> int:
         # Get the current state.
         state = ElegooClient.Get().GetState()
         if state is None:
@@ -191,7 +256,7 @@ class ElegooStateTranslator:
     # ! Interface Function ! The entire interface must change if the function is changed.
     # If the printer is warming up, this value would be -1. The First Layer Notification logic depends upon this or GetCurrentLayerInfo!
     # Returns the current zoffset if known, otherwise -1.
-    def GetCurrentZOffset(self):
+    def GetCurrentZOffsetMm(self) -> int:
         # This is only used for the first layer logic, but only if GetCurrentLayerInfo fails.
         # Since our GetCurrentLayerInfo shouldn't always work, this shouldn't really matter.
         # We can't get this value, but since it doesn't really matter, we can estimate it.
@@ -200,7 +265,7 @@ class ElegooStateTranslator:
             return -1
 
         # Since the standard layer height is 0.20mm, we just use that for a guess.
-        return currentLayer * 0.2
+        return currentLayer * 20
 
 
     # ! Interface Function ! The entire interface must change if the function is changed.
@@ -209,7 +274,7 @@ class ElegooStateTranslator:
     #     If the current value is unknown, (0,0) is returned.
     #     If the values are known, (currentLayer(int), totalLayers(int)) is returned.
     #          Note that total layers will always be > 0, but current layer can be 0!
-    def GetCurrentLayerInfo(self):
+    def GetCurrentLayerInfo(self) -> Tuple[Optional[int], Optional[int]]:
         state = ElegooClient.Get().GetState()
         if state is None:
             # If we dont have a state yet, return 0,0, which means we can get layer info but we don't know yet.
@@ -222,13 +287,17 @@ class ElegooStateTranslator:
         # Use the most recent print info, since this will get cleared before the final notifications fire.
         currentLayer = state.GetMostRecentPrintInfo().CurrentLayer
         totalLayers = state.GetMostRecentPrintInfo().TotalLayer
+        if currentLayer is None:
+            currentLayer = 0
+        if totalLayers is None:
+            totalLayers = 0
         return (currentLayer, totalLayers)
 
 
     # ! Interface Function ! The entire interface must change if the function is changed.
     # Returns True if the printing timers (notifications and gadget) should be running, which is only the printing state. (not even paused)
     # False if the printer state is anything else, which means they should stop.
-    def ShouldPrintingTimersBeRunning(self):
+    def ShouldPrintingTimersBeRunning(self) -> bool:
         state = ElegooClient.Get().GetState()
         if state is None:
             return False
@@ -237,7 +306,7 @@ class ElegooStateTranslator:
 
     # ! Interface Function ! The entire interface must change if the function is changed.
     # If called while the print state is "Printing", returns True if the print is currently in the warm-up phase. Otherwise False
-    def IsPrintWarmingUp(self):
+    def IsPrintWarmingUp(self) -> bool:
         state = ElegooClient.Get().GetState()
         if state is None:
             return False
@@ -253,7 +322,7 @@ class ElegooStateTranslator:
 
     # ! Interface Function ! The entire interface must change if the function is changed.
     # Returns the (hotend temp, bed temp) as a float in celsius if they are available, otherwise None.
-    def GetTemps(self):
+    def GetTemps(self) -> Tuple[Optional[float], Optional[float]]:
         state = ElegooClient.Get().GetState()
         if state is None:
             return (None, None)

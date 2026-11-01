@@ -1,13 +1,20 @@
-import logging
 import os
 import json
-from typing import List
+import logging
+from typing import Any, Dict, List, Optional
 
 from ..sentry import Sentry
 from .webcamutil import WebcamUtil
 from .quickcam import QuickCamManager
 from ..octohttprequest import OctoHttpRequest
+from ..interfaces import IWebcamPlatformHelper
 from .webcamsettingitem import WebcamSettingItem
+from ..httpresult import HttpResult, HttpResultOrNone
+from ..httpheaderpolicy import HttpHeaderPolicy
+from ..WebStream.uploadbody import UploadBody
+
+from ..Proto.HttpInitialContext import HttpInitialContext
+
 
 # The point of this class is to abstract the logic that needs to be done to reliably get a webcam snapshot and stream from many types of
 # printer setups. The main entry point is GetSnapshot() which will try a number of ways to get a snapshot from whatever camera system is
@@ -28,33 +35,33 @@ class WebcamHelper:
     c_OeWebcamTransformHeaderKey = "x-oe-webcam-transform"
 
     # Logic for a static singleton
-    _Instance = None
+    _Instance:"WebcamHelper" = None #pyright: ignore[reportAssignmentType]
 
 
     @staticmethod
-    def Init(logger:logging.Logger, webcamPlatformHelperInterface, pluginDataFolderPath):
+    def Init(logger:logging.Logger, webcamPlatformHelperInterface:IWebcamPlatformHelper, pluginDataFolderPath:str) -> None:
         WebcamHelper._Instance = WebcamHelper(logger, webcamPlatformHelperInterface, pluginDataFolderPath)
         QuickCamManager.Init(logger, webcamPlatformHelperInterface)
 
 
     @staticmethod
-    def Get():
+    def Get() -> "WebcamHelper":
         return WebcamHelper._Instance
 
 
-    def __init__(self, logger:logging.Logger, webcamPlatformHelperInterface, pluginDataFolderPath:str):
+    def __init__(self, logger:logging.Logger, webcamPlatformHelperInterface:IWebcamPlatformHelper, pluginDataFolderPath:str):
         self.Logger = logger
         self.WebcamPlatformHelperInterface = webcamPlatformHelperInterface
 
         # Init local webcam settings stuffs.
         self.SettingsFilePath = os.path.join(pluginDataFolderPath, "webcam-settings.json")
-        self.DefaultCameraName:str = None
+        self.DefaultCameraName:Optional[str] = None
         self.LocalPluginWebcamSettingsObjects:List[WebcamSettingItem] = []
         self._LoadPluginWebcamSettings()
 
 
     # Returns if flip H is set in the settings.
-    def GetWebcamFlipH(self, cameraIndex:int = None):
+    def GetWebcamFlipH(self, cameraIndex:Optional[int]=None) -> Optional[bool]:
         obj = self._GetWebcamSettingObj(cameraIndex)
         if obj is None:
             return None
@@ -62,7 +69,7 @@ class WebcamHelper:
 
 
     # Returns if flip V is set in the settings.
-    def GetWebcamFlipV(self, cameraIndex:int = None):
+    def GetWebcamFlipV(self, cameraIndex:Optional[int]=None) -> Optional[bool]:
         obj = self._GetWebcamSettingObj(cameraIndex)
         if obj is None:
             return None
@@ -70,7 +77,7 @@ class WebcamHelper:
 
 
     # Returns if rotate 90 is set in the settings.
-    def GetWebcamRotation(self, cameraIndex:int = None):
+    def GetWebcamRotation(self, cameraIndex:Optional[int]=None) -> Optional[int]:
         obj = self._GetWebcamSettingObj(cameraIndex)
         if obj is None:
             return None
@@ -78,29 +85,36 @@ class WebcamHelper:
 
 
     # Given a set of request headers, this determine if this is a special Oracle call indicating it's a snapshot or webcam stream.
-    def IsSnapshotOrWebcamStreamOracleRequest(self, requestHeadersDict):
+    def IsSnapshotOrWebcamStreamOracleRequest(self, requestHeadersDict:Dict[str, str]) -> bool:
         return self.IsSnapshotOracleRequest(requestHeadersDict) or self.IsWebcamStreamOracleRequest(requestHeadersDict)
 
 
     # Check if the special header is set, indicating this is a snapshot request.
-    def IsSnapshotOracleRequest(self, requestHeadersDict):
+    def IsSnapshotOracleRequest(self, requestHeadersDict:Dict[str, str]) -> bool:
         return WebcamHelper.c_OracleSnapshotHeaderKey in requestHeadersDict
 
 
     # Check if the special header is set, indicating this is a webcam stream request.
-    def IsWebcamStreamOracleRequest(self, requestHeadersDict):
+    def IsWebcamStreamOracleRequest(self, requestHeadersDict:Dict[str, str]) -> bool:
         return WebcamHelper.c_OracleStreamHeaderKey in requestHeadersDict
 
+
     # If the header is set to specify a camera name, this returns it. Otherwise None
-    def GetOracleRequestCameraIndex(self, requestHeadersDict) -> int:
-        if WebcamHelper.c_OracleWebcamIndexHeaderKey in requestHeadersDict:
-            return int(requestHeadersDict[WebcamHelper.c_OracleWebcamIndexHeaderKey])
+    def GetOracleRequestCameraIndex(self, requestHeadersDict:Dict[str, str]) -> Optional[int]:
+        value = requestHeadersDict.get(WebcamHelper.c_OracleWebcamIndexHeaderKey, None)
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except Exception as e:
+            Sentry.OnException("WebcamHelper GetOracleRequestCameraIndex failed to convert the camera index to an int.", e)
         return None
+
 
     # Called by the OctoWebStreamHelper when a Oracle snapshot or webcam stream request is detected.
     # It's important that this function returns a OctoHttpRequest that's very similar to what the default MakeHttpCall function
     # returns, to ensure the rest of the octostream http logic can handle the response.
-    def MakeSnapshotOrWebcamStreamRequest(self, httpInitialContext, method, sendHeaders, uploadBuffer) -> OctoHttpRequest.Result:
+    def MakeSnapshotOrWebcamStreamRequest(self, httpInitialContext:HttpInitialContext, method:str, sendHeaders:Dict[str, str], uploadBuffer:UploadBody) -> HttpResultOrNone:
         cameraIndexOpt = self.GetOracleRequestCameraIndex(sendHeaders)
         if self.IsSnapshotOracleRequest(sendHeaders):
             return self.GetSnapshot(cameraIndexOpt)
@@ -115,18 +129,15 @@ class WebcamHelper:
     #
     # On failure, this returns None. Returning None will fail out the request.
     # On success, this will return a valid OctoHttpRequest.
-    def GetWebcamStream(self, cameraIndex:int = None) -> OctoHttpRequest.Result:
-        # Wrap the entire result in the add transform function, so on success the header gets added.
-        return self._AddOeWebcamTransformHeader(self._GetWebcamStreamInternal(cameraIndex), cameraIndex)
-
-
-    def _GetWebcamStreamInternal(self, cameraIndex:int = None) -> OctoHttpRequest.Result:
-        # Get the webcam settings object for this request.
-        # If there are no webcams, this will return None
+    def GetWebcamStream(self, cameraIndex:Optional[int]=None) -> HttpResultOrNone:
         webcamSettingsObj = self._GetWebcamSettingObj(cameraIndex)
         if webcamSettingsObj is None:
             return None
+        # Wrap the entire result in the add transform function, so on success the header gets added.
+        return self._AddOeWebcamTransformHeader(self._GetWebcamStreamInternal(webcamSettingsObj), webcamSettingsObj)
 
+
+    def _GetWebcamStreamInternal(self, webcamSettingsObj:WebcamSettingItem) -> HttpResultOrNone:
         # First, check if this webcam URL needs to be handled by the QuickCam system.
         result = QuickCamManager.Get().TryGetStream(webcamSettingsObj)
         if result is not None:
@@ -152,19 +163,16 @@ class WebcamHelper:
     #
     # On failure, this returns None. Returning None will fail out the request.
     # On success, this will return a valid OctoHttpRequest that's fully filled out. The stream will always already be fully read, and will be FullBodyBuffer var.
-    def GetSnapshot(self, cameraIndex:int = None) -> OctoHttpRequest.Result:
-        # Wrap the entire result in the _EnsureJpegHeaderInfo function, so ensure the returned snapshot can be used by all image processing libs.
-        # Wrap the entire result in the add transform function, so on success the header gets added.
-        return self._AddOeWebcamTransformHeader(self._EnsureJpegHeaderInfo(self._GetSnapshotInternal(cameraIndex)), cameraIndex)
-
-
-    def _GetSnapshotInternal(self, cameraIndex:int = None) -> OctoHttpRequest.Result:
-        # Get the webcam settings object for this request.
-        # If there are no webcams, this will return None
+    def GetSnapshot(self, cameraIndex:Optional[int]=None) -> HttpResultOrNone:
         webcamSettingsObj = self._GetWebcamSettingObj(cameraIndex)
         if webcamSettingsObj is None:
             return None
+        # Wrap the entire result in the _EnsureJpegHeaderInfo function, so ensure the returned snapshot can be used by all image processing libs.
+        # Wrap the entire result in the add transform function, so on success the header gets added.
+        return self._AddOeWebcamTransformHeader(self._EnsureJpegHeaderInfo(self._GetSnapshotInternal(webcamSettingsObj)), webcamSettingsObj)
 
+
+    def _GetSnapshotInternal(self, webcamSettingsObj:WebcamSettingItem) -> HttpResultOrNone:
         # First, check if this webcam URL needs to be handled by the QuickCam system.
         result = QuickCamManager.Get().TryToGetSnapshot(webcamSettingsObj)
         if result is not None:
@@ -192,7 +200,7 @@ class WebcamHelper:
         return self._GetSnapshotFromStream(streamUrl)
 
 
-    def _GetSnapshotFromStream(self, url) -> OctoHttpRequest.Result:
+    def _GetSnapshotFromStream(self, url:str) -> HttpResultOrNone:
         try:
             # Try to connect the the mjpeg stream using the http helper class.
             # This is required because knowing the port to connect to might be tricky.
@@ -223,16 +231,16 @@ class WebcamHelper:
                     "content-length": str(len(result.ImageBuffer))
                 }
                 # Return a result. Return the full image buffer which will be used as the response body.
-                return OctoHttpRequest.Result(200, headers, url, True, fullBodyBuffer=result.ImageBuffer)
+                return HttpResult(200, headers, url, True, fullBodyBuffer=result.ImageBuffer)
         except Exception as e:
-            Sentry.Exception("Failed to get fallback snapshot.", e)
+            Sentry.OnException("Failed to get fallback snapshot.", e)
         return None
 
 
     # Returns the default webcam setting object or None if there isn't one.
     # If there isn't a default webcam name, it's assumed to be the first webcam returned in the list command.
     # If there are no webcams, this will return None
-    def _GetWebcamSettingObj(self, cameraIndex:int = None):
+    def _GetWebcamSettingObj(self, cameraIndex:Optional[int]=None) -> Optional[WebcamSettingItem]:
         try:
             # Get the current list of webcam settings.
             webcamItems = self.ListWebcams()
@@ -247,50 +255,51 @@ class WebcamHelper:
             if cameraIndex is not None and cameraIndex >= 0 and cameraIndex < len(webcamItems):
                 return webcamItems[cameraIndex]
 
-            self.Logger.warn(f"_GetWebcamSettingObj asked for {cameraIndex} but it was out of bounds. Max: {len(webcamItems)}")
+            self.Logger.warning(f"_GetWebcamSettingObj asked for {cameraIndex} but it was out of bounds. Max: {len(webcamItems)}")
             return webcamItems[WebcamHelper.c_DefaultWebcamIndex]
         except Exception as e:
-            Sentry.Exception("WebcamHelper _GetWebcamSettingObj exception.", e)
+            Sentry.OnException("WebcamHelper _GetWebcamSettingObj exception.", e)
         return None
 
 
     # Returns the currently known list of webcams.
     # The order they are returned is the order the use sees them.
     # The default is usually the index 0.
-    def ListWebcams(self) -> List[WebcamSettingItem]:
+    def ListWebcams(self) -> Optional[List[WebcamSettingItem]]:
         try:
             # Get the webcams from the platform.
-            ret = self.WebcamPlatformHelperInterface.GetWebcamConfig()
+            platformWebcamItems = self.WebcamPlatformHelperInterface.GetWebcamConfig()
+            ret = None if platformWebcamItems is None else list(platformWebcamItems)
 
             # Check if there are any plugin local items to return.
             # Note the cameras returned from ListWebcams() must always be first - the bambu logic depends on this! (see GetSnapshot_Override)
             pluginLocalWebcamItems = self.GetPluginLocalWebcamList()
             if pluginLocalWebcamItems is not None and len(pluginLocalWebcamItems) > 0:
                 if ret is None:
-                    ret = []
-                ret.extend(pluginLocalWebcamItems)
+                    ret = list(pluginLocalWebcamItems)
+                else:
+                    ret.extend(pluginLocalWebcamItems)
 
             # Ensure we got something
             if ret is None or len(ret) == 0:
                 return None
             return ret
         except Exception as e:
-            Sentry.Exception("WebcamHelper ListWebcams exception.", e)
+            Sentry.OnException("WebcamHelper ListWebcams exception.", e)
         return None
 
 
     # Checks if the result was success and if so adds the common header.
     # Returns the octoHttpResult, so the function is chainable
-    def _AddOeWebcamTransformHeader(self, octoHttpResult, cameraIndex:int):
+    def _AddOeWebcamTransformHeader(self, octoHttpResult:HttpResultOrNone, settings:Optional[WebcamSettingItem]) -> HttpResultOrNone:
         if octoHttpResult is None or octoHttpResult.StatusCode > 300:
             return octoHttpResult
 
         # Default to none
         transformStr = "none"
 
-        # If there are any settings build a string with them all contaminated.
-        settings = self._GetWebcamSettingObj(cameraIndex)
-        if settings.FlipH or settings.FlipV or settings.Rotation != 0:
+        # If there are any settings build a string with them all concatenated.
+        if settings is not None and (settings.FlipH or settings.FlipV or settings.Rotation != 0):
             transformStr = ""
             if settings.FlipH:
                 transformStr += "fliph "
@@ -310,11 +319,10 @@ class WebcamHelper:
     # To combat this, we will check if the image is a jpeg, and if so, ensure the header is set correctly.
     #
     # Returns the octoHttpResult, so the function is chainable
-    def _EnsureJpegHeaderInfo(self, octoHttpResult:OctoHttpRequest.Result):
+    def _EnsureJpegHeaderInfo(self, octoHttpResult:HttpResultOrNone) -> HttpResultOrNone:
         # Ensure we got a result.
-        if octoHttpResult is None or octoHttpResult.StatusCode > 300:
+        if octoHttpResult is None or octoHttpResult.StatusCode != 200:
             return octoHttpResult
-
         # The GetSnapshot API will always return the fully buffered snapshot.
         # If there already isn't a full buffered body, make one now.
         buf = octoHttpResult.FullBodyBuffer
@@ -326,12 +334,29 @@ class WebcamHelper:
                 self.Logger.error("_EnsureJpegHeaderInfo got a null body read from ReadAllContentFromStreamResponse")
                 return None
 
-        imgBuffer = WebcamUtil.EnsureJpegHeaderInfo(self.Logger, buf)
+        # HTTP encoding is independent of the tunnel. A compressed or partial snapshot must not
+        # be inspected as JPEG bytes, and an origin's no-transform/signature prevents byte repair.
+        # Still buffer these responses above to preserve GetSnapshot's contract for notifications.
+        contentEncoding = octoHttpResult.Headers.get("Content-Encoding", "").strip().lower()
+        if (contentEncoding not in ("", "identity") or "Content-Range" in octoHttpResult.Headers
+                or HttpHeaderPolicy.HasNoTransform(octoHttpResult.Headers.items())
+                or "Signature" in octoHttpResult.Headers or "Signature-Input" in octoHttpResult.Headers):
+            return octoHttpResult
+
+        repair = WebcamUtil.EnsureJpegHeaderInfoWithDetails(self.Logger, buf)
+        imgBuffer = repair.ImageBuffer
+        # APP0 identifier repair edits the input buffer in place, so comparing the two buffers
+        # afterward would miss it. The repair result tells us whether the JPEG bytes changed.
+        if repair.FixMode in (WebcamUtil.c_JpegHeaderFixModeSetApp0Identifier, WebcamUtil.c_JpegHeaderFixModeInsertApp0):
+            # Repaired JPEG bytes no longer match the origin's validators or digests.
+            for name in ("ETag", "Last-Modified", "Content-MD5", "Digest", "Content-Digest", "Repr-Digest", "Accept-Ranges"):
+                octoHttpResult.Headers.pop(name, None)
+            octoHttpResult.Headers["Content-Length"] = str(len(imgBuffer))
         octoHttpResult.SetFullBodyBuffer(imgBuffer)
         return octoHttpResult
 
 
-    def GetDevAddress(self):
+    def GetDevAddress(self) -> str:
         return OctoHttpRequest.GetLocalhostAddress()+":"+str(OctoHttpRequest.GetLocalOctoPrintPort())
 
 
@@ -347,7 +372,7 @@ class WebcamHelper:
     # If the camera-streamer webrtc stream URL is found, the correct camera-streamer jmpeg stream is returned.
     # Otherwise None is returned.
     @staticmethod
-    def DetectCameraStreamerWebRTCStreamUrlAndTranslate(streamUrl:str) -> str:
+    def DetectWebRTCStreamUrlAndTranslate(logger:logging.Logger, streamUrl:Optional[str]) -> Optional[str]:
         # Ensure there's something to work with
         if streamUrl is None:
             return None
@@ -366,7 +391,47 @@ class WebcamHelper:
 
         # This is camera-streamer.
         # We want to preserver the URL before the /webrtc, and only replace the /webrtc.
-        return streamUrl[:webRtcLocation] + "/stream"
+        # This should be something like /webcam/webrtc or /camera/webrtc, but it might also be /webcam2/webrtc or something else.
+        possibleStreamUrl = streamUrl[:webRtcLocation] + "/stream"
+
+        # Some versions of camera streamer use /webcam/stream, others need /webcam/stream.mjpg, like on the Snapmaker U1 custom firmware.
+        # So we need to first try /stream and see if it's a valid jmpeg stream, and if not try /stream.mjpg
+        # If we fail, we go with /stream anyway since it's the most common.
+        def testForJMPEGStream(url:str) -> bool:
+            try:
+                result = OctoHttpRequest.MakeHttpCall(logger, url, OctoHttpRequest.GetPathType(url), "GET", timeoutSec=1.0)
+                if result is None:
+                    raise Exception("MakeHttpCall returned None")
+                # Ensure we use a with clause so the stream body is closed after we are done.
+                with result:
+                    if result.StatusCode != 200:
+                        raise Exception(f"MakeHttpCall returned a non-200 error code. {result.StatusCode}")
+                    # Check the content type to see if it's mjpeg
+                    contentType = result.Headers.get("content-type", "").lower()
+                    if "multipart/x-mixed-replace" in contentType:
+                        # This is good, return this URL.
+                        return True
+            except Exception as e:
+                logger.debug("DetectWebRTCStreamUrlAndTranslate test URL [%s] failed to validate as mjpeg stream. %s", url, e)
+            return False
+
+        # Try the most common .../stream first
+        if testForJMPEGStream(possibleStreamUrl):
+            logger.debug("DetectWebRTCStreamUrlAndTranslate translated WebRTC URL [%s] to mjpeg stream URL [%s]", streamUrl, possibleStreamUrl)
+            return possibleStreamUrl
+
+        # Try adding the less common .mjpg suffix
+        # Note, the snapmaker seems to be the only printer that uses this .mjpg for now, which is good, because we need to force 10fps on it.
+        # The problem is it tries to stream 1080p at 30FPS, which the wifi struggles handling. 10fps is totally fine, so we use it.
+        # IMPORTANT! If we change this fps arg (which would also break the server) we must update the QuickCamManager._NormalizeQuickCamUrl fps value.
+        possibleStreamUrlMjpg = possibleStreamUrl + f"{QuickCamManager.c_JMpegExtension}?{QuickCamManager.c_FpsGetParam}=10"
+        if testForJMPEGStream(possibleStreamUrlMjpg):
+            logger.debug("DetectWebRTCStreamUrlAndTranslate translated WebRTC URL [%s] to mjpeg stream URL [%s]", streamUrl, possibleStreamUrlMjpg)
+            return possibleStreamUrlMjpg
+
+        # If we fail, default to the most common /stream url.
+        logger.debug("DetectWebRTCStreamUrlAndTranslate translated WebRTC URL [%s] to mjpeg stream URL [%s] (defaulted)", streamUrl, possibleStreamUrl)
+        return possibleStreamUrl
 
 
     # A static helper that provides common logic to detect webcam urls missing a directory slash.
@@ -379,7 +444,7 @@ class WebcamHelper:
     # If the slash is detected to be missing, this function will return the URL with the slash added correctly.
     # Otherwise, it returns None.
     @staticmethod
-    def FixMissingSlashInWebcamUrlIfNeeded(logger:logging.Logger, webcamUrl:str) -> str:
+    def FixMissingSlashInWebcamUrlIfNeeded(logger:logging.Logger, webcamUrl:str) -> Optional[str]:
         # First, the stream must have webcam* and ?action= in it, otherwise, we don't care.
         streamUrlLower = webcamUrl.lower()
         webcamLocation = streamUrlLower.find("webcam")
@@ -443,7 +508,7 @@ class WebcamHelper:
         if len(self.LocalPluginWebcamSettingsObjects) == 0 or returnDisabledItems:
             return self.LocalPluginWebcamSettingsObjects
         # Otherwise return the list of enabled objects.
-        ret = []
+        ret:List[WebcamSettingItem] = []
         for i in self.LocalPluginWebcamSettingsObjects:
             if i.Enabled:
                 ret.append(i)
@@ -455,7 +520,7 @@ class WebcamHelper:
         # Validate the new list of webcam items.
         for i in newList:
             if i.Validate(self.Logger) is False:
-                self.Logger.warn(f"SetPluginLocalWebcamList failed to validate the webcam settings object. {i.Name}")
+                self.Logger.warning(f"SetPluginLocalWebcamList failed to validate the webcam settings object. {i.Name}")
                 return False
 
         # Set the new list.
@@ -469,7 +534,7 @@ class WebcamHelper:
     def _SavePluginWebcamSettings(self) -> bool:
         try:
             # Convert the local webcam settings objects to dicts
-            localWebcamSettingsDict = []
+            localWebcamSettingsDict:List[Dict[str, Any]] = []
             for i in self.LocalPluginWebcamSettingsObjects:
                 localWebcamSettingsDict.append(i.Serialize())
 
@@ -509,7 +574,7 @@ class WebcamHelper:
                 self.DefaultCameraName = name.lower()
 
             # Set the local plugin webcam setting items.
-            items:List[WebcamSettingItem] = data.get("LocalPluginWebcamSettings", None)
+            items:dict = data.get("LocalPluginWebcamSettings", None)
             if items is not None and len(items) > 0:
                 for i in items:
                     wsi = WebcamSettingItem.Deserialize(i, self.Logger)

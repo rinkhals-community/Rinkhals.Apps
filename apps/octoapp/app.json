@@ -3,7 +3,7 @@
 
     "name": "OctoApp companion",
     "description": "Companion for the OctoApp mobile application",
-    "version": "3.2.2",
+    "version": "3.2.4",
 
     "upstream": {
         "type": "github-release",

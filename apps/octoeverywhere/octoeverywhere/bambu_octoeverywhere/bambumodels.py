@@ -1,15 +1,24 @@
 import time
 import logging
+import copy
 from enum import Enum
+from typing import Any, Dict, List, Optional
 
 from octoeverywhere.sentry import Sentry
+
+from .bambuerrors import BAMBU_PRINT_ERROR_STRINGS
+
 
 # Known printer error types.
 # Note that the print state doesn't have to be ERROR to have an error, during a print it's "PAUSED" but the print_error value is not 0.
 # Here's the full list https://e.bambulab.com/query.php?lang=en
 class BambuPrintErrors(Enum):
-    Unknown = 1             # This will be most errors, since most of them aren't mapped
+    Unknown = 1               # This will be most errors, since most of them aren't mapped
     FilamentRunOut = 2
+    PrintFailureDetected = 3  # The Bambu AI detected a failure.
+    PrintFilePauseCommand = 4 # The print file requested a pause.
+    PausedByUser = 5          # The user paused the print.
+    PausedUnknownReason = 6   # The printer is paused, but we don't know why, but it can be resumed.
 
 
 # Since MQTT syncs a full state and then sends partial updates, we keep track of the full state
@@ -19,29 +28,48 @@ class BambuState:
     def __init__(self) -> None:
         # We only parse out what we currently use.
         # We use the same naming as the json in the msg
-        self.stg_cur:int = None
-        self.gcode_state:str = None
-        self.layer_num:int = None
-        self.total_layer_num:int = None
-        self.subtask_name:str = None
-        self.mc_percent:int = None
-        self.nozzle_temper:float = None
-        self.nozzle_target_temper:float = None
-        self.bed_temper:float = None
-        self.bed_target_temper:float = None
-        self.mc_remaining_time:int = None
-        self.project_id:str = None
-        self.print_error:int = None
+        self.stg_cur:Optional[int] = None
+        self.gcode_state:Optional[str] = None
+        self.layer_num:Optional[int] = None
+        self.total_layer_num:Optional[int] = None
+        self.subtask_name:Optional[str] = None
+        self.mc_percent:Optional[int] = None
+        self.nozzle_temper:Optional[float] = None
+        self.nozzle_target_temper:Optional[float] = None
+        self.bed_temper:Optional[float] = None
+        self.bed_target_temper:Optional[float] = None
+        # The chamber temp. Note Bambu printers measure the chamber but don't actively heat it, so there's no target.
+        # This doesn't exist on printers without a chamber sensor, so it stays None.
+        self.chamber_temper:Optional[float] = None
+        self.nozzle_diameter:Optional[float] = None
+        self.nozzle_type:Optional[str] = None
+        # Bambu sends a full AMS tree on the initial push and nested partial updates afterwards. Keep the raw trees in
+        # the synchronized state so status can normalize them only when IncludeMaterialSystem is requested.
+        self.ams:Optional[Dict[str, Any]] = None
+        self.vt_tray:Optional[Dict[str, Any]] = None
+        # H2-series printers report their dual-nozzle state in this packed extruder object and expose separate virtual
+        # external-spool slots. They remain raw here and are normalized by the material-system builder on demand.
+        self.extruder:Optional[Dict[str, Any]] = None
+        self.vir_slot:Optional[List[Dict[str, Any]]] = None
+        self.mc_remaining_time:Optional[int] = None
+        self.project_id:Optional[str] = None
+        self.task_id:Optional[str] = None
+        self.print_error:Optional[int] = None
         # On the X1, this is empty is LAN viewing of off
         # It's a URL if streaming is enabled
         # On other printers, this doesn't exist, so it's None
-        self.rtsp_url:str = None
+        self.rtsp_url:Optional[str] = None
+        # Chamber light status: True = on, False = off, None = unknown/not supported
+        self.chamber_light:Optional[bool] = None
         # Custom fields
-        self.LastTimeRemainingWallClock:float = None
+        self.LastTimeRemainingWallClock:Optional[float] = None
+        # Set by the state translator if the printer doesn't send the print ids or file name for the current print.
+        # See StartUsingIncompletePrintCookie.
+        self.IncompletePrintCookie:Optional[str] = None
 
 
     # Called when there's a new print message from the printer.
-    def OnUpdate(self, msg:dict) -> None:
+    def OnUpdate(self, msg:Dict[str,Any]) -> None:
         # Get a new value or keep the current.
         # Remember that most of these are partial updates and will only have some values.
         self.stg_cur = msg.get("stg_cur", self.stg_cur)
@@ -49,16 +77,45 @@ class BambuState:
         self.layer_num = msg.get("layer_num", self.layer_num)
         self.total_layer_num = msg.get("total_layer_num", self.total_layer_num)
         self.subtask_name = msg.get("subtask_name", self.subtask_name)
-        self.project_id = msg.get("project_id", self.project_id)
+        self.project_id = self._NormalizePrintId(msg.get("project_id", self.project_id))
+        self.task_id = self._NormalizePrintId(msg.get("task_id", self.task_id))
         self.mc_percent = msg.get("mc_percent", self.mc_percent)
         self.nozzle_temper = msg.get("nozzle_temper", self.nozzle_temper)
         self.nozzle_target_temper = msg.get("nozzle_target_temper", self.nozzle_target_temper)
         self.bed_temper = msg.get("bed_temper", self.bed_temper)
         self.bed_target_temper = msg.get("bed_target_temper", self.bed_target_temper)
+        self.chamber_temper = msg.get("chamber_temper", self.chamber_temper)
+        self.nozzle_diameter = msg.get("nozzle_diameter", self.nozzle_diameter)
+        self.nozzle_type = msg.get("nozzle_type", self.nozzle_type)
+        amsUpdate = msg.get("ams", None)
+        if isinstance(amsUpdate, dict):
+            self.ams = BambuState._MergeDict(self.ams, amsUpdate)
+        virtualTrayUpdate = msg.get("vt_tray", None)
+        if isinstance(virtualTrayUpdate, dict):
+            self.vt_tray = BambuState._MergeDict(self.vt_tray, virtualTrayUpdate)
+        extruderUpdate = msg.get("extruder", None)
+        if isinstance(extruderUpdate, dict):
+            self.extruder = BambuState._MergeDict(self.extruder, extruderUpdate)
+        virtualSlotsUpdate = msg.get("vir_slot", None)
+        if isinstance(virtualSlotsUpdate, list):
+            self.vir_slot = copy.deepcopy([slot for slot in virtualSlotsUpdate if isinstance(slot, dict)])
         self.print_error = msg.get("print_error", self.print_error)
         ipCam = msg.get("ipcam", None)
         if ipCam is not None:
             self.rtsp_url = ipCam.get("rtsp_url", self.rtsp_url)
+
+        # Parse lights_report for chamber light status
+        # The lights_report is an array of objects with "node" and "mode" fields
+        # Chamber light has node="chamber_light" and mode can be "on", "off", "flashing"
+        lightsReport: Optional[List[Dict[str, Any]]] = msg.get("lights_report", None)
+        if lightsReport is not None and isinstance(lightsReport, list):
+            for light in lightsReport:
+                if isinstance(light, dict) and light.get("node") == "chamber_light":
+                    mode = light.get("mode")
+                    if mode is not None:
+                        # "on" and "flashing" are considered on, "off" is off
+                        self.chamber_light = mode.lower() != "off"
+                    break
 
         # Time remaining has some custom logic, so as it's queried each time it keep counting down in seconds, since Bambu only gives us minutes.
         old_mc_remaining_time = self.mc_remaining_time
@@ -67,9 +124,31 @@ class BambuState:
             self.LastTimeRemainingWallClock = time.time()
 
 
+    @staticmethod
+    def _NormalizePrintId(value:Any) -> Optional[str]:
+        # Some firmware sends these as numbers, including 0 for local prints. Keep the cookie the same in either case.
+        if isinstance(value, (str, int)) and not isinstance(value, bool):
+            return str(value)
+        return None
+
+
+    @staticmethod
+    def _MergeDict(current:Optional[Dict[str, Any]], update:Dict[str, Any]) -> Dict[str, Any]:
+        # MQTT status messages are partial. Recursively merge objects so a one-field AMS update doesn't erase the
+        # other slots learned during the full sync. Arrays are replaced because Bambu reports them as snapshots.
+        result:Dict[str, Any] = copy.deepcopy(current) if current is not None else {}
+        for key, value in update.items():
+            oldValue = result.get(key, None)
+            if isinstance(value, dict) and isinstance(oldValue, dict):
+                result[key] = BambuState._MergeDict(oldValue, value)
+            else:
+                result[key] = copy.deepcopy(value)
+        return result
+
+
     # Returns a time reaming value that counts down in seconds, not just minutes.
     # Returns null if the time is unknown.
-    def GetContinuousTimeRemainingSec(self) -> int:
+    def GetContinuousTimeRemainingSec(self) -> Optional[int]:
         if self.mc_remaining_time is None or self.LastTimeRemainingWallClock is None:
             return None
         # The slicer holds a constant time while in preparing, so we don't want to fake our countdown either.
@@ -88,7 +167,7 @@ class BambuState:
 
     # We use this common method since "is this a printing state?" is complicated and we can to keep all of the logic common in the plugin
     @staticmethod
-    def IsPrintingState(state:str, includePausedAsPrinting:bool) -> bool:
+    def IsPrintingState(state:Optional[str], includePausedAsPrinting:bool) -> bool:
         if state is None:
             return False
         if state == "PAUSE" and includePausedAsPrinting:
@@ -104,7 +183,7 @@ class BambuState:
 
     # We use this common method to keep all of the logic common in the plugin
     @staticmethod
-    def IsPrepareOrSlicingState(state:str) -> bool:
+    def IsPrepareOrSlicingState(state:Optional[str]) -> bool:
         if state is None:
             return False
         return state == "SLICING" or state == "PREPARE"
@@ -131,19 +210,37 @@ class BambuState:
     # This string should be as unique as possible, but always the same for the same print.
     # If there is no active print, this should return None!
     # See details in NotificationHandler._RecoverOrRestForNewPrint
-    def GetPrintCookie(self) -> str:
+    def GetPrintCookie(self) -> Optional[str]:
+        # If the printer didn't send the full print info for this print, use the cookie made from what it did send.
+        if self.IncompletePrintCookie is not None:
+            return self.IncompletePrintCookie
+
         # If there's no project id or subtask name, we shouldn't make a cookie..
-        if self.project_id is None or len(self.project_id) == 0 or self.subtask_name is None or len(self.subtask_name) == 0:
+        if (self.project_id is None or len(self.project_id) == 0
+            or self.task_id is None or len(self.task_id) == 0
+            or self.subtask_name is None or len(self.subtask_name) == 0):
             return None
 
         # From testing, the project_id is always unique for cloud based prints, but is 0 for local prints.
+        # For local prints, the task id seems to be unique per print.
         # The file name changes most of the time, so the combination of both makes a good pair.
-        return f"{self.project_id}-{self.GetFileNameWithNoExtension()}"
+        return f"{self.project_id}-{self.task_id}-{self.GetFileNameWithNoExtension()}"
+
+
+    # Called by the state translator if the printer doesn't send all of the print ids and file name for the current print.
+    # This builds a less unique cookie from whatever print info there is, so the print can still be tracked.
+    # The cookie is kept until the print ends, so it doesn't change if the rest of the print info arrives later.
+    def StartUsingIncompletePrintCookie(self) -> None:
+        self.IncompletePrintCookie = f"{self.project_id or 'none'}-{self.task_id or 'none'}-{self.GetFileNameWithNoExtension() or 'none'}"
+
+
+    def StopUsingIncompletePrintCookie(self) -> None:
+        self.IncompletePrintCookie = None
 
 
     # If the printer is in an error state, this tries to return the type, if known.
     # If the printer is not in an error state, None is returned.
-    def GetPrinterError(self) -> BambuPrintErrors:
+    def GetPrinterErrorType(self) -> Optional[BambuPrintErrors]:
         # If there is a printer error, this is not 0
         if self.print_error is None or self.print_error == 0:
             return None
@@ -165,15 +262,30 @@ class BambuState:
         # We format the error into a hex the same way the are on the page, to make it easier.
         # NOTE SOME ERRORS HAVE MULTIPLE VALUES, SO GET THEM ALL!
         # They have different values for the different AMS slots
-        h = hex(self.print_error)[2:].rjust(8, '0')
+        h = format(self.print_error, "08X")
         errorMap = {
             "07008011": BambuPrintErrors.FilamentRunOut,
             "07018011": BambuPrintErrors.FilamentRunOut,
             "07028011": BambuPrintErrors.FilamentRunOut,
             "07038011": BambuPrintErrors.FilamentRunOut,
             "07FF8011": BambuPrintErrors.FilamentRunOut,
+            "03008003": BambuPrintErrors.PrintFailureDetected,
+            "03008013": BambuPrintErrors.PrintFilePauseCommand,
+            "03008001": BambuPrintErrors.PausedByUser,
+            "03008000": BambuPrintErrors.PausedUnknownReason,
         }
         return errorMap.get(h, BambuPrintErrors.Unknown)
+
+
+    # If the printer is in an error state, returns the detailed error string.
+    def GetDetailedPrinterErrorStr(self) -> Optional[str]:
+        # If there is a printer error, this is not 0
+        if self.print_error is None or self.print_error == 0:
+            return None
+        h = format(self.print_error, "08X")
+        errorStr = BAMBU_PRINT_ERROR_STRINGS.get(h, "Error")
+        # Fix escaped quotes.
+        return errorStr.replace("\\\"", "\"")
 
 
 # Different types of hardware.
@@ -183,8 +295,23 @@ class BambuPrinters(Enum):
     X1E = 3
     P1P = 10
     P1S = 11
+    P2S = 12
+    H2D = 30
+    H2S = 31
     A1  = 20
     A1Mini = 21
+
+
+# The models that actually have a chamber temperature sensor.
+# The other models still send a chamber_temper value, but there's no sensor behind it, so the number is
+# meaningless and must not be reported. A P1S for example reports a constant value that isn't the real
+# chamber temp, which would otherwise be shown to the user as if it were a reading.
+c_BambuModelsWithChamberSensor = {
+    BambuPrinters.X1C,
+    BambuPrinters.X1E,
+    BambuPrinters.H2D,
+    BambuPrinters.H2S,
+}
 
 
 class BambuCPUs(Enum):
@@ -199,21 +326,28 @@ class BambuVersion:
     def __init__(self, logger:logging.Logger) -> None:
         self.Logger = logger
         self.HasLoggedPrinterVersion = False
+        self.HasLoggedUnknownPrinterVersion = False
         # We only parse out what we currently use.
-        self.SoftwareVersion:str = None
-        self.HardwareVersion:str = None
-        self.SerialNumber:str = None
-        self.ProjectName:str = None
-        self.Cpu:BambuCPUs = None
-        self.PrinterName:BambuPrinters = None
+        # Note that not all of these values will be set on some printers.
+        self.SoftwareVersion:Optional[str] = None
+        self.HardwareVersion:Optional[str] = None
+        self.SerialNumber:Optional[str] = None
+        self.ProjectName:Optional[str] = None
+        self.Cpu:Optional[BambuCPUs] = None
+        self.PrinterName:Optional[BambuPrinters] = None
 
 
     # Called when there's a new print message from the printer.
-    def OnUpdate(self, msg:dict) -> None:
+    def OnUpdate(self, msg:Dict[str, Any]) -> None:
+        productNamesLower:List[str] = []
         module = msg.get("module", None)
         if module is None:
             return
         for m in module:
+            # If there is a product name, grab it.
+            pName = m.get("product_name", None)
+            if pName is not None:
+                productNamesLower.append(pName.lower())
             name = m.get("name", None)
             if name is None:
                 continue
@@ -225,10 +359,20 @@ class BambuVersion:
                 self.HardwareVersion = m.get("hw_ver", self.HardwareVersion)
                 self.ProjectName = m.get("project_name", self.ProjectName)
                 self.Cpu = BambuCPUs.ESP32
-            elif name == "rv1126":
+            elif name == "rv1126" or name == "ap":
                 self.HardwareVersion = m.get("hw_ver", self.HardwareVersion)
                 self.ProjectName = m.get("project_name", self.ProjectName)
                 self.Cpu = BambuCPUs.RV1126
+
+        # Try to detect from product name first, as it's more reliable.
+        modelFromProductName = self.DetectModelFromProductName(module)
+        if modelFromProductName is not None:
+            self.PrinterName = modelFromProductName
+            return
+
+        # Version messages can be partial too. Once we know the model, a later partial update shouldn't clear it.
+        if self.PrinterName is not None and self.PrinterName is not BambuPrinters.Unknown:
+            return
 
         # If we didn't find a hardware, it's unknown.
         if self.Cpu is None:
@@ -257,15 +401,59 @@ class BambuVersion:
                 }
                 self.PrinterName = esp32_map.get((self.HardwareVersion, self.ProjectName), BambuPrinters.Unknown)
 
+        # We use the info above to get the printer name, but as a fallback we do a string check of the product names.
         if self.PrinterName is None or self.PrinterName is BambuPrinters.Unknown:
-            Sentry.LogError(f"Unknown printer type. CPU:{self.Cpu}, Project Name: {self.ProjectName}, Hardware Version: {self.HardwareVersion}",{
-                "CPU": str(self.Cpu),
-                "ProjectName": str(self.ProjectName),
-                "HardwareVersion": str(self.HardwareVersion),
-                "SoftwareVersion": str(self.SoftwareVersion),
-            })
+            for pNameLower in productNamesLower:
+                if pNameLower.find("x1 carbon") != -1:
+                    self.PrinterName = BambuPrinters.X1C
+                elif pNameLower.find("x1e") != -1:
+                    self.PrinterName = BambuPrinters.X1E
+                elif pNameLower.find("p1p") != -1:
+                    self.PrinterName = BambuPrinters.P1P
+                elif pNameLower.find("a1 mini") != -1:
+                    self.PrinterName = BambuPrinters.A1Mini
+                elif pNameLower.find("a1") != -1:
+                    self.PrinterName = BambuPrinters.A1
+                elif pNameLower.find("p1s") != -1:
+                    self.PrinterName = BambuPrinters.P1S
+                elif pNameLower.find("h2d") != -1:
+                    self.PrinterName = BambuPrinters.H2D
+
+        # If we still don't have a printer name, we set it to unknown and report it.
+        if self.PrinterName is None or self.PrinterName is BambuPrinters.Unknown:
             self.PrinterName = BambuPrinters.Unknown
+            # We can't identify the printer until these fields arrive. This is common during the initial sync.
+            if self.Cpu is BambuCPUs.Unknown or not self.HardwareVersion or (self.Cpu is BambuCPUs.ESP32 and not self.ProjectName):
+                return
+            if self.HasLoggedUnknownPrinterVersion is False:
+                self.HasLoggedUnknownPrinterVersion = True
+                Sentry.LogInfo(f"Unknown printer type. CPU:{self.Cpu}, Project Name: {self.ProjectName}, Hardware Version: {self.HardwareVersion}",{
+                    "CPU": str(self.Cpu),
+                    "ProjectName": str(self.ProjectName),
+                    "HardwareVersion": str(self.HardwareVersion),
+                    "SoftwareVersion": str(self.SoftwareVersion),
+                })
 
         if self.HasLoggedPrinterVersion is False:
             self.HasLoggedPrinterVersion = True
             self.Logger.info(f"Printer Version: {self.PrinterName}, CPU: {self.Cpu}, Project: {self.ProjectName} Hardware: {self.HardwareVersion}, Software: {self.SoftwareVersion}, Serial: {self.SerialNumber}")
+
+
+    def DetectModelFromProductName(self, module:List[Dict[str, Any]]) -> Optional[BambuPrinters]:
+        name_map = {
+            "Bambu Lab A1": BambuPrinters.A1,
+            "Bambu Lab A1 mini": BambuPrinters.A1Mini,
+            "Bambu Lab A1 Mini": BambuPrinters.A1Mini,
+            "Bambu Lab P1S":  BambuPrinters.P1S,
+            "Bambu Lab P2S":  BambuPrinters.P2S,
+            "Bambu Lab P1P":  BambuPrinters.P1P,
+            "Bambu Lab H2D":  BambuPrinters.H2D,
+            "Bambu Lab H2S":  BambuPrinters.H2S
+        }
+        if not module:
+            return None
+        for m in module:
+            model = name_map.get(m.get("product_name", ""))
+            if model:
+                return model
+        return None

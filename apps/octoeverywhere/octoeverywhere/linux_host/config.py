@@ -1,5 +1,11 @@
+import logging
+import io
 import os
+import stat
+import uuid
 import threading
+
+from typing import List, Optional
 
 import configparser
 
@@ -12,6 +18,10 @@ class Config:
     # This can't change or all past plugins will fail.
     ConfigFileName = "octoeverywhere.conf"
 
+    # We allow strings to be set as None, because then it keeps then in the config with the comment about the key.
+    # We use an empty value for None, to indicate that the key is not set.
+    c_NoneStringValue = ""
+
     #
     # Common To All Plugins
     #
@@ -23,7 +33,8 @@ class Config:
     GeneralSection = "general"
     GeneralBedCooldownThresholdTempC = "bed_cooldown_threshold_temp_celsius"
     GeneralBedCooldownThresholdTempCDefault = 40.0
-
+    GeneralLocalWebApiPort = "local_web_api_port"
+    GeneralLocalWebApiBindIp = "local_web_api_bind_ip"
 
     #
     # Used for the local Moonraker plugin and companions.
@@ -44,6 +55,12 @@ class Config:
     WebcamFlipH = "flip_horizontally"
     WebcamFlipV = "flip_vertically"
     WebcamRotation = "rotate"
+
+    #
+    # Used for the Moonraker specific settings.
+    #
+    MoonrakerSection = "moonraker"
+    MoonrakerApiKey = "moonraker_api_key"
 
 
     #
@@ -73,7 +90,40 @@ class Config:
     # Used only for Elegoo Connect
     #
     SectionElegoo = "elegoo"
-    ElegooMainboardId = "mainboard_id"
+    ElegooPrinterProtocol = "printer_type"
+    ElegooPrinterProtocolCc1 = "cc1"
+    ElegooPrinterProtocolCc2 = "cc2"
+    ElegooMainboardMac = "mainboard_mac"
+    AutoActivateChamberLightForWebcam = "auto_activate_chamber_light_for_webcam"
+    ElegooCc2AccessCode = "cc2_access_code"
+    ElegooCc2PrinterSn = "cc2_printer_serial_number"
+
+    #
+    # Used only for Prusa Link Connect
+    #
+    SectionPrusaLink = "prusalink"
+    PrusaLinkDefaultPortStr = "80"
+    PrusaLinkAuthMode = "auth_mode"
+    PrusaLinkAuthModePassword = "password"
+    PrusaLinkAuthModeApiKey = "api_key"
+    PrusaLinkUsername = "username"
+    PrusaLinkPassword = "password"
+    PrusaLinkApiKey = "api_key"
+
+    #
+    # MQTT multiplexer: shared upstream connection plus optional local TCP
+    # MQTT broker exposing the printer's broker on the LAN.
+    #
+    SectionMqtt = "mqtt"
+    MqttLocalBrokerEnabled = "enable"
+    MqttLocalBrokerBind = "bind_ip"
+    MqttLocalBrokerPort = "port"
+    MqttLocalBrokerTlsPort = "tls_port"
+    MqttLocalBrokerTlsCertPath = "tls_cert_path"
+    MqttLocalBrokerTlsKeyPath = "tls_key_path"
+    MqttLocalBrokerRequireUpstreamAuth = "require_upstream_auth"
+    MqttLocalBrokerUsername = "username"
+    MqttLocalBrokerPassword = "password"
 
 
     # This allows us to add comments into our config.
@@ -96,7 +146,25 @@ class Config:
         { "Target": WebcamFlipV,  "Comment": "Flips the webcam image vertically. Valid values are True or False"},
         { "Target": WebcamRotation,  "Comment": "Rotates the webcam image. Valid values are 0, 90, 180, or 270"},
         { "Target": GeneralBedCooldownThresholdTempC,  "Comment": "The temperature in Celsius that the bed must be under to be considered cooled down. This is used to fire the Bed Cooldown Complete notification."},
-        { "Target": ElegooMainboardId,  "Comment": "This is the mainboard id of the linked printer."},
+        { "Target": ElegooPrinterProtocol,  "Comment": "The Elegoo printer type this instance uses. Valid values are 'cc1' for the Elegoo Centauri Carbon 1 and 'cc2' for the Elegoo Centauri Carbon 2."},
+        { "Target": ElegooMainboardMac,  "Comment": "This is the MAC address of the mainboard for the linked printer."},
+        { "Target": AutoActivateChamberLightForWebcam,  "Comment": "If enabled, the chamber light will be automatically turned on when the webcam is in use."},
+        { "Target": ElegooCc2AccessCode,  "Comment": "The LAN only access code to the Elegoo Centauri Carbon 2 printer. See https://octoeverywhere.com/s/cc2-access-code for help."},
+        { "Target": ElegooCc2PrinterSn,  "Comment": "The serial number of your Elegoo Centauri Carbon 2 printer. If blank, OctoEverywhere will try to discover it from the printer IP. See https://octoeverywhere.com/s/cc2-sn for help."},
+        { "Target": MoonrakerApiKey,  "Comment": "Leave blank unless your Moonraker requires an API key to connect. Moonraker API keys can be generated from the Mainsail or Fluidd."},
+        { "Target": PrusaLinkAuthMode,  "Comment": "The authentication mode used for Prusa Link. Valid values are 'password' to use your Prusa Link username/password or 'api_key' to use the Prusa Link API key."},
+        { "Target": PrusaLinkUsername,  "Comment": "The Prusa Link username, Only used when auth_mode is 'password'."},
+        { "Target": PrusaLinkPassword,  "Comment": "The Prusa Link password. Only used when auth_mode is 'password'. This is stored locally and never uploaded."},
+        { "Target": PrusaLinkApiKey,  "Comment": "The Prusa Link API key. Only used when auth_mode is 'api_key'. See https://octoeverywhere.com/s/prusa-link-api-key for help."},
+        { "Target": MqttLocalBrokerEnabled,  "Comment": "If true (default), OctoEverywhere exposes a local MQTT relay that combines clients into one printer connection. Supports plaintext and TLS MQTT. Clients must support the broker certificate; camera and file transfers are separate services."},
+        { "Target": MqttLocalBrokerBind,  "Comment": "Bind address for the local MQTT broker server. Use 0.0.0.0 to accept all LAN connections or 127.0.0.1 to restrict to this machine."},
+        { "Target": MqttLocalBrokerPort,  "Comment": "Primary MQTT port (default 1883). Automatically accepts plaintext or TLS on each connection."},
+        { "Target": MqttLocalBrokerTlsPort,  "Comment": "Additional TLS-only MQTT port (default 8883). Set to 0 to disable this additional listener; TLS remains available on the primary port. If equal to port, one listener accepts both protocols."},
+        { "Target": MqttLocalBrokerTlsCertPath,  "Comment": "Optional custom PEM certificate chain path. Set tls_key_path if the private key is in a separate file. When both are unset, a unique self-signed certificate is generated and persisted in mqtt-tls alongside this config. Restart after changing certificates."},
+        { "Target": MqttLocalBrokerTlsKeyPath,  "Comment": "Optional custom PEM private key path for tls_cert_path. Keep the private key secret. Clients may need to trust the certificate."},
+        { "Target": MqttLocalBrokerRequireUpstreamAuth,  "Comment": "If true (default), require the current upstream credentials (Bambu LAN: 'bblp' + access code; Bambu Cloud: cloud username + token; Elegoo: 'elegoo' + access code). If false, use the static MQTT username/password. This does not control TLS."},
+        { "Target": MqttLocalBrokerUsername,  "Comment": "Optional static username for local MQTT broker server auth. Only used when require_upstream_auth is false. Leave blank to allow anonymous connections (NOT recommended on a LAN)."},
+        { "Target": MqttLocalBrokerPassword,  "Comment": "Optional static password for local MQTT broker server auth. Only used when require_upstream_auth is false. Leave blank to allow anonymous connections (NOT recommended on a LAN)."},
     ]
 
 
@@ -106,13 +174,13 @@ class Config:
 
 
     def __init__(self, configDirPath:str) -> None:
-        self.Logger = None
+        self.Logger:logging.Logger = None #pyright: ignore[reportAttributeAccessIssue]
         # Define our config path
         # Note this path and name MUST STAY THE SAME because the installer PY script looks for this file.
         self.OeConfigFilePath = Config.GetConfigFilePath(configDirPath)
         # A lock to keep file access super safe
         self.ConfigLock = threading.Lock()
-        self.Config = None
+        self.Config:configparser.ConfigParser = None #pyright: ignore[reportAttributeAccessIssue]
         # Load the config on init, to ensure it exists.
         # This will throw if there's an error reading the config.
         self._LoadConfigIfNeeded_UnderLock()
@@ -125,7 +193,7 @@ class Config:
 
 
     # Allows the logger to be set when it's created.
-    def SetLogger(self, logger):
+    def SetLogger(self, logger:logging.Logger) -> None:
         self.Logger = logger
 
 
@@ -139,87 +207,133 @@ class Config:
     # Gets a value from the config given the header and key.
     # If the value isn't set, the default value is returned and the default value is saved into the config.
     # If the default value is None, the default will not be written into the config.
-    def GetStr(self, section, key, defaultValue) -> str:
+    def GetStr(self, section:str, key:str, defaultValue:Optional[str], keepInConfigIfNone=False) -> Optional[str]:
         with self.ConfigLock:
             # Ensure we have the config.
             self._LoadConfigIfNeeded_UnderLock()
             # Check if the section and key exists
             if self.Config.has_section(section):
                 if key in self.Config[section].keys():
-                    # If the value of None was written, it was an accidental serialized None value to string.
-                    # Consider it not a valid value, and use the default value.
                     value = self.Config[section][key]
-                    if value != "None":
+                    # If None or empty string written consider it not a valid value so use the default value.
+                    # The default value logic will handle the keepInConfigIfNone case.
+                    # Use lower, to accept user generated errors.
+                    if value.lower() != "none" and len(value) > 0:
                         # Reverse any possible string replaces we had to add.
                         value = value.replace(Config.PercentageStringReplaceString, "%")
                         return value
         # The value wasn't set, create it using the default.
-        self.SetStr(section, key, defaultValue)
+        self.SetStr(section, key, defaultValue, keepInConfigIfNone)
         return defaultValue
 
 
+    # Just like GetStr, but it will always return a string and never none.
+    def GetStrRequired(self, section:str, key:str, defaultValue:str, keepInConfigIfNone=False) -> str:
+        r = self.GetStr(section, key, defaultValue, keepInConfigIfNone)
+        if r is None:
+            return defaultValue
+        return r
+
+
     # Gets a value from the config given the header and key.
     # If the value isn't set, the default value is returned and the default value is saved into the config.
     # If the default value is None, the default will not be written into the config.
-    def GetInt(self, section:str, key:str, defaultValue) -> int:
+    def GetInt(self, section:str, key:str, defaultValue:Optional[int]) -> Optional[int]:
         # Use a try catch, so if a user sets an invalid value, it doesn't crash us.
         result = None
-        try:
-            # If None is passed as the default, don't str it.
-            if defaultValue is not None:
-                defaultValue = str(defaultValue)
 
-            result = self.GetStr(section, key, defaultValue)
+        # Convert the default value to a string, if it's not None.
+        defaultValueAsStr:Optional[str] = None
+        if defaultValue is not None:
+            defaultValueAsStr = str(defaultValue)
+
+        try:
+            result = self.GetStr(section, key, defaultValueAsStr)
             # If None is returned, don't int it, return None.
             if result is None:
-                return None
-
+                return defaultValue
             return int(result)
+
         except Exception as e:
             self.Logger.error(f"Config settings error! {key} failed to get as int. Value was `{result}`. Resetting to default. "+str(e))
-            self.SetStr(section, key, str(defaultValue))
-            return int(defaultValue)
+            self.SetStr(section, key, defaultValueAsStr)
+            return defaultValue
+
+
+    # Just like GetInt, but it will always return a int and never none.
+    def GetIntRequired(self, section:str, key:str, defaultValue:int) -> int:
+        r = self.GetInt(section, key, defaultValue)
+        if r is None:
+            return defaultValue
+        return r
+
+
+    def SetInt(self, section:str, key:str, value:Optional[int], keepInConfigIfNone=False) -> None:
+        # Ensure the value is a string, unless it's None.
+        s:Optional[str] = None
+        if value is not None:
+            s = str(value)
+        self.SetStr(section, key, s, keepInConfigIfNone)
 
 
     # Gets a value from the config given the header and key.
     # If the value isn't set, the default value is returned and the default value is saved into the config.
     # If the default value is None, the default will not be written into the config.
-    def GetFloat(self, section:str, key:str, defaultValue) -> float:
+    def GetFloat(self, section:str, key:str, defaultValue:Optional[float]) -> Optional[float]:
         # Use a try catch, so if a user sets an invalid value, it doesn't crash us.
         result = None
+
+        # Convert the default value to a string, if it's not None.
+        defaultValueAsStr:Optional[str] = None
+        if defaultValue is not None:
+            defaultValueAsStr = str(defaultValue)
+
         try:
-            # If None is passed as the default, don't str it.
-            if defaultValue is not None:
-                defaultValue = str(defaultValue)
-
-            result = self.GetStr(section, key, defaultValue)
-            # If None is returned, don't int it, return None.
+            result = self.GetStr(section, key, defaultValueAsStr)
+            # If None is returned, don't int it, return the default value, which might be None.
             if result is None:
-                return None
-
+                return defaultValue
             return float(result)
+
         except Exception as e:
             self.Logger.error(f"Config settings error! {key} failed to get as float. Value was `{result}`. Resetting to default. "+str(e))
-            self.SetStr(section, key, str(defaultValue))
-            return float(defaultValue)
+            self.SetStr(section, key, defaultValueAsStr)
+            return defaultValue
+
+
+    # Just like GetFloat, but it will always return a float and never none.
+    def GetFloatRequired(self, section:str, key:str, defaultValue:float) -> float:
+        r = self.GetFloat(section, key, defaultValue)
+        if r is None:
+            return defaultValue
+        return r
+
+
+    def SetFloat(self, section:str, key:str, value:Optional[float], keepInConfigIfNone=False) -> None:
+        # Ensure the value is a string, unless it's None.
+        s:Optional[str] = None
+        if value is not None:
+            s = str(value)
+        self.SetStr(section, key, s, keepInConfigIfNone)
 
 
     # Gets a value from the config given the header and key.
     # If the value isn't set, the default value is returned and the default value is saved into the config.
     # If the default value is None, the default will not be written into the config.
-    def GetBool(self, section, key, defaultValue) -> bool:
+    def GetBool(self, section:str, key:str, defaultValue:Optional[bool]) -> Optional[bool]:
         # Use a try catch, so if a user sets an invalid value, it doesn't crash us.
         result = None
+
+        # Convert the default value to a string, if it's not None.
+        defaultValueAsStr:Optional[str] = None
+        if defaultValue is not None:
+            defaultValueAsStr = str(defaultValue)
+
         try:
-            # If None is passed as the default, don't str it.
-            if defaultValue is not None:
-                defaultValue = str(defaultValue)
-            strValue = self.GetStr(section, key, defaultValue)
-
-            # If None is returned, don't bool it, return None.
+            strValue = self.GetStr(section, key, defaultValueAsStr)
+            # If None is returned, don't bool it, return the default value, which might be None
             if strValue is None:
-                return None
-
+                return defaultValue
             # Match it to a bool value.
             strValue = strValue.lower()
             if strValue == "false":
@@ -229,13 +343,29 @@ class Config:
             raise Exception("Invalid bool value, value was: "+strValue)
         except Exception as e:
             self.Logger.error(f"Config settings error! {key} failed to get as bool. Value was `{result}`. Resetting to default. "+str(e))
-            self.SetStr(section, key, str(defaultValue))
-            return bool(defaultValue)
+            self.SetStr(section, key, defaultValueAsStr)
+            return defaultValue
+
+
+    # Just like GetBool, but it will always return a bool and never none.
+    def GetBoolRequired(self, section:str, key:str, defaultValue:bool) -> bool:
+        r = self.GetBool(section, key, defaultValue)
+        if r is None:
+            return defaultValue
+        return r
+
+
+    def SetBool(self, section:str, key:str, value:Optional[bool], keepInConfigIfNone=False) -> None:
+        # Ensure the value is a string, unless it's None.
+        s:Optional[str] = None
+        if value is not None:
+            s = str(value)
+        self.SetStr(section, key, s, keepInConfigIfNone)
 
 
     # The same as Get, but this version ensures that the value matches a case insensitive value in the
     # acceptable value list. If it's not, the default value is used.
-    def GetStrIfInAcceptableList(self, section, key, defaultValue, acceptableValueList) -> str:
+    def GetStrIfInAcceptableList(self, section:str, key:str, defaultValue:str, acceptableValueList:List[str]) -> str:
         existing = self.GetStr(section, key, defaultValue)
 
         if existing is not None:
@@ -251,19 +381,20 @@ class Config:
 
 
     # The same as Get, but it makes sure the value is in a range.
-    def GetIntIfInRange(self, section, key, defaultValue, lowerBoundInclusive, upperBoundInclusive) -> int:
+    def GetIntIfInRange(self, section:str, key:str, defaultValue:Optional[int], lowerBoundInclusive:int, upperBoundInclusive:int) -> int:
         # A default value of None is not allowed here.
         if defaultValue is None:
             raise Exception(f"A default value of none is not valid for int ranges. {section}:{key}")
 
         existingStr = self.GetStr(section, key, str(defaultValue))
-        # Make sure the value is in range.
-        try:
-            existing = int(existingStr)
-            if existing >= lowerBoundInclusive and existing <= upperBoundInclusive:
-                return existing
-        except Exception:
-            pass
+        if existingStr is not None:
+            # Make sure the value is in range.
+            try:
+                existing = int(existingStr)
+                if existing >= lowerBoundInclusive and existing <= upperBoundInclusive:
+                    return existing
+            except Exception:
+                pass
 
         # The acceptable was not found. Set they key back to default.
         self.SetStr(section, key, str(defaultValue))
@@ -272,7 +403,7 @@ class Config:
 
     # Sets the value into the config and saves it.
     # Setting a value of None will delete the key from the config.
-    def SetStr(self, section, key, value) -> None:
+    def SetStr(self, section:str, key:str, value:Optional[str], keepInConfigIfNone=False) -> None:
         # Ensure the value is a string, unless it's None
         if value is not None:
             value = str(value)
@@ -283,6 +414,10 @@ class Config:
             # Ensure the section exists
             if self.Config.has_section(section) is False:
                 self.Config.add_section(section)
+            # If the value is None but we want to keep it in the config, set it to the None string.
+            if value is None and keepInConfigIfNone is True:
+                value = Config.c_NoneStringValue
+            # If the value is still None, we will make sure the key is deleted.
             if value is None:
                 # None is a special case, if we are setting it, delete the key if it exists.
                 if key in self.Config[section].keys():
@@ -319,26 +454,46 @@ class Config:
         if self.Config is None:
             return
 
-        # Write the current settings to the file.
-        # This lets the config lib format everything how it wants.
-        with open(self.OeConfigFilePath, 'w', encoding="utf-8") as f:
-            self.Config.write(f)
+        # Format the settings and comments before touching the saved config.
+        with io.StringIO() as buffer:
+            self.Config.write(buffer)
+            lines = buffer.getvalue().splitlines(keepends=True)
 
-        # After writing, read the file and insert any comments we have.
         finalOutput = ""
-        with open(self.OeConfigFilePath, 'r', encoding="utf-8") as f:
-            # Read all lines
-            lines = f.readlines()
-            for line in lines:
-                lineLower = line.lower()
-                # If anything in the line matches the target, add the comment just before this line.
-                for cObj in Config.c_ConfigComments:
-                    if cObj["Target"] in lineLower:
-                        # Add the comment.
-                        finalOutput += "# " + cObj["Comment"] + os.linesep
-                        break
-                finalOutput += line
+        for line in lines:
+            lineLower = line.lower()
+            # If anything in the line matches the target, add the comment just before this line.
+            for cObj in Config.c_ConfigComments:
+                if cObj["Target"] in lineLower:
+                    finalOutput += "# " + cObj["Comment"] + "\n"
+                    break
+            finalOutput += line
 
-        # Finally, write the file back one more time.
-        with open(self.OeConfigFilePath, 'w', encoding="utf-8") as f:
-            f.write(finalOutput)
+        # Write beside the config, then replace it atomically. Keep symlinks and the existing owner and permissions intact.
+        configPath = os.path.realpath(self.OeConfigFilePath)
+        configStat = os.stat(configPath) if os.path.exists(configPath) else None
+        tempFilePath:Optional[str] = None
+        try:
+            # Create the file the same way open() would, so a new config gets the normal permissions from the umask.
+            # We don't use tempfile, since it always creates files only the owner can read.
+            newFilePath = os.path.join(os.path.dirname(configPath), "." + os.path.basename(configPath) + "." + uuid.uuid4().hex + ".tmp")
+            fd = os.open(newFilePath, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+            tempFilePath = newFilePath
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(finalOutput)
+                f.flush()
+                os.fsync(f.fileno())
+            if configStat is not None:
+                os.chmod(tempFilePath, stat.S_IMODE(configStat.st_mode))
+                # The installer runs as root, so keep the service user as the owner. Only root can change the owner.
+                if hasattr(os, "geteuid") and hasattr(os, "chown") and os.geteuid() == 0:
+                    os.chown(tempFilePath, configStat.st_uid, configStat.st_gid)
+            os.replace(tempFilePath, configPath)
+            tempFilePath = None
+        finally:
+            if tempFilePath is not None:
+                try:
+                    os.remove(tempFilePath)
+                except OSError as e:
+                    if self.Logger is not None:
+                        self.Logger.warning("Failed to clean up temporary config file: %s", e)

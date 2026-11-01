@@ -30,6 +30,18 @@ jobs:
         with:
           fetch-depth: 0   # script resets to origin/master between iterations
 
+      # The bump rebuilds app payloads in Docker, including armv7 Python
+      # packages, so it needs the registry and ARM emulation
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
       - name: Configure git identity
         run: |
           git config user.name  "rinkhals-bot"

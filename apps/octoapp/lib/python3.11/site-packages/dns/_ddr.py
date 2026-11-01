@@ -7,6 +7,7 @@ import time
 from urllib.parse import urlparse
 
 import dns.asyncbackend
+import dns.exception
 import dns.inet
 import dns.name
 import dns.nameserver
@@ -32,15 +33,25 @@ class _SVCBInfo:
 
     def ddr_check_certificate(self, cert):
         """Verify that the _SVCBInfo's address is in the cert's subjectAltName (SAN)"""
+        # ssl renders IPv6 SAN entries uncompressed and in upper case (e.g.
+        # 2001:DB8:0:0:0:0:0:1), so compare addresses in binary form, not as text.
+        af = dns.inet.af_for_address(self.bootstrap_address)
+        address = dns.inet.inet_pton(af, self.bootstrap_address)
         for name, value in cert["subjectAltName"]:
-            if name == "IP Address" and value == self.bootstrap_address:
-                return True
+            if name != "IP Address":
+                continue
+            try:
+                if dns.inet.inet_pton(af, value) == address:
+                    return True
+            except dns.exception.SyntaxError:
+                # An address of the other family, or one we cannot parse.
+                pass
         return False
 
     def make_tls_context(self):
         ssl = dns.query.ssl
         ctx = ssl.create_default_context()
-        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2  # type: ignore
         return ctx
 
     def ddr_tls_check_sync(self, lifetime):
@@ -94,21 +105,24 @@ def _extract_nameservers_from_svcb(answer):
         # bootstrap address
         if b"h2" in alpns:
             param = rr.params.get(dns.rdtypes.svcbbase.ParamKey.DOHPATH)
-            if param is None or not param.value.endswith(b"{?dns}"):
-                continue
-            path = param.value[:-6].decode()
-            if not path.startswith("/"):
-                path = "/" + path
-            if port is None:
-                port = 443
-            url = f"https://{host}:{port}{path}"
-            # check the URL
-            try:
-                urlparse(url)
-                nameservers.append(dns.nameserver.DoHNameserver(url, bootstrap_address))
-            except Exception:
-                # continue processing other ALPN types
-                pass
+            # A missing or malformed dohpath only rules out the DoH nameserver;
+            # any dot/doq resolver advertised by the same record is still valid.
+            if param is not None and param.value.endswith(b"{?dns}"):
+                path = param.value[:-6].decode()
+                if not path.startswith("/"):
+                    path = "/" + path
+                if port is None:
+                    port = 443
+                url = f"https://{host}:{port}{path}"
+                # check the URL
+                try:
+                    urlparse(url)
+                    nameservers.append(
+                        dns.nameserver.DoHNameserver(url, bootstrap_address)
+                    )
+                except Exception:
+                    # continue processing other ALPN types
+                    pass
         if b"dot" in alpns:
             if port is None:
                 port = 853

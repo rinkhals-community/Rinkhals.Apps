@@ -1,20 +1,22 @@
 import logging
 import time
+from typing import List, Optional
 
 from linux_host.config import Config
 
 from octoeverywhere.Webcam.webcamsettingitem import WebcamSettingItem
 from octoeverywhere.Webcam.quickcam import QuickCam
+from octoeverywhere.interfaces import IWebcamPlatformHelper
 
 from .elegooclient import ElegooClient
 
 # This class implements the webcam platform helper interface for elegoo os.
-class ElegooWebcamHelper():
+class ElegooWebcamHelper(IWebcamPlatformHelper):
 
     def __init__(self, logger:logging.Logger, config:Config) -> None:
         self.Logger = logger
         self.Config = config
-        self.CachedStreamUrlBase:str = None
+        self.CachedStreamUrlBase:Optional[str] = None
         self.LastStreamUrlBaseUpdateSec:float = 0.0
 
 
@@ -23,7 +25,7 @@ class ElegooWebcamHelper():
     # Index 0 is used as the default webcam.
     # The order the webcams are returned is the order the user will see in any selection UIs.
     # Returns None on failure.
-    def GetWebcamConfig(self):
+    def GetWebcamConfig(self) -> Optional[List[WebcamSettingItem]]:
         # For Elegoo OS printers, there's only one webcam setup by default, it's a jmpeg server running on 3031.
         #
         # BUT - The server only allows for one stream at a time, so we can't have multiple webcams.
@@ -73,8 +75,12 @@ class ElegooWebcamHelper():
             # wont's send data until the command is issued. So we return to let quick cam get connected.
             ElegooClient.Get().SendEnableWebcamCommand(False)
             # We also try to enable the light, to make sure Gadget can see the print.
-            # We send the command formatted the same as the frontend.
-            ElegooClient.Get().SendRequest(403, {"LightStatus":{"SecondLight":True,"RgbLight": [0,0,0]}}, waitForResponse=False)
+            # CC1 command 403 toggles the light regardless of the requested value, so
+            # only send it when the known chamber light state reports that it is off.
+            if self.Config.GetBool(Config.SectionElegoo, Config.AutoActivateChamberLightForWebcam, False):
+                state = ElegooClient.Get().GetState()
+                if state is not None and state.ChamberLightOn is False:
+                    ElegooClient.Get().SendRequest(403, {"LightStatus":{"SecondLight":True,"RgbLight": [0,0,0]}}, waitForResponse=False)
 
 
     # !! Interface Function !!

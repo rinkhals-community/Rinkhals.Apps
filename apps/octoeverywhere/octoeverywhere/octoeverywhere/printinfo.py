@@ -2,7 +2,10 @@ import os
 import json
 import time
 import logging
+import tempfile
 from pathlib import Path
+from typing import Any, Dict, Optional
+
 
 # The goal of this class is to keep track of info about the current print.
 # This is needed because sometimes we only get the info once, like at the start of a print, and then we want to keep it around for future notifications.
@@ -24,7 +27,7 @@ class PrintInfo:
     # Given a file path, this loads a print info if possible.
     # Returns None on failure.
     @staticmethod
-    def LoadFromFile(logger:logging.Logger, filePath:str):
+    def LoadFromFile(logger:logging.Logger, filePath:str) -> Optional["PrintInfo"]:
         try:
             with open(filePath, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -40,7 +43,7 @@ class PrintInfo:
     # Given a file path and required args, creates a new print context.
     # This will always return a PrintInfo! Even if it fails to write to disk.
     @staticmethod
-    def CreateNew(logger:logging.Logger, filePath:str, printCookie:str, printId:str):
+    def CreateNew(logger:logging.Logger, filePath:str, printCookie:str, printId:str) -> "PrintInfo":
         data = {
             PrintInfo.c_PrintCookieKey : printCookie,
             PrintInfo.c_PrintIdKey : printId,
@@ -52,7 +55,7 @@ class PrintInfo:
         return pi
 
 
-    def __init__(self, logger:logging.Logger, filePath:str, data:dict) -> None:
+    def __init__(self, logger:logging.Logger, filePath:str, data:Dict[str,Any]) -> None:
         self.Logger = logger
         self.FilePath = filePath
         self.Data = data
@@ -71,14 +74,14 @@ class PrintInfo:
     # Always exists, but it can be updated if the platform reports an exact time.
     def GetLocalPrintStartTimeSec(self) -> float:
         return self.Data[PrintInfo.c_PrintStartTimeSecKey]
-    def SetLocalPrintStartTimeSec(self, startTimeSec:float) -> float:
+    def SetLocalPrintStartTimeSec(self, startTimeSec:float) -> None:
         if self.GetLocalPrintStartTimeSec() != startTimeSec:
             self.Data[PrintInfo.c_PrintStartTimeSecKey] = startTimeSec
             self.Save()
 
 
     # The file name is optional.
-    def GetFileName(self) -> str:
+    def GetFileName(self) -> Optional[str]:
         return self.Data.get(PrintInfo.c_FileNameKey, None)
     def SetFileName(self, fileName:str) -> None:
         current = self.GetFileName()
@@ -109,14 +112,14 @@ class PrintInfo:
     def GetEstFilamentWeightUsageMg(self) -> int:
         return self.Data.get(PrintInfo.c_EstFilamentWeightMg, 0)
     def SetEstFilamentWeightUsageMg(self, estG:int) -> None:
-        if self.GetEstFilamentUsageMm() != estG:
+        if self.GetEstFilamentWeightUsageMg() != estG:
             self.Data[PrintInfo.c_EstFilamentWeightMg] = estG
             self.Save()
 
 
     # This is only set when the print is done.
     # Returns None if there isn't one.
-    def GetFinalPrintDurationSec(self) -> int:
+    def GetFinalPrintDurationSec(self) -> Optional[int]:
         return self.Data.get(PrintInfo.c_FinalPrintDurationSec, None)
     def SetFinalPrintDurationSec(self, totalDurationSec:int) -> None:
         self.Data[PrintInfo.c_FinalPrintDurationSec] = int(totalDurationSec)
@@ -135,12 +138,22 @@ class PrintInfo:
 
 
     def Save(self) -> bool:
+        tempFilePath = None
         try:
-            with open(self.FilePath, "w", encoding="utf-8") as f:
+            # Replace the saved context only after the new file is complete, so a failed write doesn't lose the print.
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=os.path.dirname(self.FilePath), delete=False) as f:
+                tempFilePath = f.name
                 json.dump(self.Data, f)
+            os.replace(tempFilePath, self.FilePath)
             return True
         except Exception as e:
-            self.Logger.error(f"Failed to write print context from file. {e}")
+            self.Logger.error(f"Failed to write print context to file. {e}")
+        finally:
+            if tempFilePath is not None and os.path.exists(tempFilePath):
+                try:
+                    os.remove(tempFilePath)
+                except Exception as e:
+                    self.Logger.warning("Failed to clean up temporary print context: %s", e)
         return False
 
 
@@ -152,7 +165,7 @@ class PrintInfoManager:
 
     c_ContextsFolder = "PrintInfos"
 
-    _Instance = None
+    _Instance:"PrintInfoManager" = None #pyright: ignore[reportAssignmentType]
 
     @staticmethod
     def Init(logger:logging.Logger, localStorageFolderPath:str):
@@ -168,17 +181,18 @@ class PrintInfoManager:
         self.Logger = logger
         self.ContextFolderPath = os.path.join(localStorageFolderPath, PrintInfoManager.c_ContextsFolder)
         Path(self.ContextFolderPath).mkdir(parents=True, exist_ok=True)
-        self.CurrentContext:PrintInfo = None
+        self.CurrentContext:Optional[PrintInfo] = None
 
 
-    # Given a print cookie, if a print info.
+    # Given a print cookie, get a print info.
     # This print cookie should be as unique as possible, so print's dont get mixed up.
-    # This cleans up all contexts on disk that dont match the requested cookie.
+    # Lookups must not delete other contexts, since status requests can arrive with a different or stale cookie.
     # Returns None if no context is found for the given cookie.
-    def GetPrintInfo(self, printCookie:str) -> PrintInfo:
+    def GetPrintInfo(self, printCookie:Optional[str]) -> Optional[PrintInfo]:
         try:
             # If there's no cookie, return None.
-            if printCookie is None:
+            if not isinstance(printCookie, str) or len(printCookie) == 0:
+                self.Logger.debug("GetPrintInfo called with no cookie.")
                 return None
 
             # First, see if the current context matches.
@@ -186,25 +200,14 @@ class PrintInfoManager:
             if c is not None and c.GetPrintCookie() == printCookie:
                 return c
 
-            # Else, go through the files looking for the correct context.
-            dirAndFiles = os.listdir(self.ContextFolderPath)
-            printCookieFileName = self._GetPrintCookieFileName(printCookie)
-            context = None
-            # Iterate all files. Any file that doesn't match or fails to parse we delete.
-            for name in dirAndFiles:
-                fullPath = os.path.join(self.ContextFolderPath, name)
-                if os.path.isfile(fullPath):
-                    if name == printCookieFileName:
-                        context = PrintInfo.LoadFromFile(self.Logger, fullPath)
-                        if context is None:
-                            self._DeleteFile(fullPath)
-                    else:
-                        self._DeleteFile(fullPath)
-                else:
-                    self._DeleteFile(fullPath)
-            # Always replace the current context even if it's empty, so the old context is removed.
-            self.CurrentContext = context
-            return context
+            # Read only the requested context, and keep the current one if the lookup fails.
+            fullPath = os.path.join(self.ContextFolderPath, self._GetPrintCookieFileName(printCookie))
+            if not os.path.isfile(fullPath):
+                return None
+            context = PrintInfo.LoadFromFile(self.Logger, fullPath)
+            if context is not None and context.GetPrintCookie() == printCookie:
+                self.CurrentContext = context
+                return context
         except Exception as e:
             self.Logger.error(f"Exception in PrintContextTracker.GetContext: {e}")
         return None
@@ -213,6 +216,8 @@ class PrintInfoManager:
     # Clears all print infos. Note this should only be used when we absolutely know this is a new print start,
     # like on a new print start or something.
     def ClearAllPrintInfos(self) -> None:
+        # Clear memory too, so printing the same filename again creates a new print id.
+        self.CurrentContext = None
         try:
             dirAndFiles = os.listdir(self.ContextFolderPath)
             for name in dirAndFiles:
@@ -225,16 +230,14 @@ class PrintInfoManager:
     # Creates a new Print Info and returns it.
     # This will always return a new PrintInfo, even if it fails to write to disk.
     def CreateNewPrintInfo(self, printCookie:str, printId:str) -> PrintInfo:
-        try:
-            fullPath = os.path.join(self.ContextFolderPath, self._GetPrintCookieFileName(printCookie))
-            self.CurrentContext = PrintInfo.CreateNew(self.Logger, fullPath, printCookie, printId)
-            return self.CurrentContext
-        except Exception as e:
-            self.Logger.error(f"Exception in PrintContextTracker.CreateNew: {e}")
-        return None
+        if not isinstance(printCookie, str) or len(printCookie) == 0:
+            raise ValueError("Can't create print info without a print cookie.")
+        fullPath = os.path.join(self.ContextFolderPath, self._GetPrintCookieFileName(printCookie))
+        self.CurrentContext = PrintInfo.CreateNew(self.Logger, fullPath, printCookie, printId)
+        return self.CurrentContext
 
 
-    def _GetPrintCookieFileName(self, printCookie:str):
+    def _GetPrintCookieFileName(self, printCookie:str) -> str:
         return f"{printCookie}.json"
 
 

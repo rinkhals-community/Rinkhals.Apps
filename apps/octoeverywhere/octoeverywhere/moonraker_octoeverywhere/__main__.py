@@ -1,5 +1,5 @@
 import sys
-import json
+from typing import Optional
 
 from linux_host.startup import Startup
 from linux_host.startup import ConfigDataTypes
@@ -12,10 +12,10 @@ if __name__ == '__main__':
     s = Startup()
 
     # Try to parse the config
-    jsonConfig = None
+    jsonConfigStr:Optional[str] = None
     try:
         # Get the json from the process args.
-        jsonConfig = s.GetJsonFromArgs(sys.argv)
+        (jsonConfigStr, jsonConfig) = s.GetJsonFromArgs(sys.argv)
 
         #
         # 1) Parse the common, required args.
@@ -32,26 +32,34 @@ if __name__ == '__main__':
         # 2) Parse the IsCompanion flag, this will determine which other vars are required.
         #    Note that for older plugin installs, the IsCompanion flag won't exist, implying False.
         #
-        IsCompanion = False
-        if "IsCompanion" in jsonConfig:
-            IsCompanion = jsonConfig["IsCompanion"]
-        IsCompanion = bool(IsCompanion)
+        isCompanion = s.GetConfigVarAndValidate(jsonConfig, "IsCompanion", ConfigDataTypes.Bool, defaultValue=False)
+        isDockerContainer = s.GetConfigVarAndValidate(jsonConfig, "IsDockerContainer", ConfigDataTypes.Bool, defaultValue=False)
+
+        # Optional - Allows the host to explicitly pass the Moonraker API key to use, for systems that require auth.
+        # If set, this is used over the config value and we won't try to find the key ourselves via the unix socket.
+        # An empty string is treated as not set, so hosts can always pass the var even if they don't have a key.
+        MoonrakerApiKey:Optional[str] = None
+        moonrakerApiKeyValue = jsonConfig.get("MoonrakerApiKey", None)
+        if moonrakerApiKeyValue is not None and len(str(moonrakerApiKeyValue).strip()) > 0:
+            MoonrakerApiKey = str(moonrakerApiKeyValue).strip()
 
         #
         # 3) Now parse the required vars based on the IsCompanion flag state.
         #
         MoonrakerConfigFile = None
+        DisableMoonrakerConfigFileWrites = False
         #CompanionInstanceIdStr = None
 
-        if IsCompanion:
+        if isCompanion:
             # We don't use this right now, but we have it if we need it.
             #CompanionInstanceIdStr = s.GetConfigVarAndValidate(jsonConfig, "CompanionInstanceIdStr", ConfigDataTypes.String)
             pass
         else:
             MoonrakerConfigFile = s.GetConfigVarAndValidate(jsonConfig, "MoonrakerConfigFile", ConfigDataTypes.Path)
+            DisableMoonrakerConfigFileWrites = s.GetConfigVarAndValidate(jsonConfig, "DisableMoonrakerConfigFileWrites", ConfigDataTypes.Bool, defaultValue=False)
 
     except Exception as e:
-        s.PrintErrorAndExit(f"Exception while loading json config. Error:{str(e)} Config:{json.dumps(jsonConfig)}")
+        s.PrintErrorAndExit(f"Exception while loading json config. Error:{str(e)} Config: {jsonConfigStr}")
 
     # For debugging, we also allow an optional dev object to be passed.
     devConfig_CanBeNone = s.GetDevConfigIfAvailable(sys.argv)
@@ -59,9 +67,9 @@ if __name__ == '__main__':
     # Run!
     try:
         # Create and run the main host!
-        host = MoonrakerHost(KlipperConfigFolder, KlipperLogFolder, devConfig_CanBeNone)
-        host.RunBlocking(KlipperConfigFolder, IsCompanion, LocalFileStoragePath, ServiceName, VirtualEnvPath, RepoRootFolder,
-                        MoonrakerConfigFile, devConfig_CanBeNone)
+        host = MoonrakerHost(KlipperConfigFolder, KlipperLogFolder, devConfig_CanBeNone) #pyright: ignore[reportArgumentType,reportPossiblyUnboundVariable]
+        host.RunBlocking(KlipperConfigFolder, LocalFileStoragePath, ServiceName, VirtualEnvPath, RepoRootFolder, #pyright: ignore[reportArgumentType,reportPossiblyUnboundVariable]
+                        MoonrakerConfigFile, DisableMoonrakerConfigFileWrites, MoonrakerApiKey, isCompanion, isDockerContainer, devConfig_CanBeNone) #pyright: ignore[reportArgumentType,reportPossiblyUnboundVariable]
     except Exception as e:
         s.PrintErrorAndExit(f"Exception leaked from main moonraker host class. Error:{str(e)}")
 

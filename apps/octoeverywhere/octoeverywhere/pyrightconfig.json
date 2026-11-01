@@ -1,0 +1,25 @@
+{
+    // Note we can not use the pyproject.toml file because it breaks OctoPrint installs.
+    "exclude": [
+        "**/node_modules",
+        "**/__pycache__",
+        "**/Proto",
+        "**/.vscode",
+        "**/debugprofiler.py",
+        "tests",
+    ],
+
+    // Set the version to the oldest we support, so we can catch issues.
+    "pythonVersion": "3.7",
+    "pythonPlatform": "Linux",
+
+    // TODO: Overtime set more of these to strict so we can catch more issues.
+    // Enable this to set all to strict.
+    // "strict": ["**"],
+
+    "reportUnknownParameterType":"error",
+    // Third-party stubs like requests can expose partially unknown member types.
+    // Keep this as a warning so real Pyright type checks still run without CI failing on stub internals.
+    "reportUnknownMemberType":"warning",
+    "reportDeprecated":"error"
+  }

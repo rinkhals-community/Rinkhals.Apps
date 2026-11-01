@@ -1,17 +1,52 @@
+import json
 import logging
+from typing import Any, Dict, List, Optional, Union
 
 from octoprint import __version__
 from octoprint.printer import PrinterInterface
 
+from octoeverywhere.buffer import Buffer
+from octoeverywhere.compat import Compat
+from octoeverywhere.filesystemcommands import FileSystemCommandHelper, FileSystemTreeBuilder, VirtualFilePath, VirtualFileSystemTree
+from octoeverywhere.httpresult import HttpResult
 from octoeverywhere.sentry import Sentry
 from octoeverywhere.commandhandler import CommandHandler, CommandResponse
+from octoeverywhere.interfaces import FEATURE_PRINT_START, IPlatformCommandHandler, IOctoPrintPlugin, ConnectionInfo
+from octoeverywhere.octohttprequest import OctoHttpRequest
+from octoeverywhere.WebStream.uploadbody import MultipartFormUploadBody, UploadBody
+from octoeverywhere.localip import LocalIpHelper
+
+from .octoprintmaterialsystem import OctoPrintMaterialSystemBuilder
 
 from .smartpause import SmartPause
+from .printerstateobject import PrinterStateObject
 
 # This class implements the Platform Command Handler Interface
-class OctoPrintCommandHandler:
+class OctoPrintCommandHandler(IPlatformCommandHandler):
+    c_OctoPrintVirtualFileRoots = [
+        FileSystemCommandHelper.c_VirtualGcodeRoot,
+        FileSystemCommandHelper.c_VirtualLogsRoot,
+    ]
+    c_OctoPrintAllowedFileRoots = set(c_OctoPrintVirtualFileRoots)
+    # OctoPrint only analyzes gcode files, so file details are limited to that root.
+    c_OctoPrintGcodeOnlyFileRoots = {
+        FileSystemCommandHelper.c_VirtualGcodeRoot,
+    }
 
-    def __init__(self, logger:logging.Logger, octoPrintPrinterObject:PrinterInterface, printerStateObject, mainPluginImpl):
+    # OctoPrint state ids that mean OctoPrint itself is running, but it has no serial connection to the printer.
+    # In these states there's no printer to report on, so the status must not be reported as idle.
+    # https://github.com/OctoPrint/OctoPrint/blob/master/src/octoprint/util/comm.py
+    c_OctoPrintNotConnectedStates = frozenset([
+        "OFFLINE",
+        "CLOSED",
+        "OFFLINE_AFTER_ERROR",
+        "DETECT_SERIAL",
+        "DETECT_BAUDRATE",
+        "CONNECTING",
+        "UNKNOWN",
+    ])
+
+    def __init__(self, logger:logging.Logger, octoPrintPrinterObject:PrinterInterface, printerStateObject:PrinterStateObject, mainPluginImpl:IOctoPrintPlugin) -> None:
         self.Logger = logger
         self.OctoPrintPrinterObject = octoPrintPrinterObject
         self.PrinterStateObject = printerStateObject
@@ -19,7 +54,7 @@ class OctoPrintCommandHandler:
 
 
     # A helper for checking if things exist in dicts.
-    def _Exists(self, dictObj:dict, key:str):
+    def _Exists(self, dictObj:Dict[str, Any], key:str):
         return key in dictObj and dictObj[key] is not None
 
 
@@ -35,10 +70,10 @@ class OctoPrintCommandHandler:
     # Returning None will result in the "Printer not connected" state.
     # Or one of the CommandHandler.c_CommandError_... ints can be returned, which will be sent as the result.
     #
-    def GetCurrentJobStatus(self):
+    def GetCurrentJobStatus(self, includeMaterialSystem:bool=False) -> Union[int, None, Dict[str, Any]]:
         try:
             # Get the date from the octoprint printer object.
-            currentData = self.OctoPrintPrinterObject.get_current_data()
+            currentData:Dict[str, Any] = self.OctoPrintPrinterObject.get_current_data() #pyright: ignore[reportUnknownMemberType] octoprint has no typing
 
             # Get progress
             progress = 0.0
@@ -77,7 +112,7 @@ class OctoPrintCommandHandler:
             # For example, the printing state string in get_current_data can change if printing from an SD card
             # Possible Values - https://github.com/OctoPrint/OctoPrint/blob/260a1aef11432c421246019e25b6b744abbaed60/src/octoprint/util/comm.py#L432
             # There are a lot of values here. We only include some of them and then consider the rest "idle"
-            opStateStr = self.OctoPrintPrinterObject.get_state_id()
+            opStateStr = self.OctoPrintPrinterObject.get_state_id() #pyright: ignore[reportUnknownMemberType] octoprint has no typing
             state = "idle"
             if opStateStr == "PRINTING" or opStateStr == "STARTING" or opStateStr == "FINISHING":
                 # Special cases for printing
@@ -91,6 +126,11 @@ class OctoPrintCommandHandler:
                 state = "resuming"
             elif opStateStr == "ERROR" or opStateStr == "CLOSED_WITH_ERROR":
                 state = "error"
+            elif opStateStr in OctoPrintCommandHandler.c_OctoPrintNotConnectedStates:
+                # OctoPrint is running, but it isn't connected to the printer over serial, so there's no printer to report on.
+                # Returning None here is the documented way to report the "printer not connected" state.
+                # These states must not fall through to "idle", or a disconnected printer would look ready to print.
+                return None
             elif opStateStr == "OPERATIONAL":
                 # When a print is complete, the progress will stay at 100% until it's cleared.
                 if progress > 99.999:
@@ -102,7 +142,7 @@ class OctoPrintCommandHandler:
 
             # Get the current temps if possible.
             # Note there will be no objects in the dic if the printer isn't connected or in other cases.
-            currentTemps = self.OctoPrintPrinterObject.get_current_temperatures()
+            currentTemps = self.OctoPrintPrinterObject.get_current_temperatures() #pyright: ignore[reportUnknownMemberType] octoprint has no typing
             hotendActual = 0.0
             hotendTarget = 0.0
             bedTarget = 0.0
@@ -119,11 +159,23 @@ class OctoPrintCommandHandler:
                     bedActual = round(float(bed["actual"]), 2)
                 if self._Exists(bed, "target"):
                     bedTarget = round(float(bed["target"]), 2)
+            # The chamber only exists if the printer profile has a heated chamber, so this is usually absent.
+            chamberActual = 0.0
+            chamberTarget = 0.0
+            if self._Exists(currentTemps, "chamber"):
+                chamber = currentTemps["chamber"]
+                if self._Exists(chamber, "actual"):
+                    chamberActual = round(float(chamber["actual"]), 2)
+                if self._Exists(chamber, "target"):
+                    chamberTarget = round(float(chamber["target"]), 2)
 
             # Build the object and return.
-            return {
+            result:Dict[str, Any] = {
                 "State": state,
                 "Error": errorStr_CanBeNone,
+                # Chamber light status: "on", "off", or None if not supported/unknown
+                # OctoPrint doesn't have a standard way to control chamber lights.
+                #"Lights": None,
                 "CurrentPrint":
                 {
                     "Progress" : progress,
@@ -139,35 +191,55 @@ class OctoPrintCommandHandler:
                         "BedTarget": bedTarget,
                         "HotendActual": hotendActual,
                         "HotendTarget": hotendTarget,
+                        "ChamberActual": chamberActual,
+                        "ChamberTarget": chamberTarget,
                     }
                 }
             }
+            if includeMaterialSystem:
+                result["MaterialSystem"] = OctoPrintMaterialSystemBuilder.Build(currentTemps)
+            return result
 
         except Exception as e:
-            Sentry.ExceptionNoSend("GetCurrentJobStatus failed to get job status", e)
+            Sentry.OnExceptionNoSend("GetCurrentJobStatus failed to get job status", e)
         return None
 
 
     # !! Platform Command Handler Interface Function !!
     # This must return the platform version as a string.
-    def GetPlatformVersionStr(self):
+    def GetPlatformVersionStr(self) -> str:
         try:
             versionStr = str(__version__)
             if versionStr is None or len(versionStr) == 0:
                 return "Unknown"
             return versionStr
         except Exception as e:
-            Sentry.ExceptionNoSend("GetPlatformVersionStr failed to get OctoPrint version", e)
+            Sentry.OnExceptionNoSend("GetPlatformVersionStr failed to get OctoPrint version", e)
         return "Unknown"
+
+
+    # !! Platform Command Handler Interface Function !!
+    # Returns an int with the supported feature flags for this platform, such as FEATURE_LIGHT_CONTROL, etc
+    def GetSupportedFeatureFlags(self) -> int:
+        return 0 | FEATURE_PRINT_START
+
+
+    # !! Platform Command Handler Interface Function !!
+    def GetConnectionInfo(self) -> ConnectionInfo:
+        ip = LocalIpHelper.TryToGetLocalIpOfConnectionTarget()
+        return ConnectionInfo(
+            ip,
+            OctoHttpRequest.GetLocalOctoPrintPort()
+        )
 
 
     # !! Platform Command Handler Interface Function !!
     # This must check that the printer state is valid for the pause and the plugin is connected to the host.
     # If not, it must return the correct two error codes accordingly.
     # This must return a CommandResponse.
-    def ExecutePause(self, smartPause, suppressNotificationBool, disableHotendBool, disableBedBool, zLiftMm, retractFilamentMm, showSmartPausePopup):
+    def ExecutePause(self, smartPause:bool, suppressNotificationBool:bool, disableHotendBool:bool, disableBedBool:bool, zLiftMm:int, retractFilamentMm:int, showSmartPausePopup:bool) -> CommandResponse:
         # Ensure we are printing, if not, respond with the common error.
-        if self.OctoPrintPrinterObject.is_printing() is False:
+        if self.OctoPrintPrinterObject.is_printing() is False: #pyright: ignore[reportUnknownMemberType] octoprint has no typing
             self.Logger.info("ExecutePause is not doing anything because theres' no print in progress..")
             return CommandResponse.Error(CommandHandler.c_CommandError_InvalidPrinterState, "Printer state is not printing.")
 
@@ -179,13 +251,13 @@ class OctoPrintCommandHandler:
                     SmartPause.Get().SetLastPauseNotificationSuppressionTimeNow()
 
                 # Do the pause.
-                self.OctoPrintPrinterObject.pause_print()
+                self.OctoPrintPrinterObject.pause_print() #pyright: ignore[reportUnknownMemberType] octoprint has no typing
 
                 # Return success.
                 return CommandResponse.Success(None)
 
             except Exception as e:
-                Sentry.Exception("Pause command failed to execute.", e)
+                Sentry.OnException("Pause command failed to execute.", e)
                 return CommandResponse.Error(500, "Failed to pause")
 
         # Otherwise, do the smart pause.
@@ -193,12 +265,15 @@ class OctoPrintCommandHandler:
             # If this doesn't throw it's successful
             SmartPause.Get().DoSmartPause(disableHotendBool, disableBedBool, zLiftMm, retractFilamentMm, suppressNotificationBool)
         except Exception as e:
-            Sentry.Exception("Failed to ExecutePause, SmartPause error.", e)
+            Sentry.OnException("Failed to ExecutePause, SmartPause error.", e)
             return CommandResponse.Error(500, "Failed to pause")
 
         # On success, if we did a smart pause, send a notification to tell the user.
-        if self.MainPluginImpl is not None and showSmartPausePopup and (disableBedBool or disableHotendBool or zLiftMm > 0 or retractFilamentMm > 0):
-            self.MainPluginImpl.ShowSmartPausePopUpOnPortalLoad()
+        if self.MainPluginImpl is not None:
+            if showSmartPausePopup and (disableBedBool or disableHotendBool or zLiftMm > 0 or retractFilamentMm > 0):
+                self.MainPluginImpl.ShowSmartPausePopUpOnPortalLoad()
+        else:
+            self.Logger.error("ExecutePause was called with smart pause, but the main plugin is None. This should never happen.")
 
         # Success!
         return CommandResponse.Success(None)
@@ -208,14 +283,14 @@ class OctoPrintCommandHandler:
     # This must check that the printer state is valid for the resume and the plugin is connected to the host.
     # If not, it must return the correct two error codes accordingly.
     # This must return a CommandResponse.
-    def ExecuteResume(self):
+    def ExecuteResume(self) -> CommandResponse:
         # Ensure we are paused, if not, respond with the common error.
-        if self.OctoPrintPrinterObject.is_paused() is False and self.OctoPrintPrinterObject.is_pausing() is False:
+        if self.OctoPrintPrinterObject.is_paused() is False and self.OctoPrintPrinterObject.is_pausing() is False: #pyright: ignore[reportUnknownMemberType] octoprint has no typing
             self.Logger.info("ExecuteResume is not doing anything because the printer isn't paused..")
             return CommandResponse.Error(CommandHandler.c_CommandError_InvalidPrinterState, "Printer state is not paused.")
 
         # Do the resume.
-        self.OctoPrintPrinterObject.resume_print()
+        self.OctoPrintPrinterObject.resume_print() #pyright: ignore[reportUnknownMemberType] octoprint has no typing
 
         # Return success.
         return CommandResponse.Success(None)
@@ -225,15 +300,414 @@ class OctoPrintCommandHandler:
     # This must check that the printer state is valid for the cancel and the plugin is connected to the host.
     # If not, it must return the correct two error codes accordingly.
     # This must return a CommandResponse.
-    def ExecuteCancel(self):
+    def ExecuteCancel(self) -> CommandResponse:
         # Ensure we are paused, if not, respond with the common error.
-        state = self.OctoPrintPrinterObject.get_state_id()
+        state = self.OctoPrintPrinterObject.get_state_id() #pyright: ignore[reportUnknownMemberType] octoprint has no typing
         if state != "PRINTING" and state != "RESUMING" and state != "FINISHING" and state != "STARTING" and state != "PAUSED" and state != "PAUSING":
             self.Logger.info("ExecuteCancel is not doing anything because the printer printing.")
             return CommandResponse.Error(CommandHandler.c_CommandError_InvalidPrinterState, "Printer state is not printing.")
 
         # Do the cancel.
-        self.OctoPrintPrinterObject.cancel_print()
+        self.OctoPrintPrinterObject.cancel_print() #pyright: ignore[reportUnknownMemberType] octoprint has no typing
 
         # Return success.
         return CommandResponse.Success(None)
+
+
+    # !! Platform Command Handler Interface Function !!
+    # Starts a print from a virtual file system path.
+    def ExecuteStart(self, args:Optional[Dict[str, Any]]) -> CommandResponse:
+        parsedPath, errorStr = FileSystemCommandHelper.ParsePathArg(args)
+        if errorStr is not None or parsedPath is None:
+            return CommandResponse.Error(400, errorStr or FileSystemCommandHelper.InvalidPathError())
+
+        headers:Dict[str, str] = {
+            "Content-Type": "application/json",
+        }
+        self._AddOctoPrintLocalAuth(headers)
+        platformPath = self._GetPlatformPath(parsedPath)
+        startPath = "/api/files/local/" + FileSystemCommandHelper.EncodeRelativePathForUrl(parsedPath.RelativePath)
+        body = Buffer(json.dumps({
+            "command": "select",
+            "print": True,
+        }).encode("utf-8"))
+        result = OctoHttpRequest.MakeHttpCall(
+            self.Logger,
+            startPath,
+            OctoHttpRequest.GetPathType(startPath),
+            "POST",
+            headers,
+            body,
+            allowRedirects=False,
+            timeoutSec=60.0
+        )
+        if result is None:
+            return CommandResponse.Error(CommandHandler.c_CommandError_HostNotConnected, FileSystemCommandHelper.PrinterNotConnectedError("OctoPrint", CommandHandler.c_StartCommand))
+
+        try:
+            result.ReadAllContentFromStreamResponse(self.Logger)
+            bodyBytes = b""
+            if result.FullBodyBuffer is not None:
+                bodyBytes = bytes(result.FullBodyBuffer.GetBytesLike())
+            if result.StatusCode == 401 or result.StatusCode == 403:
+                return CommandResponse.Error(CommandHandler.c_CommandError_LostAuth, FileSystemCommandHelper.AuthFailedError("OctoPrint", CommandHandler.c_StartCommand))
+            if result.StatusCode < 200 or result.StatusCode >= 300:
+                return CommandResponse.Error(result.StatusCode, FileSystemCommandHelper.BackendHttpError("OctoPrint", CommandHandler.c_StartCommand, result.StatusCode, bodyBytes))
+            return FileSystemCommandHelper.BuildFileStartSuccess(parsedPath, platformPath, FileSystemCommandHelper.DecodeSuccessBody(bodyBytes))
+        finally:
+            result.Free()
+
+
+    # !! Platform Command Handler Interface Function !!
+    # Sets the light state for the specified light type.
+    # OctoPrint doesn't have a standard way to control chamber lights, so this is not supported.
+    def ExecuteSetLight(self, lightName:str, on:bool) -> CommandResponse:
+        return CommandResponse.Error(CommandHandler.c_CommandError_FeatureNotSupported, "Light control is not supported on OctoPrint.")
+
+
+    # !! Platform Command Handler Interface Function !!
+    # Moves the specified axis by the given distance in mm.
+    def ExecuteMoveAxis(self, axis:str, distanceMm:float) -> CommandResponse:
+        # Validate axis parameter
+        axis_upper = axis.upper()
+        if axis_upper not in ["X", "Y", "Z"]:
+            self.Logger.error(f"ExecuteMoveAxis: Invalid axis '{axis}'")
+            return CommandResponse.Error(400, "Invalid axis. Must be X, Y, or Z")
+        return CommandResponse.Error(CommandHandler.c_CommandError_FeatureNotSupported, "Not Supported")
+
+
+    # !! Platform Command Handler Interface Function !!
+    # Homes all axes.
+    def ExecuteHome(self) -> CommandResponse:
+        return CommandResponse.Error(CommandHandler.c_CommandError_FeatureNotSupported, "Not Supported")
+
+
+    # !! Platform Command Handler Interface Function !!
+    # Extrudes or retracts filament for the specified extruder.
+    def ExecuteExtrude(self, extruder:int, distanceMm:float) -> CommandResponse:
+        return CommandResponse.Error(CommandHandler.c_CommandError_FeatureNotSupported, "Not Supported")
+
+
+    # !! Platform Command Handler Interface Function !!
+    # Sets the temperature for bed, chamber, or tool.
+    def ExecuteSetTemp(self, bedC:Optional[float], chamberC:Optional[float], toolC:Optional[float], toolNumber:Optional[int]) -> CommandResponse:
+        return CommandResponse.Error(CommandHandler.c_CommandError_FeatureNotSupported, "Not Supported")
+
+
+    # !! Platform Command Handler Interface Function !!
+    # Sends a native JSON command payload to the printer control system and returns the JSON response.
+    def ExecuteSendCommand(self, transportType:str, request:Dict[str, Any], rawPayload:Dict[str, Any]) -> CommandResponse:
+        if transportType != "http":
+            return CommandResponse.Error(CommandHandler.c_CommandError_FeatureNotSupported, f"This is an OctoPrint printer, which only accepts send-command requests with TransportType 'http'. The received TransportType was '{transportType}'. Set 'TransportType' to 'http', put the OctoPrint API Path/Method/Headers at the top level of the payload, and put any JSON request body in 'Request'. Example: {{\"TransportType\": \"http\", \"Path\": \"/api/version\", \"Method\": \"GET\", \"Request\": {{}}}}.")
+
+        parsed = CommandHandler.ParseHttpSendCommand(rawPayload, request)
+        if isinstance(parsed, CommandResponse):
+            return parsed
+
+        # Add the local auth header so we can call back into OctoPrint's own APIs.
+        localAuth = Compat.GetLocalAuth()
+        if localAuth is not None:
+            localAuth.AddAuthHeader(parsed.Headers)
+
+        bodyBuffer:Optional[Buffer] = None
+        if parsed.BodyBytes is not None:
+            bodyBuffer = Buffer(parsed.BodyBytes)
+
+        result = OctoHttpRequest.MakeHttpCall(
+            self.Logger,
+            parsed.Path,
+            OctoHttpRequest.GetPathType(parsed.Path),
+            parsed.Method,
+            parsed.Headers,
+            bodyBuffer,
+            allowRedirects=False,
+            timeoutSec=parsed.TimeoutSec
+        )
+        if result is None:
+            return CommandResponse.Error(CommandHandler.c_CommandError_HostNotConnected, "Printer Not Connected")
+
+        # The HTTP request itself succeeded; the printer's response (including a 4xx/5xx) is the meaningful payload.
+        try:
+            response = self._BuildHttpResponse(result)
+            isError = bool(response.get("StatusCode", 0) >= 400)
+            return CommandHandler.BuildSendCommandResult("http", {"Path": parsed.Path, "Method": parsed.Method}, response, isError, waitForResponse=True, timeoutSec=parsed.TimeoutSec)
+        finally:
+            result.Free()
+
+
+    def ExecuteFileList(self, args:Optional[Dict[str, Any]]) -> CommandResponse:
+        virtualRoots, errorStr = FileSystemCommandHelper.ResolveRequestedRoots(args, OctoPrintCommandHandler.c_OctoPrintVirtualFileRoots, FileSystemCommandHelper.c_RootAliases)
+        if errorStr is not None:
+            return CommandResponse.Error(400, errorStr)
+
+        def addToTree(tree:VirtualFileSystemTree, virtualRoot:str, listResult:List[Dict[str, Any]]) -> None:
+            if virtualRoot == FileSystemCommandHelper.c_VirtualLogsRoot:
+                FileSystemTreeBuilder.AddOctoPrintLogListToTree(tree, listResult)
+            else:
+                FileSystemTreeBuilder.AddOctoPrintFileListToTree(tree, listResult)
+
+        return FileSystemCommandHelper.BuildMultiRootFileListResponse(
+            virtualRoots,
+            self._ListOctoPrintFileRoot,
+            addToTree,
+            self.Logger,
+            "OctoPrint",
+            CommandHandler.c_CommandError_ExecutionFailure)
+
+
+    def _ListOctoPrintFileRoot(self, virtualRoot:str) -> Union[List[Dict[str, Any]], CommandResponse]:
+        headers:Dict[str, str] = {}
+        self._AddOctoPrintLocalAuth(headers)
+        path = "/api/files/local?recursive=true"
+        if virtualRoot == FileSystemCommandHelper.c_VirtualLogsRoot:
+            path = "/plugin/logging/logs"
+        result = OctoHttpRequest.MakeHttpCall(
+            self.Logger,
+            path,
+            OctoHttpRequest.GetPathType(path),
+            "GET",
+            headers,
+            timeoutSec=20.0
+        )
+        if result is None:
+            return CommandResponse.Error(CommandHandler.c_CommandError_HostNotConnected, FileSystemCommandHelper.PrinterNotConnectedError("OctoPrint", "file-list"))
+
+        with result:
+            result.ReadAllContentFromStreamResponse(self.Logger)
+            bodyBytes = b""
+            if result.FullBodyBuffer is not None:
+                bodyBytes = bytes(result.FullBodyBuffer.GetBytesLike())
+            if result.StatusCode == 401 or result.StatusCode == 403:
+                return CommandResponse.Error(CommandHandler.c_CommandError_LostAuth, FileSystemCommandHelper.AuthFailedError("OctoPrint", "file-list"))
+            if result.StatusCode < 200 or result.StatusCode >= 300:
+                return CommandResponse.Error(result.StatusCode, FileSystemCommandHelper.BackendHttpError("OctoPrint", "file-list", result.StatusCode, bodyBytes))
+            try:
+                responseObj:Dict[str, Any] = json.loads(bodyBytes.decode("utf-8"))
+            except Exception:
+                return CommandResponse.Error(502, FileSystemCommandHelper.InvalidJsonResponseError("OctoPrint", "file-list"))
+            if not isinstance(responseObj, dict):
+                return CommandResponse.Error(502, "file-list failed on OctoPrint: response JSON was not an object.")
+            files = responseObj.get("files", [])
+            if not isinstance(files, list):
+                files = []
+            return files
+
+
+    def ExecuteFileUpload(self, args:Optional[Dict[str, Any]], uploadBody:UploadBody) -> CommandResponse:
+        parsedPath, errorStr = FileSystemCommandHelper.ParsePathArg(args)
+        if errorStr is not None or parsedPath is None:
+            return CommandResponse.Error(400, errorStr or FileSystemCommandHelper.InvalidPathError())
+        if uploadBody.HasData is False:
+            return CommandResponse.Error(400, FileSystemCommandHelper.EmptyUploadBodyError())
+
+        fileName, parentPath = parsedPath.FileNameAndParent()
+        fields:Dict[str, str] = {}
+        if len(parentPath) > 0:
+            fields["path"] = parentPath
+
+        multipartBody = MultipartFormUploadBody(self.Logger, uploadBody, fileName, fields)
+        headers = {
+            "Content-Type": multipartBody.GetContentType(),
+            "Content-Length": str(multipartBody.GetContentLength()),
+        }
+        self._AddOctoPrintLocalAuth(headers)
+        api = "/api/files/local"
+        result = OctoHttpRequest.MakeHttpCall(
+            self.Logger,
+            api,
+            OctoHttpRequest.GetPathType(api),
+            "POST",
+            headers,
+            multipartBody, #pyright: ignore[reportArgumentType]
+            allowRedirects=False,
+            timeoutSec=1800.0
+        )
+        if result is None:
+            return CommandResponse.Error(CommandHandler.c_CommandError_HostNotConnected, FileSystemCommandHelper.PrinterNotConnectedError("OctoPrint", CommandHandler.c_FilesUploadCommand))
+
+        try:
+            result.ReadAllContentFromStreamResponse(self.Logger)
+            bodyBytes = b""
+            if result.FullBodyBuffer is not None:
+                bodyBytes = bytes(result.FullBodyBuffer.GetBytesLike())
+            if result.StatusCode == 401 or result.StatusCode == 403:
+                return CommandResponse.Error(CommandHandler.c_CommandError_LostAuth, FileSystemCommandHelper.AuthFailedError("OctoPrint", CommandHandler.c_FilesUploadCommand))
+            if result.StatusCode < 200 or result.StatusCode >= 300:
+                return CommandResponse.Error(result.StatusCode, FileSystemCommandHelper.BackendHttpError("OctoPrint", CommandHandler.c_FilesUploadCommand, result.StatusCode, bodyBytes))
+            platformPath = self._GetPlatformPath(parsedPath)
+            return FileSystemCommandHelper.BuildFileUploadSuccess(parsedPath, platformPath, uploadBody.UploadBytesReceivedSoFar, bodyBytes)
+        finally:
+            result.Free()
+
+
+    def ExecuteFileDownload(self, args:Optional[Dict[str, Any]]) -> HttpResult:
+        parsedPath, errorStr = FileSystemCommandHelper.ParsePathArg(args, OctoPrintCommandHandler.c_OctoPrintAllowedFileRoots)
+        if errorStr is not None or parsedPath is None:
+            return FileSystemCommandHelper.BuildRawError(400, errorStr or FileSystemCommandHelper.InvalidPathError(OctoPrintCommandHandler.c_OctoPrintAllowedFileRoots), CommandHandler.c_FilesDownloadCommand)
+
+        headers:Dict[str, str] = {}
+        self._AddOctoPrintLocalAuth(headers)
+        relativePath = FileSystemCommandHelper.EncodeRelativePathForUrl(parsedPath.RelativePath)
+        downloadPath = "/downloads/files/local/" + relativePath
+        if parsedPath.Root == FileSystemCommandHelper.c_VirtualLogsRoot:
+            downloadPath = "/downloads/logs/" + relativePath
+        result = OctoHttpRequest.MakeHttpCall(
+            self.Logger,
+            downloadPath,
+            OctoHttpRequest.GetPathType(downloadPath),
+            "GET",
+            headers,
+            timeoutSec=1800.0
+        )
+        if result is None:
+            return FileSystemCommandHelper.BuildRawError(CommandHandler.c_CommandError_HostNotConnected, FileSystemCommandHelper.PrinterNotConnectedError("OctoPrint", CommandHandler.c_FilesDownloadCommand), CommandHandler.c_FilesDownloadCommand)
+        if result.StatusCode < 200 or result.StatusCode >= 300:
+            try:
+                result.ReadAllContentFromStreamResponse(self.Logger)
+                bodyBytes = b""
+                if result.FullBodyBuffer is not None:
+                    bodyBytes = bytes(result.FullBodyBuffer.GetBytesLike())
+                if result.StatusCode == 401 or result.StatusCode == 403:
+                    return FileSystemCommandHelper.BuildRawError(CommandHandler.c_CommandError_LostAuth, FileSystemCommandHelper.AuthFailedError("OctoPrint", CommandHandler.c_FilesDownloadCommand), CommandHandler.c_FilesDownloadCommand)
+                return FileSystemCommandHelper.BuildRawError(result.StatusCode, FileSystemCommandHelper.BackendHttpError("OctoPrint", CommandHandler.c_FilesDownloadCommand, result.StatusCode, bodyBytes), CommandHandler.c_FilesDownloadCommand)
+            finally:
+                result.Free()
+        return result
+
+
+    def ExecuteGetPluginLogs(self, args:Optional[Dict[str, Any]]) -> HttpResult:
+        return FileSystemCommandHelper.BuildLogFileResultFromLogger(self.Logger, "octoprint.log", CommandHandler.c_GetPluginLogsCommand, "octoprint.log", args)
+
+
+    def ExecuteFileDetails(self, args:Optional[Dict[str, Any]]) -> CommandResponse:
+        # Only gcode files have analysis in OctoPrint, so this is limited to the gcode root.
+        parsedPath, errorStr = FileSystemCommandHelper.ParsePathArg(args, OctoPrintCommandHandler.c_OctoPrintGcodeOnlyFileRoots)
+        if errorStr is not None or parsedPath is None:
+            return CommandResponse.Error(400, errorStr or FileSystemCommandHelper.InvalidPathError(OctoPrintCommandHandler.c_OctoPrintGcodeOnlyFileRoots))
+
+        headers:Dict[str, str] = {}
+        self._AddOctoPrintLocalAuth(headers)
+        relativePath = FileSystemCommandHelper.EncodeRelativePathForUrl(parsedPath.RelativePath)
+        detailsPath = "/api/files/local/" + relativePath
+        result = OctoHttpRequest.MakeHttpCall(
+            self.Logger,
+            detailsPath,
+            OctoHttpRequest.GetPathType(detailsPath),
+            "GET",
+            headers,
+            timeoutSec=60.0
+        )
+        if result is None:
+            return CommandResponse.Error(CommandHandler.c_CommandError_HostNotConnected, FileSystemCommandHelper.PrinterNotConnectedError("OctoPrint", CommandHandler.c_FilesDetailsCommand))
+
+        try:
+            result.ReadAllContentFromStreamResponse(self.Logger)
+            bodyBytes = b""
+            if result.FullBodyBuffer is not None:
+                bodyBytes = bytes(result.FullBodyBuffer.GetBytesLike())
+            if result.StatusCode == 401 or result.StatusCode == 403:
+                return CommandResponse.Error(CommandHandler.c_CommandError_LostAuth, FileSystemCommandHelper.AuthFailedError("OctoPrint", CommandHandler.c_FilesDetailsCommand))
+            if result.StatusCode < 200 or result.StatusCode >= 300:
+                return CommandResponse.Error(result.StatusCode, FileSystemCommandHelper.BackendHttpError("OctoPrint", CommandHandler.c_FilesDetailsCommand, result.StatusCode, bodyBytes))
+
+            meta = FileSystemCommandHelper.DecodeSuccessBody(bodyBytes)
+            if not isinstance(meta, dict):
+                return CommandResponse.Error(500, "OctoPrint returned no details for this file.")
+            return FileSystemCommandHelper.BuildFileDetailsSuccess(parsedPath, self._GetPlatformPath(parsedPath), self._BuildOctoPrintFileDetails(meta), meta)
+        finally:
+            result.Free()
+
+
+    # OctoPrint keeps the slicer estimates under gcodeAnalysis, which only exists once its analysis queue has
+    # processed the file, so everything in here is best effort.
+    # https://docs.octoprint.org/en/master/api/datamodel.html#file-information
+    @staticmethod
+    def _BuildOctoPrintFileDetails(meta:Dict[str, Any]) -> Dict[str, Any]:
+        analysis:Dict[str, Any] = meta.get("gcodeAnalysis", None) or {}
+        dimensions:Dict[str, Any] = analysis.get("dimensions", None) or {}
+
+        # The filament section is keyed per tool, so total up whatever tools it lists.
+        filamentLengthMm:Optional[float] = None
+        filamentVolume:Optional[float] = None
+        filament:Any = analysis.get("filament", None)
+        if isinstance(filament, dict):
+            for toolValue in filament.values():
+                if not isinstance(toolValue, dict):
+                    continue
+                length = FileSystemCommandHelper.AsFloatOrNone(toolValue.get("length", None))
+                if length is not None:
+                    filamentLengthMm = length if filamentLengthMm is None else filamentLengthMm + length
+                volume = FileSystemCommandHelper.AsFloatOrNone(toolValue.get("volume", None))
+                if volume is not None:
+                    filamentVolume = volume if filamentVolume is None else filamentVolume + volume
+
+        return {
+            "SizeBytes": FileSystemCommandHelper.AsIntOrNone(meta.get("size", None)),
+            "ModifiedTimeSec": FileSystemCommandHelper.AsIntOrNone(meta.get("date", None)),
+            "EstPrintTimeSec": FileSystemCommandHelper.AsIntOrNone(analysis.get("estimatedPrintTime", None)),
+            "EstFilamentUsedMm": FileSystemCommandHelper.AsIntOrNone(filamentLengthMm),
+            "ObjectHeightMm": FileSystemCommandHelper.AsFloatOrNone(dimensions.get("height", None)),
+        }
+
+
+    def ExecuteFileDelete(self, args:Optional[Dict[str, Any]]) -> CommandResponse:
+        parsedPath, errorStr = FileSystemCommandHelper.ParsePathArg(args, OctoPrintCommandHandler.c_OctoPrintAllowedFileRoots)
+        if errorStr is not None or parsedPath is None:
+            return CommandResponse.Error(400, errorStr or FileSystemCommandHelper.InvalidPathError(OctoPrintCommandHandler.c_OctoPrintAllowedFileRoots))
+
+        headers:Dict[str, str] = {}
+        self._AddOctoPrintLocalAuth(headers)
+        platformPath = self._GetPlatformPath(parsedPath)
+        relativePath = FileSystemCommandHelper.EncodeRelativePathForUrl(parsedPath.RelativePath)
+        deletePath = "/api/files/local/" + relativePath
+        if parsedPath.Root == FileSystemCommandHelper.c_VirtualLogsRoot:
+            deletePath = "/plugin/logging/logs/" + relativePath
+        result = OctoHttpRequest.MakeHttpCall(
+            self.Logger,
+            deletePath,
+            OctoHttpRequest.GetPathType(deletePath),
+            "DELETE",
+            headers,
+            timeoutSec=60.0
+        )
+        if result is None:
+            return CommandResponse.Error(CommandHandler.c_CommandError_HostNotConnected, FileSystemCommandHelper.PrinterNotConnectedError("OctoPrint", CommandHandler.c_FilesDeleteCommand))
+
+        try:
+            result.ReadAllContentFromStreamResponse(self.Logger)
+            bodyBytes = b""
+            if result.FullBodyBuffer is not None:
+                bodyBytes = bytes(result.FullBodyBuffer.GetBytesLike())
+            if result.StatusCode == 401 or result.StatusCode == 403:
+                return CommandResponse.Error(CommandHandler.c_CommandError_LostAuth, FileSystemCommandHelper.AuthFailedError("OctoPrint", CommandHandler.c_FilesDeleteCommand))
+            if result.StatusCode < 200 or result.StatusCode >= 300:
+                return CommandResponse.Error(result.StatusCode, FileSystemCommandHelper.BackendHttpError("OctoPrint", CommandHandler.c_FilesDeleteCommand, result.StatusCode, bodyBytes))
+            return FileSystemCommandHelper.BuildFileDeleteSuccess(parsedPath, platformPath, bodyBytes)
+        finally:
+            result.Free()
+
+
+    def _GetPlatformPath(self, virtPath:VirtualFilePath) -> str:
+        return virtPath.RelativePath
+
+
+    def _BuildHttpResponse(self, result:Any) -> Dict[str, Any]:
+        result.ReadAllContentFromStreamResponse(self.Logger)
+        bodyBytes = b""
+        if result.FullBodyBuffer is not None:
+            bodyBytes = bytes(result.FullBodyBuffer.GetBytesLike())
+        response:Dict[str, Any] = {
+            "StatusCode": result.StatusCode,
+            "Headers": dict(result.Headers),
+            "Url": result.Url,
+        }
+
+        # Add the body to the response.
+        FileSystemCommandHelper.BuildHttpResponseBody(response, bodyBytes)
+        return response
+
+
+    def _AddOctoPrintLocalAuth(self, headers:Dict[str, str]) -> None:
+        localAuth = Compat.GetLocalAuth()
+        if localAuth is not None:
+            localAuth.AddAuthHeader(headers)

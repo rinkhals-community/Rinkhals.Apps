@@ -1,6 +1,18 @@
 import os
 import string
 import secrets
+import logging
+
+from typing import Optional
+
+from .memorymanager import MemoryManager
+from .compression import Compression
+from .mdns import MDns
+from .deviceid import DeviceId
+from .printinfo import PrintInfoManager
+from .telemetry import Telemetry
+from .pingpong import PingPong
+
 
 # Common functions that the hosts might need to use.
 class HostCommon:
@@ -16,39 +28,66 @@ class HostCommon:
     c_OctoEverywherePrivateKeyMinLength = 80
     c_OctoEverywherePrivateKeyMaxLength = 128
 
-    # The url for the add printer process.
-    c_OctoEverywhereAddPrinterUrl = "https://octoeverywhere.com/getstarted"
+    # We need use the v2 version for better perf, see the server comments for more details.
+    c_OctoEverywhereOctoClientEndpointBase = "octoclientwsv2"
 
     # The main URL octoclients use to connect.
     # MUST be wss!
-    c_OctoEverywhereOctoClientWsUri = "wss://starport-v1.octoeverywhere.com/octoclientws"
+    c_OctoEverywhereOctoClientWsUri = f"wss://starport-v1.octoeverywhere.com/{c_OctoEverywhereOctoClientEndpointBase}"
+
+
+    # Inits stuff that's common to ALL hosts.
+    @staticmethod
+    def Init(logging:logging.Logger, printerId:str, localStorageDir:str, devLocalServerAddress:Optional[str]=None) -> None:
+        # Init the memory manager and allow it to setup the memory limits.
+        MemoryManager.Init(logging)
+
+        # Enable to enable memory debugging
+        # self.MemoryDebugger = MemoryDebug(logging)
+
+        # Init compression
+        Compression.Init(logging, localStorageDir)
+
+        # Init the mdns client
+        MDns.Init(logging, localStorageDir)
+
+        # Init device id
+        DeviceId.Init(logging)
+
+        # Setup the print info manager
+        PrintInfoManager.Init(logging, localStorageDir)
+
+        # Init telemetry
+        Telemetry.Init(logging)
+        if devLocalServerAddress is not None:
+            Telemetry.SetServerProtocolAndDomain("http://"+devLocalServerAddress)
+
+        # Init the ping pong helper.
+        PingPong.Init(logging, localStorageDir, printerId)
+        if devLocalServerAddress is not None:
+            PingPong.Get().DisablePrimaryOverride()
+
 
     # Returns a new printer Id. This needs to be crypo-random to make sure it's not predictable.
     @staticmethod
-    def GeneratePrinterId():
+    def GeneratePrinterId() -> str:
         return ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(HostCommon.c_OctoEverywherePrinterIdMaxLength))
+
 
     # Returns a new private key. This needs to be crypo-random to make sure it's not predictable.
     @staticmethod
-    def GeneratePrivateKey():
+    def GeneratePrivateKey() -> str:
         return ''.join(secrets.choice(string.ascii_uppercase + string.ascii_lowercase + string.digits) for _ in range(HostCommon.c_OctoEverywherePrivateKeyMinLength))
 
+
     @staticmethod
-    def IsPrinterIdValid(printerId):
+    def IsPrinterIdValid(printerId:Optional[str]) -> bool:
         return printerId is not None and len(printerId) >= HostCommon.c_OctoEverywherePrinterIdMinLength and len(printerId) <= HostCommon.c_OctoEverywherePrinterIdMaxLength
 
-    @staticmethod
-    def IsPrivateKeyValid(privateKey):
-        return privateKey is not None and len(privateKey) >= HostCommon.c_OctoEverywherePrivateKeyMinLength and len(privateKey) <= HostCommon.c_OctoEverywherePrivateKeyMaxLength
 
     @staticmethod
-    def GetAddPrinterUrl(printerId, isOctoPrint):
-        # These aren't needed right now.
-        # sourceGetArg = "isFromOctoPrint=true"
-        # if isOctoPrint is False:
-        #     sourceGetArg = "isFromKlipper=true"
-        # Note this must have at least one ? and arg because users of it might append &source=blah
-        return HostCommon.c_OctoEverywhereAddPrinterUrl + "?printerid=" + printerId
+    def IsPrivateKeyValid(privateKey:Optional[str]) -> bool:
+        return privateKey is not None and len(privateKey) >= HostCommon.c_OctoEverywherePrivateKeyMinLength and len(privateKey) <= HostCommon.c_OctoEverywherePrivateKeyMaxLength
 
 
     # This will restart the plugin or if running in OctoPrint restart OctoPrint!

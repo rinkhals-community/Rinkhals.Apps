@@ -16,7 +16,8 @@ python -m venv .
 . bin/activate
 
 echo "Installing OctoEverywhere requirements..."
-python -m pip install -r octoeverywhere/requirements.txt
+# Pillow 13 fails to link on this uclibc image ("cannot find -lm"), stay on 11.x
+python -m pip install -r octoeverywhere/requirements.txt "pillow<12"
 
 echo "Cleaning up..."
 rm -rf bin

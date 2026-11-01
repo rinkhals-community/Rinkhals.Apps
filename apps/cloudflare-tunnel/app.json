@@ -3,8 +3,13 @@
 
     "name": "Cloudflare Tunnel",
     "description": "Manages Cloudflare tunnels for remote access to the printer",
-    "version": "1.0",
+    "version": "2026.10.7",
     "depends": [],
+
+    "upstream": {
+        "type": "github-release",
+        "repo": "cloudflare/cloudflared"
+    },
 
     "requirements":
     {

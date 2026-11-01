@@ -3,24 +3,34 @@
 #
 # OctoEverywhere for Klipper, Creality, Bambu Lab, Elegoo, and other 3D Printers!
 #
+#
+# If you don't know what you're doing, start the link think below, which will help you determine which plugin to install.
+# https://octoeverywhere.com/getstarted
+#
+#
+# This script is a can be used to install the OctoEverywhere plugin directly on any Debian based Linux system.
+# OctoEverywhere can also set up using a Docker image, see this link for details:
+# https://github.com/QuinnDamerell/OctoPrint-OctoEverywhere/blob/master/docker-readme.md
+#
+#
 # Use this script to install the OctoEverywhere plugin for:
 #    OctoEverywhere for Klipper    - The plugin is connected to Moonraker running on this device.
 #    OctoEverywhere for Creality   - The plugin is being installed on a Creality device (Sonic Pad, K1, etc)
 #    OctoEverywhere Companion      - The plugin will connect to Moonraker running on a different device on the same LAN
 #    OctoEverywhere Bambu Connect  - The plugin will connect to A Bambu Lab printer running on the save LAN.
 #    OctoEverywhere Elegoo Connect - The plugin will connect to A Elegoo printer running on the save LAN.
+#    OctoEverywhere Prusa Link     - The plugin will connect to a Prusa Link 3D printer running on the same LAN.
 #
 # For local Klipper or Creality devices, no arguments are required.
 # For a companion install, use the -companion argument.
 # For a Bambu Connect install, use the -bambu argument.
 # For a Elegoo Connect install, use the -elegoo argument.
+# For a Prusa Link install, use the -prusalink argument.
 #
 # Simply run ./install.sh from the git repo root directory to get started!
 #
 # If you need help, feel free to contact us at support@octoeverywhere.com
 #
-
-
 
 
 
@@ -63,14 +73,22 @@ fi
 
 # Next, we try to detect if this OS is the K2 Plus.
 # The K2 runs an openwrt distro called Tina. We detect that by looking at the openwrt_release file.
+# But this also seems to overlap with the sonic pad, so we also check for the webrtc binary.
 IS_K2_OS=0
-if grep -Fiqs "tina" /etc/openwrt_release
+if [[ $IS_SONIC_PAD_OS -eq 0 ]]
 then
-    IS_K2_OS=1
-    # On the K2, we always want the path to be /mnt/UDISK, since it has a lot of space there.
-    # The default moonraker instance is installed in /usr/share/moonraker/
-    HOME="/mnt/UDISK"
+    # Only check for the K2 if we aren't already in the sonic pad OS.
+    if grep -Fiqs "tina" /etc/openwrt_release
+    then
+        if [[ -f /usr/bin/webrtc ]]
+        then
+            IS_K2_OS=1
+            # On the K2, we always want the path to be /mnt/UDISK, since it has a lot of space there.
+            HOME="/mnt/UDISK"
+        fi
+    fi
 fi
+
 
 
 # Get the root path of the repo, aka, where this script is executing
@@ -92,7 +110,7 @@ OE_ENV="${HOME}/octoeverywhere-env"
 # The python requirements are for the installer and plugin
 # The virtualenv is for our virtual package env we create
 # The curl requirement is for some things in this bootstrap script.
-# python3-venv is required for teh virtualenv command to fully work.
+# python3-venv is required for the virtualenv command to fully work.
 # This must stay in sync with the dockerfile package installs
 PKGLIST="python3 python3-pip virtualenv python3-venv curl"
 # For the Creality OS, we only need to install these.
@@ -149,8 +167,7 @@ log_blank()
 # To enforce that, we will move the repo where it should be.
 ensure_creality_os_right_repo_path()
 {
-    # TODO - re-enable this for the  || [[ $IS_K1_OS -eq 1 ]] after the github script updates.
-    if [[ $IS_SONIC_PAD_OS -eq 1 ]] || [[ $IS_K2_OS -eq 1 ]]
+    if [[ $IS_SONIC_PAD_OS -eq 1 ]] || [[ $IS_K1_OS -eq 1 ]] || [[ $IS_K2_OS -eq 1 ]]
     then
         # Due to the K1 shell, we have to use grep rather than any bash string contains syntax.
         if echo $OE_REPO_DIR |grep "$HOME" - > /dev/null
@@ -250,15 +267,24 @@ install_or_update_system_dependencies()
         pip3 install -q --trusted-host pypi.python.org --trusted-host pypi.org --trusted-host=files.pythonhosted.org --no-cache-dir virtualenv
     elif [[ $IS_K2_OS -eq 1 ]]
     then
-        # The K2 by default doesn't have any package manager. In some cases
-        # the user might install opkg via the 3rd party k2-improvements entware installer.
-        # But in general, PY will already be installed.
-        # We will try to update python from the package manager if possible, otherwise, we will ignore it.
+        # The K2 by default doesn't have any package manager.
+        # But without the package manager, we can't install the required packages, or even git.
+        # We we need the user to have opkg setup some how, usually from https://github.com/jamincollins/k2-improvements.
         if [[ -f /opt/bin/opkg ]]
         then
             # Use the full path to ensure it's found, since it might not be in the path if you user didn't restart the printer.
             /opt/bin/opkg update || true
             /opt/bin/opkg install ${CREALITY_DEP_LIST} || true
+            # The K2 also needs ffmpeg.
+            /opt/bin/opkg install ffmpeg
+        else
+            log_blank
+            log_blank
+            log_error "This K2 is missing the required setup files for OctoEverywhere."
+            log_important "Please visit https://octoeverywhere.com/s/k2 for a step-by-step Creality K2 setup guide."
+            log_blank
+            log_blank
+            exit 1
         fi
         # On the K2, the only we thing we ensure is that virtualenv is installed via pip.
         pip3 install -q --no-cache-dir virtualenv
@@ -294,12 +320,45 @@ install_or_update_system_dependencies()
         log_info "Ensuring zlib is install for Pillow, it's ok if this package install fails."
         sudo apt install --yes zlib1g-dev 2>/dev/null || true
         sudo apt install --yes zlib-devel 2>/dev/null || true
+        sudo apt install --yes libjpeg-dev 2>/dev/null || true
         sudo apt install --yes python-imaging 2>/dev/null || true
         sudo apt install --yes python3-pil 2>/dev/null || true
         sudo apt install --yes python3-pillow 2>/dev/null || true
     fi
 
     #log_info "System package install complete."
+}
+
+#
+# OpenSSL is optional: a package failure must not prevent required dependencies
+# from installing. The MQTT relay logs certificate setup failures and rejects
+# TLS connections when it cannot load or generate a certificate.
+# Keep this out of the required package lists used by Moonraker updates, too.
+#
+install_optional_openssl()
+{
+    if command -v openssl >/dev/null 2>&1 || [[ -x /opt/bin/openssl ]]
+    then
+        return 0
+    fi
+
+    log_info "Installing optional OpenSSL for MQTT relay TLS certificates..."
+    OE_OPENSSL_INSTALL_WARNING="Optional OpenSSL installation failed; continuing OctoEverywhere setup. MQTT relay TLS requires OpenSSL to generate certificates, or a configured custom certificate and key."
+    if [[ $IS_K1_OS -eq 1 ]] || [[ $IS_K2_OS -eq 1 ]]
+    then
+        if [[ -f /opt/bin/opkg ]]
+        then
+            /opt/bin/opkg install openssl-util || log_important "$OE_OPENSSL_INSTALL_WARNING"
+        else
+            log_important "$OE_OPENSSL_INSTALL_WARNING"
+        fi
+    elif [[ $IS_SONIC_PAD_OS -eq 1 ]]
+    then
+        opkg install openssl-util || log_important "$OE_OPENSSL_INSTALL_WARNING"
+    else
+        sudo apt install --yes openssl || log_important "$OE_OPENSSL_INSTALL_WARNING"
+    fi
+    return 0
 }
 
 #
@@ -346,9 +405,9 @@ check_for_octoprint()
         # Skip, there's no need and we don't have curl.
         return
     else
-        # Check if we are running in the Bambu Connect or Companion mode, if so, don't do this since
+        # Check if we are running in a network connector or Companion mode, if so, don't do this since
         # The device could be running OctoPrint and that's fine.
-        if [[ "$*" == *"-bambu"* ]] || [[ "$*" == *"-companion"* ]]
+        if [[ "$*" == *"-bambu"* ]] || [[ "$*" == *"-companion"* ]] || [[ "$*" == *"-elegoo"* ]] || [[ "$*" == *"-prusalink"* ]] || [[ "$*" == *"-prusa"* ]]
         then
             return
         fi
@@ -409,6 +468,7 @@ log_info      "  - Free & Unlimited Next-Gen AI Print Failure Detection"
 log_info      "  - Free Full Frame Rate & Full Resolution Webcam Streaming"
 log_info      "  - 5 Star Rated iOS & Android Apps"
 log_info      "  - Real-Time Print Notifications"
+log_info      "  - Remote AI MCP Server"
 log_info      "  - And So Much More"
 log_blank
 log_blank
@@ -434,6 +494,9 @@ ensure_creality_os_right_repo_path
 # Next, make sure our required system packages are installed.
 # These are required for other actions in this script, so it must be done first.
 install_or_update_system_dependencies
+
+# TLS certificate generation is optional and must not block installation.
+install_optional_openssl
 
 # Check that OctoPrint isn't found. If it is, we want to check with the user to make sure they are
 # not trying to setup OE for OctoPrint.
@@ -467,14 +530,15 @@ if [[ $IS_SONIC_PAD_OS -eq 1 ]] || [[ $IS_K1_OS -eq 1 ]] || [[ $IS_K2_OS -eq 1 ]
 then
     # Creality OS only has a root user and we can't use sudo.
     ${OE_ENV}/bin/python3 -B -m py_installer ${PY_LAUNCH_JSON}
+    retVal=$?
 else
     sudo ${OE_ENV}/bin/python3 -B -m py_installer ${PY_LAUNCH_JSON}
+    retVal=$?
 fi
 
 cd ${CURRENT_DIR} > /dev/null
 
 # Check the output of the py script.
-retVal=$?
 if [ $retVal -ne 0 ]; then
     log_error "Failed to complete setup. Error Code: ${retVal}"
 fi

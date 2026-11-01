@@ -246,7 +246,7 @@ class BLPFormatError(NotImplementedError):
 
 
 def _accept(prefix: bytes) -> bool:
-    return prefix[:4] in (b"BLP1", b"BLP2")
+    return prefix.startswith((b"BLP1", b"BLP2"))
 
 
 class BlpImageFile(ImageFile.ImageFile):
@@ -291,7 +291,7 @@ class BlpImageFile(ImageFile.ImageFile):
         self.tile = [ImageFile._Tile(decoder, (0, 0) + self.size, offset, args)]
 
 
-class _BLPBaseDecoder(ImageFile.PyDecoder):
+class _BLPBaseDecoder(abc.ABC, ImageFile.PyDecoder):
     _pulls_fd = True
 
     def decode(self, buffer: bytes | Image.SupportsArrayInterface) -> tuple[int, int]:
@@ -374,14 +374,10 @@ class BLP1Decoder(_BLPBaseDecoder):
         image = JpegImageFile(BytesIO(data))
         Image._decompression_bomb_check(image.size)
         if image.mode == "CMYK":
-            decoder_name, extents, offset, args = image.tile[0]
+            args = image.tile[0].args
             assert isinstance(args, tuple)
-            image.tile = [
-                ImageFile._Tile(decoder_name, extents, offset, (args[0], "CMYK"))
-            ]
-        r, g, b = image.convert("RGB").split()
-        reversed_image = Image.merge("RGB", (b, g, r))
-        self.set_as_raw(reversed_image.tobytes())
+            image.tile = [image.tile[0]._replace(args=(args[0], "CMYK"))]
+        self.set_as_raw(image.convert("RGB").tobytes(), "BGR")
 
 
 class BLP2Decoder(_BLPBaseDecoder):

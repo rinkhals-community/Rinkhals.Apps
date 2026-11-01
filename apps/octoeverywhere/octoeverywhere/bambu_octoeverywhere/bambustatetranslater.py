@@ -1,40 +1,73 @@
 import time
+import logging
+from typing import Any, Dict, Optional, Tuple
 
 from octoeverywhere.notificationshandler import NotificationsHandler
 from octoeverywhere.printinfo import PrintInfoManager
+from octoeverywhere.interfaces import IPrinterStateReporter
 
+from .interfaces import IBambuStateTranslator
 from .bambuclient import BambuClient
 from .bambumodels import BambuState, BambuPrintErrors
 
 # This class is responsible for listening to the mqtt messages to fire off notifications
 # and to act as the printer state interface for Bambu printers.
-class BambuStateTranslator:
+class BambuStateTranslator(IPrinterStateReporter, IBambuStateTranslator):
 
-    def __init__(self, logger) -> None:
+    # The print ids and file name usually arrive within a few seconds of the print state.
+    # If they don't arrive within this time, we track the print without them rather than missing it.
+    c_MaxPrintInfoWaitSec = 30.0
+
+    def __init__(self, logger:logging.Logger) -> None:
         self.Logger = logger
-        self.NotificationsHandler:NotificationsHandler = None
-        self.LastState:str = None
+        self.NotificationsHandler:NotificationsHandler = None #pyright: ignore[reportAttributeAccessIssue]
+        self.LastState:Optional[str] = None
+        self.IsWaitingForPrintRestore = False
+        self.PrintInfoWaitStartSec:Optional[float] = None
 
 
-    def SetNotificationHandler(self, notificationHandler:NotificationsHandler):
+    def SetNotificationHandler(self, notificationHandler:NotificationsHandler) -> None:
         self.NotificationsHandler = notificationHandler
 
 
     # Called by the client just before it tires to make a new connection.
     # This is used to let us know that we are in an unknown state again, until we can re-sync.
-    def ResetForNewConnection(self):
+    def ResetForNewConnection(self) -> None:
         # Reset the last state to indicate that we don't know what it is.
         self.LastState = None
+        self.IsWaitingForPrintRestore = False
+        self.PrintInfoWaitStartSec = None
 
 
     # Fired when any mqtt message comes in.
     # State will always be NOT NONE, since it's going to be created before this call.
     # The isFirstFullSyncResponse flag indicates if this is the first full state sync of a new connection.
-    def OnMqttMessage(self, msg:dict, bambuState:BambuState, isFirstFullSyncResponse:bool):
+    def OnMqttMessage(self, msg:Dict[str, Any], bambuState:BambuState, isFirstFullSyncResponse:bool) -> None:
 
         # First, if we have a new connection and we just synced, make sure the notification handler is in sync.
         if isFirstFullSyncResponse:
+            self.IsWaitingForPrintRestore = True
+
+        # The print state can arrive before the IDs and file name. Keep the previous state so we can handle
+        # the transition once the rest of the print info arrives, even if gcode_state doesn't change again.
+        if bambuState.IsPrinting(True) and bambuState.GetPrintCookie() is None:
+            nowSec = time.monotonic()
+            if self.PrintInfoWaitStartSec is None:
+                self.PrintInfoWaitStartSec = nowSec
+            if nowSec - self.PrintInfoWaitStartSec < BambuStateTranslator.c_MaxPrintInfoWaitSec:
+                self.Logger.debug("Bambu is waiting for the print info before handling the state change.")
+                return
+            self.Logger.warning("Bambu didn't send the print ids and file name within %s seconds, tracking the print without them. project_id:%s task_id:%s subtask_name:%s",
+                                BambuStateTranslator.c_MaxPrintInfoWaitSec, bambuState.project_id, bambuState.task_id, bambuState.subtask_name)
+            bambuState.StartUsingIncompletePrintCookie()
+        self.PrintInfoWaitStartSec = None
+
+        if self.IsWaitingForPrintRestore:
             self.NotificationsHandler.OnRestorePrintIfNeeded(bambuState.IsPrinting(False), bambuState.IsPaused(), bambuState.GetPrintCookie())
+            self.IsWaitingForPrintRestore = False
+            # Restoring an existing print isn't a new start, even if an earlier partial update said it was idle.
+            self.LastState = bambuState.gcode_state
+            isFirstFullSyncResponse = True
 
         # Bambu does send some commands when actions happen, but they don't always get sent for all state changes.
         # For example, if a user issues a pause command, we see the command. But if the print goes into an error an pauses, we don't get a pause command.
@@ -43,7 +76,7 @@ class BambuStateTranslator:
         # Here's a list of all states: https://github.com/greghesp/ha-bambulab/blob/e72e343acd3279c9bccba510f94bf0e291fe5aaa/custom_components/bambu_lab/pybambu/const.py#L83C1-L83C21
         if self.LastState != bambuState.gcode_state:
             # We know the state changed.
-            self.Logger.debug(f"Bambu state change: {self.LastState} -> {bambuState.gcode_state}")
+            self.Logger.debug("Bambu state change: %s -> %s", self.LastState, bambuState.gcode_state)
             if self.LastState is None:
                 # If the last state is None, this is mostly likely the first time we've seen a state.
                 # All we want to do here is update last state to the new state.
@@ -59,14 +92,17 @@ class BambuStateTranslator:
                         self.BambuOnStart(bambuState)
             # Check for the paused state
             elif bambuState.IsPaused():
+                # A new print can pause before its IDs arrive. Make sure it has a context before reporting the pause.
+                if BambuState.IsPrintingState(self.LastState, True) is False:
+                    self.BambuOnStart(bambuState)
                 # If the error is temporary, like a filament run out, the printer goes into a paused state
                 # with the printer_error set.
                 self.BambuOnPauseOrTempError(bambuState)
             # Check for the print ending in failure (like if the user stops it by command)
-            elif bambuState.gcode_state == "FAILED":
+            elif bambuState.gcode_state == "FAILED" and BambuState.IsPrintingState(self.LastState, True):
                 self.BambuOnFailed(bambuState)
             # Check for a successful print ending.
-            elif bambuState.gcode_state == "FINISH":
+            elif bambuState.gcode_state == "FINISH" and BambuState.IsPrintingState(self.LastState, True):
                 self.BambuOnComplete(bambuState)
 
             # Always capture the new state.
@@ -95,55 +131,98 @@ class BambuStateTranslator:
         # We want to finalize any current print.
         if bambuState.IsPrinting(True) is False:
             # See if there's a print info for the last print.
-            pi = PrintInfoManager.Get().GetPrintInfo(bambuState.GetPrintCookie())
-            if pi is not None:
-                # Check if the print info has a final duration set yet or not.
-                if pi.GetFinalPrintDurationSec() is None:
-                    # We know we aren't printing, so regardless of the non-printing state, set the final duration.
-                    pi.SetFinalPrintDurationSec(int(time.time()-pi.GetLocalPrintStartTimeSec()))
+            cookie = bambuState.GetPrintCookie()
+            if cookie is not None:
+                pi = PrintInfoManager.Get().GetPrintInfo(cookie)
+                if pi is not None:
+                    # Check if the print info has a final duration set yet or not.
+                    if pi.GetFinalPrintDurationSec() is None:
+                        # We know we aren't printing, so regardless of the non-printing state, set the final duration.
+                        pi.SetFinalPrintDurationSec(int(time.time()-pi.GetLocalPrintStartTimeSec()))
+            # The print is over, so the next print should wait for its own print info again.
+            bambuState.StopUsingIncompletePrintCookie()
 
 
-    def BambuOnStart(self, bambuState:BambuState):
+    def BambuOnStart(self, bambuState:BambuState) -> None:
         # We must pass the unique cookie name for this print and any other details we can.
         self.NotificationsHandler.OnStarted(bambuState.GetPrintCookie(), bambuState.GetFileNameWithNoExtension())
 
 
-    def BambuOnComplete(self, bambuState:BambuState):
+    def BambuOnComplete(self, bambuState:BambuState) -> None:
         # We can only get the file name from Bambu.
         self.NotificationsHandler.OnDone(bambuState.GetFileNameWithNoExtension(), None)
 
 
-    def BambuOnPauseOrTempError(self, bambuState:BambuState):
+    def BambuOnPauseOrTempError(self, bambuState:BambuState) -> None:
         # For errors that are user fixable, like filament run outs, the printer will go into a paused state with
         # a printer error message. In this case we want to fire different things.
-        err = bambuState.GetPrinterError()
-        if err is None:
-            # If error is none, this is a user pause
-            self.NotificationsHandler.OnPaused(bambuState.GetFileNameWithNoExtension())
+        err = bambuState.GetPrinterErrorType()
+        if err is not None:
+            self.Logger.debug("BambuOnPauseOrTempError - Error code %s.", err)
+
+        if err is None or err == BambuPrintErrors.PausedByUser or err == BambuPrintErrors.PausedUnknownReason or err == BambuPrintErrors.PrintFilePauseCommand:
+            # If error is none or this reason, it's just a normal pause.
+            self.NotificationsHandler.OnPaused(
+                bambuState.GetFileNameWithNoExtension(),
+                platformErrorCode=self._GetBambuPlatformErrorCode(bambuState),
+                error=self._GetBambuError(bambuState, None)
+            )
             return
-        # Otherwise, try to match the error.
+
+        # Try to match known temporary errors.
         if err == BambuPrintErrors.FilamentRunOut:
-            self.NotificationsHandler.OnFilamentChange()
+            self.NotificationsHandler.OnFilamentChange(
+                platformErrorCode=self._GetBambuPlatformErrorCode(bambuState),
+                error=self._GetBambuError(bambuState, None)
+            )
             return
 
-        # Send a generic error.
-        self.NotificationsHandler.OnUserInteractionNeeded()
+        # Send the error string from the bambu API map.
+        errorStr = self._GetBambuError(bambuState, None)
+        self.NotificationsHandler.OnError(errorStr, platformErrorCode=self._GetBambuPlatformErrorCode(bambuState))
 
 
-    def BambuOnResume(self, bambuState:BambuState):
+    def BambuOnResume(self, bambuState:BambuState) -> None:
         self.NotificationsHandler.OnResume(bambuState.GetFileNameWithNoExtension())
 
 
-    def BambuOnFailed(self, bambuState:BambuState):
+    def BambuOnFailed(self, bambuState:BambuState) -> None:
         # TODO - Right now this is only called by what we think are use requested cancels.
         # How can we add this for print stopping errors as well?
-        self.NotificationsHandler.OnFailed(bambuState.GetFileNameWithNoExtension(), None, "cancelled")
+        self.NotificationsHandler.OnFailed(
+            bambuState.GetFileNameWithNoExtension(),
+            None,
+            "cancelled",
+            platformErrorCode=self._GetBambuPlatformErrorCode(bambuState),
+            error=self._GetBambuError(bambuState, None)
+        )
 
 
-    def BambuOnPrintProgress(self, bambuState:BambuState):
+    def BambuOnPrintProgress(self, bambuState:BambuState) -> None:
         # We use the "moonrakerProgressFloat" because it's really means a progress that's
         # 100% correct and there's no estimations needed.
-        self.NotificationsHandler.OnPrintProgress(None, float(bambuState.mc_percent))
+        percent = bambuState.mc_percent
+        if percent is None:
+            # If we don't have a percentage, we can't do anything.
+            self.Logger.debug("BambuOnPrintProgress - No percentage available.")
+            return
+        self.NotificationsHandler.OnPrintProgress(None, float(percent))
+
+
+    def _GetBambuPlatformErrorCode(self, bambuState:BambuState) -> Optional[str]:
+        if bambuState.print_error is not None and bambuState.print_error != 0:
+            return format(bambuState.print_error, "08X")
+        return bambuState.gcode_state
+
+
+    def _GetBambuError(self, bambuState:BambuState, fallback:Optional[str]=None) -> Optional[str]:
+        detailedError = bambuState.GetDetailedPrinterErrorStr()
+        if detailedError is not None:
+            return detailedError
+        err = bambuState.GetPrinterErrorType()
+        if err is not None:
+            return err.name
+        return fallback
 
     # TODO - Handlers
     #     # Fired when OctoPrint or the printer hits an error.
@@ -159,7 +238,7 @@ class BambuStateTranslator:
     # ! Interface Function ! The entire interface must change if the function is changed.
     # This function will get the estimated time remaining for the current print.
     # Returns -1 if the estimate is unknown.
-    def GetPrintTimeRemainingEstimateInSeconds(self):
+    def GetPrintTimeRemainingEstimateInSeconds(self) -> int:
         # Get the current state.
         state = BambuClient.Get().GetState()
         if state is None:
@@ -175,7 +254,7 @@ class BambuStateTranslator:
     # ! Interface Function ! The entire interface must change if the function is changed.
     # If the printer is warming up, this value would be -1. The First Layer Notification logic depends upon this or GetCurrentLayerInfo!
     # Returns the current zoffset if known, otherwise -1.
-    def GetCurrentZOffset(self):
+    def GetCurrentZOffsetMm(self) -> int:
         # This is only used for the first layer logic, but only if GetCurrentLayerInfo fails.
         # Since our GetCurrentLayerInfo shouldn't always work, this shouldn't really matter.
         # We can't get this value, but since it doesn't really matter, we can estimate it.
@@ -184,7 +263,7 @@ class BambuStateTranslator:
             return -1
 
         # Since the standard layer height is 0.20mm, we just use that for a guess.
-        return currentLayer * 0.2
+        return currentLayer * 20
 
 
     # ! Interface Function ! The entire interface must change if the function is changed.
@@ -193,7 +272,7 @@ class BambuStateTranslator:
     #     If the current value is unknown, (0,0) is returned.
     #     If the values are known, (currentLayer(int), totalLayers(int)) is returned.
     #          Note that total layers will always be > 0, but current layer can be 0!
-    def GetCurrentLayerInfo(self):
+    def GetCurrentLayerInfo(self) -> Tuple[Optional[int], Optional[int]]:
         state = BambuClient.Get().GetState()
         if state is None:
             # If we dont have a state yet, return 0,0, which means we can get layer info but we don't know yet.
@@ -203,8 +282,8 @@ class BambuStateTranslator:
             # So if we are in that state, return 0,0, to represent we don't know the layer info yet.
             return (0, 0)
         # We can get accurate and 100% correct layers from Bambu, awesome!
-        currentLayer = None
-        totalLayers = None
+        currentLayer = 0
+        totalLayers = 0
         if state.layer_num is not None:
             currentLayer = int(state.layer_num)
         if state.total_layer_num is not None:
@@ -215,7 +294,7 @@ class BambuStateTranslator:
     # ! Interface Function ! The entire interface must change if the function is changed.
     # Returns True if the printing timers (notifications and gadget) should be running, which is only the printing state. (not even paused)
     # False if the printer state is anything else, which means they should stop.
-    def ShouldPrintingTimersBeRunning(self):
+    def ShouldPrintingTimersBeRunning(self) -> bool:
         state = BambuClient.Get().GetState()
         if state is None:
             return False
@@ -228,14 +307,14 @@ class BambuStateTranslator:
         # Since we don't know 100% of the states, we will fail open.
         # Here's a possible list: https://github.com/greghesp/ha-bambulab/blob/e72e343acd3279c9bccba510f94bf0e291fe5aaa/custom_components/bambu_lab/pybambu/const.py#L83C1-L83C21
         if gcodeState == "IDLE" or gcodeState == "FINISH" or gcodeState == "FAILED":
-            self.Logger.warn("ShouldPrintingTimersBeRunning is not in a printing state: "+str(gcodeState))
+            self.Logger.warning("ShouldPrintingTimersBeRunning is not in a printing state: "+str(gcodeState))
             return False
         return True
 
 
     # ! Interface Function ! The entire interface must change if the function is changed.
     # If called while the print state is "Printing", returns True if the print is currently in the warm-up phase. Otherwise False
-    def IsPrintWarmingUp(self):
+    def IsPrintWarmingUp(self) -> bool:
         state = BambuClient.Get().GetState()
         if state is None:
             return False
@@ -264,7 +343,7 @@ class BambuStateTranslator:
 
     # ! Interface Function ! The entire interface must change if the function is changed.
     # Returns the current hotend temp and bed temp as a float in celsius if they are available, otherwise None.
-    def GetTemps(self):
+    def GetTemps(self) -> Tuple[Optional[float], Optional[float]]:
         state = BambuClient.Get().GetState()
         if state is None:
             return (None, None)

@@ -1,4 +1,7 @@
 import os
+from typing import List
+
+from linux_host.config import Config
 
 from .Logging import Logger
 from .Context import Context
@@ -16,9 +19,10 @@ class DiscoveryCompanionBambuAndElegoo:
     c_CompanionPluginDataRootFolder_Lower = ".octoeverywhere-companion"
     c_BambuPluginDataRootFolder_Lower = ".octoeverywhere-bambu"
     c_ElegooPluginDataRootFolder_Lower = ".octoeverywhere-elegoo"
+    c_PrusaLinkPluginDataRootFolder_Lower = ".octoeverywhere-prusalink"
 
 
-    def Discovery(self, context:Context):
+    def Discovery(self, context:Context) -> None:
         Logger.Debug("Starting companion discovery.")
 
         # Sanity check the context.
@@ -35,9 +39,12 @@ class DiscoveryCompanionBambuAndElegoo:
         elif context.IsElegooSetup:
             pluginTypeStr = "Elegoo Connect"
             pluginDataRootFolder = DiscoveryCompanionBambuAndElegoo.c_ElegooPluginDataRootFolder_Lower
+        elif context.IsPrusaLinkSetup:
+            pluginTypeStr = "Prusa Link Connect"
+            pluginDataRootFolder = DiscoveryCompanionBambuAndElegoo.c_PrusaLinkPluginDataRootFolder_Lower
 
         # Look for existing companion or bambu data installs.
-        existingCompanionFolders = []
+        existingCompanionFolders:List[str] = []
         # Sort so the folder we find are ordered from 1-... This makes the selection process nicer, since the ID == selection.
         fileAndDirList = sorted(os.listdir(context.UserHomePath))
         for fileOrDirName in fileAndDirList:
@@ -57,19 +64,25 @@ class DiscoveryCompanionBambuAndElegoo:
             Logger.Blank()
             Logger.Header(f"Existing {pluginTypeStr} Plugins Found")
             Logger.Blank()
-            Logger.Info( "If you want to update or recover an existing plugin enter the Plugin ID from the list below.")
+            Logger.Info( "If you want to update or recover an existing plugin, enter the Plugin ID from the list below.")
             Logger.Info( "                          - or - ")
             Logger.Info(f"If you want to install a new {pluginTypeStr} plugin, enter 'n'.")
             Logger.Blank()
             Logger.Info("Options:")
             for folder in existingCompanionFolders:
                 instanceId = self._GetCompanionBambuOrElegooIdFromFolderName(folder)
+                typeSuffix = ""
+                configFolderPath = os.path.join(context.UserHomePath, folder)
+                if context.IsElegooSetup:
+                    protocol = ConfigHelper.TryToGetElegooPrinterProtocol(configFolderPath=configFolderPath)
+                    if protocol is not None:
+                        typeSuffix = " - Centauri Carbon 2" if protocol == Config.ElegooPrinterProtocolCc2 else " - Centauri Carbon 1"
                 # Try to parse the config, if there is one and it's valid.
-                ip, port = ConfigHelper.TryToGetCompanionDetails(configFolderPath=os.path.join(context.UserHomePath, folder))
+                ip, port = ConfigHelper.TryToGetCompanionDetails(configFolderPath=configFolderPath)
                 if ip is None and port is None:
-                    Logger.Info(f"  {count}) Plugin ID {instanceId} - Path: {folder}")
+                    Logger.Info(f"  {count}) Plugin ID {instanceId}{typeSuffix} - Path: {folder}")
                 else:
-                    Logger.Info(f"  {count}) Plugin ID {instanceId} - {ip}:{port}")
+                    Logger.Info(f"  {count}) Plugin ID {instanceId}{typeSuffix} - {ip}:{port}")
                 count += 1
             Logger.Info(f"  n) Setup a new {pluginTypeStr} plugin instance")
             Logger.Blank()
@@ -114,7 +127,7 @@ class DiscoveryCompanionBambuAndElegoo:
         return
 
 
-    def _SetupContextFromVars(self, context:Context, folderName:str):
+    def _SetupContextFromVars(self, context:Context, folderName:str) -> None:
         # First, ensure we can parse the id and set it.
         context.CompanionInstanceId = self._GetCompanionBambuOrElegooIdFromFolderName(folderName)
 
@@ -126,7 +139,7 @@ class DiscoveryCompanionBambuAndElegoo:
 
 
     # Returns the instance id, for primary instances, this returns "1"
-    def _GetCompanionBambuOrElegooIdFromFolderName(self, folderName:str):
+    def _GetCompanionBambuOrElegooIdFromFolderName(self, folderName:str) -> str:
         folderName_lower = folderName.lower()
 
         # If the folder name starts with any of these, then its a folder we can get the instance for.
@@ -138,6 +151,8 @@ class DiscoveryCompanionBambuAndElegoo:
             folderSuffix = folderName_lower[len(DiscoveryCompanionBambuAndElegoo.c_BambuPluginDataRootFolder_Lower):]
         elif folderName_lower.startswith(DiscoveryCompanionBambuAndElegoo.c_ElegooPluginDataRootFolder_Lower) is True:
             folderSuffix = folderName_lower[len(DiscoveryCompanionBambuAndElegoo.c_ElegooPluginDataRootFolder_Lower):]
+        elif folderName_lower.startswith(DiscoveryCompanionBambuAndElegoo.c_PrusaLinkPluginDataRootFolder_Lower) is True:
+            folderSuffix = folderName_lower[len(DiscoveryCompanionBambuAndElegoo.c_PrusaLinkPluginDataRootFolder_Lower):]
         else:
             Logger.Error(f"We tried to get an companion, elegoo connect, or bambu connect ID from a non-companion, elegoo connect, or bambu connect data folder. {folderName}")
             raise Exception("We tried to get an companion, elegoo connect, or bambu connect ID from a non-companion, elegoo connect, or bambu connect data folder")
