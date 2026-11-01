@@ -1,6 +1,12 @@
-# Start with the latest alpine, for a solid base,
+# Start with alpine, for a solid base,
 # since we need some advance binaries for things like pillow and ffmpeg.
-FROM alpine:3.21.3
+#
+# We pin the minor version, so each build picks up the latest patch release, but a new alpine version is always a deliberate change.
+# Dependabot will open a PR when a new alpine version is released. Before merging it:
+#   - Check the python3 version the new alpine release uses. Our deps, like the zstandard version cap, need to support it.
+#   - Check the PR's multi-arch Docker build and compression tests (or push to docker-build to run them manually).
+# Note that ffmpeg is in the alpine community repo, which only gets updates until the next alpine release, so we should stay current.
+FROM alpine:3.24
 
 # Create a non-root user to run, so we don't run as root.
 # There's no need to run as root and it helps some platforms like openshift.
@@ -20,7 +26,7 @@ ENV DATA_DIR=/data/
 # Install the required packages.
 # Any packages here should be mirrored in the install script - and any optional pillow packages done inline.
 # GCC, python3-dev, and musl-dev are required for pillow, and jpeg-dev and zlib-dev are required for jpeg support.
-RUN apk add --no-cache curl ffmpeg jq python3 python3-dev gcc musl-dev py3-pip py3-virtualenv jpeg-dev libjpeg-turbo-dev zlib-dev py3-pillow libffi-dev
+RUN apk add --no-cache curl ffmpeg jq openssl python3 python3-dev gcc musl-dev py3-pip py3-virtualenv jpeg-dev libjpeg-turbo-dev zlib-dev py3-pillow libffi-dev
 
 # Timezone setup steps
 # These steps are necessary to add timezone support to the container and allow for setting the timezone
@@ -44,7 +50,7 @@ RUN ${VENV_DIR}/bin/pip3 install --require-virtualenv --no-cache-dir -q -r ${REP
 # Install the optional packages for zstandard compression.
 # THIS VERSION STRING MUST STAY IN SYNC with Compression.ZStandardPipPackageString
 RUN apk add zstd
-RUN ${VENV_DIR}/bin/pip3 install --require-virtualenv --no-cache-dir -q "zstandard>=0.21.0,<0.23.0"
+RUN ${VENV_DIR}/bin/pip3 install --require-virtualenv --no-cache-dir -q "zstandard>=0.21.0,<0.26.0"
 
 # Ensure directories have correct ownership. Having the group set to root(0) and writable by group will allow this to run on openshift
 RUN chown -R 1001:0 /app && chmod -R g+wx /app

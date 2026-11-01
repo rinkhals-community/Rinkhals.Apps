@@ -8,7 +8,7 @@ from linux_host.config import Config
 class KlipperBootstrap:
 
     @staticmethod
-    def Bootstrap(logger:logging.LoggerAdapter, config:Config) -> None:
+    def Bootstrap(logger:logging.Logger, config:Config) -> None:
 
         # The printer's IP is required.
         printerIp = os.environ.get("PRINTER_IP", None)
@@ -45,9 +45,23 @@ class KlipperBootstrap:
         printerPort = config.GetStr(Config.SectionCompanion, Config.CompanionKeyPort, None)
         if printerPort is None:
             logger.info("Setting The Default Moonraker Port: 7125")
-            config.SetStr(Config.SectionCompanion, Config.CompanionKeyPort, "7215")
+            config.SetStr(Config.SectionCompanion, Config.CompanionKeyPort, "7125")
         else:
             logger.info(f"Target Moonraker Port: {printerPort}")
+
+        # The moonraker api key is optional.
+        # If it's specified, set it.
+        # If not, don't change it, unless it's not set.
+        moonrakerApiKey = os.environ.get("MOONRAKER_API_KEY", None)
+        if moonrakerApiKey is not None:
+            logger.info(f"Setting Moonraker API Key: {moonrakerApiKey}")
+            config.SetStr(Config.MoonrakerSection, Config.MoonrakerApiKey, moonrakerApiKey)
+        # Ensure something is set, if not, set it to the default.
+        moonrakerApiKey = config.GetStr(Config.MoonrakerSection, Config.MoonrakerApiKey, None, True)
+        if moonrakerApiKey is None:
+            logger.info("No Moonraker API Authentication Key is set.")
+        else:
+            logger.info(f"Moonraker API Authentication Key is set to: {moonrakerApiKey}")
 
         # The webserver port is optional.
         # If it's specified, set it.

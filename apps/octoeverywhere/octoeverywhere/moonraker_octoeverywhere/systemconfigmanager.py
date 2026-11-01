@@ -1,17 +1,25 @@
 import os
 import subprocess
 import logging
+from typing import Set
 
 class SystemConfigManager:
 
     # This can't change or it will break old installs.
     c_updateConfigFileName = "octoeverywhere-system.cfg"
+    c_moonrakerConfigFileName = "moonraker.conf"
 
     # We use config files to integrate into moonraker's update manager, which allows our plugin repo to stay updated.
     # This also write a block that's used to allow the announcement system to show updates from our repo.
     # This function ensures they exist and are up to date. If not, they are fixed.
     @staticmethod
-    def EnsureUpdateManagerFilesSetup(logger:logging.Logger, klipperConfigDir, serviceName, pyVirtEnvRoot, repoRoot):
+    def EnsureUpdateManagerFilesSetup(logger:logging.Logger, klipperConfigDir:str, serviceName:str, pyVirtEnvRoot:str, repoRoot:str, disableMoonrakerConfigFileWrites:bool):
+
+        # Keep this check next to the code that performs the write so future callers
+        # can't accidentally bypass the startup-level setting.
+        if disableMoonrakerConfigFileWrites:
+            logger.info("Moonraker config file writes are disabled, skipping update manager file setup.")
+            return
 
         # Special case for K1 and K1 max setups. If the service file name is the special init.d name, we can just use
         # the started "octoeverywhere" and the update manager will find the right service to manage.
@@ -25,7 +33,7 @@ class SystemConfigManager:
         try:
             activateFilePath = os.path.join(pyVirtEnvRoot, "bin", "activate")
             if os.path.exists(activateFilePath) is False:
-                logger.warn("No virtual env active script was found, we are creating a dummy file.")
+                logger.warning("No virtual env active script was found, we are creating a dummy file.")
                 with open(activateFilePath, "w", encoding="utf-8") as file:
                     file.write("echo 'This is a dummy file created by the OctoEverywhere plugin to make Moonraker happy.'")
         except Exception as e:
@@ -91,7 +99,7 @@ subscriptions:
         try:
             SystemConfigManager._RunShellCommand("systemctl restart moonraker")
         except Exception as e:
-            logger.warn("Failed to restart moonraker service. "+str(e))
+            logger.warning("Failed to restart moonraker service. "+str(e))
 
 
     # This doesn't relate to the update manager, but if we put our service name in this file
@@ -99,42 +107,61 @@ subscriptions:
     # Details: https://moonraker.readthedocs.io/en/latest/configuration/#allowed-services
     # TODO - Eventually we will get our PR in that will add this to moonraker's default list.
     @staticmethod
-    def EnsureAllowedServicesFile(logger, klipperConfigDir, serviceName) -> None:
-        # Make the expected file path, it should be one folder up from the config folder
-        dataRootDir = os.path.abspath(os.path.join(klipperConfigDir, os.pardir))
-        allowedServiceFile = os.path.join(dataRootDir, "moonraker.asvc")
+    def EnsureAllowedServicesFile(logger:logging.Logger, klipperConfigDir:str, serviceName:str) -> None:
+        try:
+            allowedServiceNames = [serviceName, f"{serviceName}_service"]
+            # K1/K1 Max installs use an init.d file name like S66octoeverywhere_service,
+            # but the update-manager config intentionally maps the managed service name
+            # to "octoeverywhere". Add both so older Moonraker builds can restart the
+            # service after updates.
+            if serviceName.startswith("S66"):
+                allowedServiceNames.append("octoeverywhere")
 
-        # Test if we have a file.
-        if os.path.exists(allowedServiceFile) is False:
-            # This isn't the end of the world, so don't worry about it
-            logger.info("Failed to find moonraker allowed services file.")
-            return
+            # Make the expected file path, it should be one folder up from the config folder
+            dataRootDir = os.path.abspath(os.path.join(klipperConfigDir, os.pardir))
+            allowedServiceFile = os.path.join(dataRootDir, "moonraker.asvc")
 
-        # Check if we are already in the file.
-        with open(allowedServiceFile, "r", encoding="utf-8") as file:
-            lines = file.readlines()
-            for l in lines:
-                # Use in, because the lines will have new lines and such.
-                # Match case, because the entry in the file must match the service name case.
-                if serviceName in l:
+            # Test if we have a file.
+            if os.path.exists(allowedServiceFile) is False:
+                # This isn't the end of the world, so don't worry about it
+                logger.info("Failed to find moonraker allowed services file.")
+                return
+
+            # Check if we are already in the file.
+            with open(allowedServiceFile, "r", encoding="utf-8") as file:
+                lines = file.readlines()
+                existingEntries:Set[str] = set()
+                for line in lines:
+                    entry = line.strip()
+                    if len(entry) != 0:
+                        existingEntries.add(entry)
+
+                missingEntries = [name for name in allowedServiceNames if name not in existingEntries]
+                if len(missingEntries) == 0:
                     logger.info("We found our name existing in the moonraker allowed service file, so there's nothing to do.")
                     return
 
-        # Add our name.
-        try:
-            with open(allowedServiceFile,'a', encoding="utf-8") as f:
-                # The current format this doc is not have a trailing \n, so we need to add one.
-                f.write("\n"+serviceName)
-        except PermissionError as e:
-            logger.warn("We tried to write the moonraker allowed services file but don't have permissions "+str(e))
-            return
-        logger.info("Our name wasn't found in moonraker's allowed service file, so we added it.")
+            # Add our name.
+            try:
+                with open(allowedServiceFile,'a', encoding="utf-8") as f:
+                    # The current format this doc is not have a trailing \n, so we need to add one.
+                    # We also add a few other variants of the name used on different systems. According to the docs only
+                    # The one name should be required, but that doesn't seem to be that case on all Moonraker installs.
+                    for name in missingEntries:
+                        f.write("\n"+name)
+                    f.write("\n")
+            except PermissionError as e:
+                logger.warning("We tried to write the moonraker allowed services file but don't have permissions "+str(e))
+                return
+            logger.info("Our name wasn't found in moonraker's allowed service file, so we added it.")
+        except Exception as e:
+            logger.error("Exception throw in EnsureAllowedServicesFile, "+str(e))
 
 
     @staticmethod
-    def _ensureMoonrakerConfigHasUpdateConfigInclude(klipperConfigDir, logger):
+    def _ensureMoonrakerConfigHasUpdateConfigInclude(klipperConfigDir:str, logger:logging.Logger):
         # Create the path where we should find the file, and make sure it exists. If not throw, so things blow up.
-        moonrakerConfigFileName = "moonraker.conf"
+        moonrakerConfigFileName = SystemConfigManager.c_moonrakerConfigFileName
         moonrakerConfigFilePath = os.path.join(klipperConfigDir, moonrakerConfigFileName)
         if os.path.exists(moonrakerConfigFilePath) is False:
             raise Exception("Failed to find the "+moonrakerConfigFileName+" file in dir. Expected: "+moonrakerConfigFilePath)
@@ -143,8 +170,8 @@ subscriptions:
         includeText = "[include "+SystemConfigManager.c_updateConfigFileName+"]"
         with open(moonrakerConfigFilePath, "r", encoding="utf-8") as file:
             lines = file.readlines()
-            for l in lines:
-                if includeText.lower() in l.lower():
+            for line in lines:
+                if includeText.lower() in line.lower():
                     logger.info("Our existing update config file include was found in the moonraker config.")
                     return
 
@@ -160,7 +187,7 @@ subscriptions:
 
 
     @staticmethod
-    def _RunShellCommand(cmd):
+    def _RunShellCommand(cmd:str) -> None:
         status = subprocess.call(cmd, shell=True)
         if status != 0:
             raise Exception("Command "+cmd+" failed to execute. Code: "+str(status))

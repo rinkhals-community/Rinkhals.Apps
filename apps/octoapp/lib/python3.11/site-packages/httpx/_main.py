@@ -1,10 +1,11 @@
+from __future__ import annotations
+
 import functools
 import json
 import sys
 import typing
 
 import click
-import httpcore
 import pygments.lexers
 import pygments.util
 import rich.console
@@ -17,6 +18,9 @@ from ._client import Client
 from ._exceptions import RequestError
 from ._models import Response
 from ._status_codes import codes
+
+if typing.TYPE_CHECKING:
+    import httpcore  # pragma: no cover
 
 
 def print_help() -> None:
@@ -63,20 +67,21 @@ def print_help() -> None:
     )
     table.add_row(
         "--auth [cyan]<USER PASS>",
-        "Username and password to include in the request. Specify '-' for the password to use "
-        "a password prompt. Note that using --verbose/-v will expose the Authorization "
-        "header, including the password encoding in a trivially reversible format.",
+        "Username and password to include in the request. Specify '-' for the password"
+        " to use a password prompt. Note that using --verbose/-v will expose"
+        " the Authorization header, including the password encoding"
+        " in a trivially reversible format.",
     )
 
     table.add_row(
-        "--proxies [cyan]URL",
+        "--proxy [cyan]URL",
         "Send the request via a proxy. Should be the URL giving the proxy address.",
     )
 
     table.add_row(
         "--timeout [cyan]FLOAT",
-        "Timeout value to use for network operations, such as establishing the connection, "
-        "reading some data, etc... [Default: 5.0]",
+        "Timeout value to use for network operations, such as establishing the"
+        " connection, reading some data, etc... [Default: 5.0]",
     )
 
     table.add_row("--follow-redirects", "Automatically follow redirects.")
@@ -124,8 +129,8 @@ def format_request_headers(request: httpcore.Request, http2: bool = False) -> st
 def format_response_headers(
     http_version: bytes,
     status: int,
-    reason_phrase: typing.Optional[bytes],
-    headers: typing.List[typing.Tuple[bytes, bytes]],
+    reason_phrase: bytes | None,
+    headers: list[tuple[bytes, bytes]],
 ) -> str:
     version = http_version.decode("ascii")
     reason = (
@@ -151,8 +156,8 @@ def print_request_headers(request: httpcore.Request, http2: bool = False) -> Non
 def print_response_headers(
     http_version: bytes,
     status: int,
-    reason_phrase: typing.Optional[bytes],
-    headers: typing.List[typing.Tuple[bytes, bytes]],
+    reason_phrase: bytes | None,
+    headers: list[tuple[bytes, bytes]],
 ) -> None:
     console = rich.console.Console()
     http_text = format_response_headers(http_version, status, reason_phrase, headers)
@@ -267,7 +272,7 @@ def download_response(response: Response, download: typing.BinaryIO) -> None:
 
 def validate_json(
     ctx: click.Context,
-    param: typing.Union[click.Option, click.Parameter],
+    param: click.Option | click.Parameter,
     value: typing.Any,
 ) -> typing.Any:
     if value is None:
@@ -281,7 +286,7 @@ def validate_json(
 
 def validate_auth(
     ctx: click.Context,
-    param: typing.Union[click.Option, click.Parameter],
+    param: click.Option | click.Parameter,
     value: typing.Any,
 ) -> typing.Any:
     if value == (None, None):
@@ -295,7 +300,7 @@ def validate_auth(
 
 def handle_help(
     ctx: click.Context,
-    param: typing.Union[click.Option, click.Parameter],
+    param: click.Option | click.Parameter,
     value: typing.Any,
 ) -> None:
     if not value or ctx.resilient_parsing:
@@ -385,8 +390,8 @@ def handle_help(
     ),
 )
 @click.option(
-    "--proxies",
-    "proxies",
+    "--proxy",
+    "proxy",
     type=str,
     default=None,
     help="Send the request via a proxy. Should be the URL giving the proxy address.",
@@ -447,20 +452,20 @@ def handle_help(
 def main(
     url: str,
     method: str,
-    params: typing.List[typing.Tuple[str, str]],
+    params: list[tuple[str, str]],
     content: str,
-    data: typing.List[typing.Tuple[str, str]],
-    files: typing.List[typing.Tuple[str, click.File]],
+    data: list[tuple[str, str]],
+    files: list[tuple[str, click.File]],
     json: str,
-    headers: typing.List[typing.Tuple[str, str]],
-    cookies: typing.List[typing.Tuple[str, str]],
-    auth: typing.Optional[typing.Tuple[str, str]],
-    proxies: str,
+    headers: list[tuple[str, str]],
+    cookies: list[tuple[str, str]],
+    auth: tuple[str, str] | None,
+    proxy: str,
     timeout: float,
     follow_redirects: bool,
     verify: bool,
     http2: bool,
-    download: typing.Optional[typing.BinaryIO],
+    download: typing.BinaryIO | None,
     verbose: bool,
 ) -> None:
     """
@@ -471,12 +476,7 @@ def main(
         method = "POST" if content or data or files or json else "GET"
 
     try:
-        with Client(
-            proxies=proxies,
-            timeout=timeout,
-            verify=verify,
-            http2=http2,
-        ) as client:
+        with Client(proxy=proxy, timeout=timeout, http2=http2, verify=verify) as client:
             with client.stream(
                 method,
                 url,

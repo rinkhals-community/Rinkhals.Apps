@@ -9,18 +9,22 @@ import traceback
 import subprocess
 
 from enum import Enum
+from typing import Any, Optional
 
 #
 # This docker host is the entry point for the docker container.
 # Unlike the other host, this host doesn't run the service, it invokes the bambu or companion host.
 #
 
+from docker_octoeverywhere.MQTTBootstrap import MQTTBootstrap
 from linux_host.startup import Startup
 from linux_host.config import Config
 
 from .BambuBootstrap import BambuBootstrap
+from .ElegooCc2Bootstrap import ElegooCc2Bootstrap
 from .ElegooBootstrap import ElegooBootstrap
 from .KlipperBootstrap import KlipperBootstrap
+from .PrusaLinkBootstrap import PrusaLinkBootstrap
 
 
 # Possible modes for the companion.
@@ -28,6 +32,8 @@ class CompanionMode(Enum):
     BambuConnect  = 1
     ElegooConnect = 2
     Klipper   = 3
+    ElegooCc2Connect = 4
+    PrusaLinkConnect = 5
 
     # Makes to str() cast not to include the class name.
     def __str__(self):
@@ -63,7 +69,7 @@ if __name__ == '__main__':
             exceptionClassType = e.__class__.__name__
         logger.error(f"{msg}; {str(exceptionClassType)} Exception: {str(e)}; {str(tb)}")
 
-    def EnsureIsPath(path: str) -> str:
+    def EnsureIsPath(path: Optional[str]) -> str:
         logger.info(f"Ensuring path exists: {path}")
         if path is None or not os.path.exists(path):
             raise Exception(f"Path does not exist: {path}")
@@ -77,7 +83,23 @@ if __name__ == '__main__':
         # First, read the required env vars that are set in the dockerfile.
         virtualEnvPath = EnsureIsPath(os.environ.get("VENV_DIR", None))
         repoRootPath = EnsureIsPath(os.environ.get("REPO_DIR", None))
-        dataPath = EnsureIsPath(os.environ.get("DATA_DIR", None))
+
+        # Handle this path differently, since the user has to set it up correctly, we will give a better error if it doesn't exist.
+        dataPath = os.environ.get("DATA_DIR", None)
+        if dataPath is None:
+            raise Exception("DATA_DIR environment variable is not set.")
+        if not os.path.exists(dataPath):
+            logger.error("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
+            logger.error(" The required /data/ directory doesn't exist which means there's no docker volume mounted for it.")
+            logger.error(" Add this:Use -v ./local/path:/data .")
+            logger.error("   Docker Command Line: -v ./local/path:/data")
+            logger.error("   Docker Compose: volumes: - ./local/path:/data")
+            logger.error(" See this guide for more details:")
+            logger.error(" https://github.com/QuinnDamerell/OctoPrint-OctoEverywhere/blob/master/docker-readme.md")
+            logger.error("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
+            # Sleep for a bit, so if we are restarted we don't do it instantly.
+            time.sleep(3)
+            sys.exit(1)
 
         # For Bambu Connect, the config sits int the data dir.
         configPath = dataPath
@@ -102,8 +124,12 @@ if __name__ == '__main__':
                 mode = CompanionMode.BambuConnect
             elif modeStr == "elegoo":
                 mode = CompanionMode.ElegooConnect
+            elif modeStr == "elegoo_cc2" or modeStr == "elegoocc2" or modeStr == "cc2":
+                mode = CompanionMode.ElegooCc2Connect
             elif modeStr == "klipper":
                 mode = CompanionMode.Klipper
+            elif modeStr == "prusalink" or modeStr == "prusa_link" or modeStr == "prusa":
+                mode = CompanionMode.PrusaLinkConnect
             logger.info(f"Companion mode: {mode}")
         else:
             logger.info("No companion mode set, defaulting to Bambu Connect.")
@@ -117,16 +143,34 @@ if __name__ == '__main__':
             BambuBootstrap.Bootstrap(logger, config)
         elif mode == CompanionMode.ElegooConnect:
             ElegooBootstrap.Bootstrap(logger, config)
+        elif mode == CompanionMode.ElegooCc2Connect:
+            ElegooCc2Bootstrap.Bootstrap(logger, config)
         elif mode == CompanionMode.Klipper:
             KlipperBootstrap.Bootstrap(logger, config)
+        elif mode == CompanionMode.PrusaLinkConnect:
+            PrusaLinkBootstrap.Bootstrap(logger, config)
         else:
             raise Exception(f"Invalid companion mode: {mode}")
+
+        # For the containers that support MQTT, bootstrap it's settings.
+        if mode in [CompanionMode.BambuConnect, CompanionMode.ElegooCc2Connect]:
+            MQTTBootstrap.Bootstrap(logger, config)
 
         # Create the rest of the required dirs based in the data dir, since it's persistent.
         localStoragePath = os.path.join(dataPath, "octoeverywhere-store")
         CreateDirIfNotExists(localStoragePath)
         logDirPath = os.path.join(dataPath, "logs")
         CreateDirIfNotExists(logDirPath)
+
+        # If there's a local web api port, set it in the config.
+        localApiPort = os.environ.get("LOCAL_API_PORT", None)
+        if localApiPort is not None:
+            try:
+                config.SetInt(Config.GeneralSection, Config.GeneralLocalWebApiPort, int(localApiPort), False)
+            except Exception as e:
+                logger.error(f"Failed to set local API port to value `{localApiPort}`, error: {e}")
+                logger.error("Make sure the value is a valid integer, or omit it.")
+                sys.exit(1)
 
         # Build the launch string
         launchConfig = {
@@ -137,7 +181,8 @@ if __name__ == '__main__':
             "LocalFileStoragePath" : localStoragePath,
             "LogFolder" : logDirPath,
             "ConfigFolder" : configPath,
-            'IsCompanion' : True,
+            "IsCompanion" : True,
+            "IsDockerContainer" : True,
         }
 
         # Convert the launch string into what's expected.
@@ -146,7 +191,7 @@ if __name__ == '__main__':
         base64EncodedLaunchConfig =  base64.urlsafe_b64encode(bytes(launchConfigStr, "utf-8")).decode("utf-8")
 
         # Setup a ctl-c handler, so the docker container can be closed easily.
-        def signal_handler(sig, frame):
+        def signal_handler(sig:Any, frame:Any) -> None:
             logger.info("OctoEverywhere Connect Docker - container stop requested")
             sys.exit(0)
         signal.signal(signal.SIGINT, signal_handler)
@@ -155,8 +200,12 @@ if __name__ == '__main__':
         pyPackage = "bambu_octoeverywhere"
         if mode == CompanionMode.ElegooConnect:
             pyPackage = "elegoo_octoeverywhere"
+        elif mode == CompanionMode.ElegooCc2Connect:
+            pyPackage = "elegoo_cc2_octoeverywhere"
         elif mode == CompanionMode.Klipper:
             pyPackage = "moonraker_octoeverywhere"
+        elif mode == CompanionMode.PrusaLinkConnect:
+            pyPackage = "prusalink_octoeverywhere"
 
         # Instead of running the plugin in our process, we decided to launch a different process so it's clean and runs
         # just like the plugin normally runs.

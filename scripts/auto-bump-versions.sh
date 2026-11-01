@@ -53,6 +53,10 @@ read_pinned() {
   printf '%s' "$line" | sed -E 's/^[[:space:]]*[A-Z_]+VERSION=//; s/^"//; s/"$//'
 }
 
+# Images that build the app payloads, as in each get script's header comment
+BUILD_IMAGE="ghcr.io/rinkhals-community/rinkhals/build"
+PYTHON_IMAGE="ghcr.io/jbatonnet/armv7-uclibc:rinkhals"
+
 # Discover apps to consider.
 APPS_DIR="apps"
 found=0
@@ -152,7 +156,18 @@ for manifest in "$APPS_DIR"/*/app.json; do
   sed -i.bak "s/\"version\": *\"[^\"]*\"/\"version\": \"$upstream\"/" "$manifest"
   rm -f "$manifest.bak"
 
-  git add "$get_script" "$manifest"
+  # The SWU build packages the app directory as committed and never runs the
+  # get scripts, so bumping the pin alone changed the label and not the
+  # payload. Refresh the downloaded files, and the armv7 Python packages if the
+  # app has any, so the PR ships what it says. The containers run as root, so
+  # hand the files back before git touches them again.
+  docker run --rm -v "$PWD/apps:/apps" "$BUILD_IMAGE" sh "/apps/$app/$(basename "$get_script")"
+  if [ -f "$app_dir/get-packages.sh" ]; then
+    docker run --rm --platform linux/arm/v7 -v "$PWD/apps:/apps" "$PYTHON_IMAGE" sh "/apps/$app/get-packages.sh"
+  fi
+  docker run --rm -v "$PWD/apps:/apps" "$BUILD_IMAGE" chown -R "$(id -u):$(id -g)" "/apps/$app"
+
+  git add -A "$app_dir"
   git commit --quiet -m "chore($app): auto-bump $from -> $upstream
 
 Resolved from $(jq -r '.upstream.type' "$manifest") at $repo."
@@ -177,6 +192,17 @@ EOF
     --title "chore($app): auto-bump $from -> $upstream" \
     --body "$body" >&2
   opened=$((opened + 1))
+
+  # Close the bumps this one replaces, so they don't pile up week after week
+  for old in $(gh pr list --state open --limit 100 --json headRefName --jq '.[].headRefName'); do
+    case "$old" in
+      "$branch_name") ;;
+      "chore/auto-bump-$app-"*)
+        note "closing superseded $old"
+        gh pr close "$old" --delete-branch --comment "Superseded by the bump to $upstream." >&2 || true
+        ;;
+    esac
+  done
 done
 
 log "summary: $found apps with upstream block, $opened PRs opened/queued, $skipped skipped"

@@ -8,6 +8,7 @@ from .Context import OsTypes
 from .NetworkConnectors.BambuConnector import BambuConnector
 from .NetworkConnectors.ElegooConnector import ElegooConnector
 from .NetworkConnectors.MoonrakerConnector import MoonrakerConnector
+from .NetworkConnectors.PrusaLinkConnector import PrusaLinkConnector
 
 # The goal of this class is the take the context object from the Discovery Gen2 phase to the Phase 3.
 class Configure:
@@ -17,7 +18,7 @@ class Configure:
     # This also MUST NOT CHANGE, as it's used by the Updater logic to find all of the locally running services.
     c_ServiceCommonName = "octoeverywhere"
 
-    def Run(self, context:Context):
+    def Run(self, context:Context) -> None:
 
         Logger.Header("Starting configuration...")
 
@@ -34,6 +35,8 @@ class Configure:
                 pluginTypeStr = "bambu"
             elif context.IsElegooSetup:
                 pluginTypeStr = "elegoo"
+            elif context.IsPrusaLinkSetup:
+                pluginTypeStr = "prusalink"
             serviceSuffixStr = f"-{pluginTypeStr}{instanceIdSuffix}"
         elif context.OsType == OsTypes.SonicPad:
             # For Sonic Pad, we know the format of the service file is a bit different.
@@ -114,7 +117,7 @@ class Configure:
         Util.EnsureDirExists(context.LocalFileStorageFolder, context, True)
 
         # There's not a great way to find the log path from the config file, since the only place it's located is in the systemd file.
-        context.LogsFolder = None
+        context.LogsFolder = None #pyright: ignore[reportAttributeAccessIssue]
 
         # First, we will see if we can find a named folder relative to this folder.
         # This is the folder created for companion and bambu setups, so it should always exist in those cases.
@@ -145,6 +148,11 @@ class Configure:
         if context.IsElegooSetup:
             ec = ElegooConnector()
             ec.EnsureElegooPrinterConnection(context)
+
+        # If this is a Prusa Link Connect setup, we need to make sure we have a connection to a Prusa Link printer.
+        if context.IsPrusaLinkSetup:
+            plc = PrusaLinkConnector()
+            plc.EnsurePrusaLinkConnection(context)
 
         # Report
         Logger.Debug(f'Configured. Service: {context.ServiceName}, Path: {context.ServiceFilePath}, LocalStorage: {context.LocalFileStorageFolder}, Config Dir: {context.ConfigFolder}, Logs: {context.LogsFolder}')

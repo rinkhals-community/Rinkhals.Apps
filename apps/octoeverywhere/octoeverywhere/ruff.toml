@@ -1,0 +1,9 @@
+# This config controls the ruff linter.
+# Note we can't use the pyproject.toml file, because it breaks the OctoPrint install for some reason.
+
+# Exclude the proto folder for Ruff since we can't control it.
+extend-exclude = ["octoeverywhere/Proto"]
+
+[lint]
+# Keep the pre-0.16 default rules explicit so Ruff upgrades don't silently expand the lint scope.
+select = ["E4", "E7", "E9", "F", "B", "RUF021"]

@@ -1,5 +1,6 @@
 import sys
 import traceback
+from typing import Optional
 
 from octoeverywhere.telemetry import Telemetry
 from octoeverywhere.httpsessions import HttpSessions
@@ -7,7 +8,7 @@ from octoeverywhere.httpsessions import HttpSessions
 from .Linker import Linker
 from .Logging import Logger
 from .Service import Service
-from .Context import Context, OsTypes
+from .Context import Context, ElegooPrinterProtocols, OsTypes
 from .Discovery import Discovery
 from .DiscoveryCompanionBambuAndElegoo import DiscoveryCompanionBambuAndElegoo
 from .Configure import Configure
@@ -40,7 +41,7 @@ class Installer:
             Logger.Blank()
 
 
-    def _RunInternal(self):
+    def _RunInternal(self) -> None:
 
         #
         # Setup Phase
@@ -205,7 +206,7 @@ class Installer:
             Logger.DeleteLogFile()
 
 
-    def GetArgumentObjectStr(self) -> str:
+    def GetArgumentObjectStr(self) -> Optional[str]:
         # We want to skip arguments until we find the json string and then concat all args after that together.
         # The reason is the PY args logic will split the entire command line string by space, so any spaces in the json get broken
         # up into different args. This only really happens in the case of the CMD_LINE_ARGS, since it can be like "-companion -debug -whatever"
@@ -228,14 +229,16 @@ class Installer:
         elif context.IsBambuSetup:
             installTarget = "Bambu"
         elif context.IsElegooSetup:
-            installTarget = "Elegoo"
+            installTarget = "ElegooCc2" if context.ElegooPrinterProtocol == ElegooPrinterProtocols.Cc2 else "ElegooCc1"
+        elif context.IsPrusaLinkSetup:
+            installTarget = "PrusaLink"
         elif context.OsType == OsTypes.SonicPad:
             installTarget = "SonicPad"
         elif context.OsType == OsTypes.K1:
             installTarget = "K1"
         elif context.OsType == OsTypes.K2:
             installTarget = "K2"
-        Telemetry.Write("Installer-Phase", 1, {"Phase":phaseStr, "OsType":context.OsType }, {"Target":installTarget})
+        Telemetry.Write(f"Installer-Phase-{phaseStr}", 1, {"OsType": context.OsType.value }, {"Target":installTarget})
         Logger.Debug(f"Installer Phase: {phaseStr}, OsType: {context.OsType}, Target: {installTarget}")
 
 
@@ -245,7 +248,7 @@ class Installer:
         Logger.Blank()
         Logger.Blank()
         Logger.Header("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
-        Logger.Header("    OctoEverywhere For Klipper And Bambu Connect    ")
+        Logger.Header("      OctoEverywhere For Klipper And Connectors     ")
         Logger.Header("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
         Logger.Blank()
         Logger.Info("This installer can be used for:")
@@ -253,6 +256,8 @@ class Installer:
         Logger.Info("   - OctoEverywhere for Creality - Where this device is a Creality device (Sonic Pad, K1, Ender v3, etc)")
         Logger.Info("   - OctoEverywhere Companion - Where this plugin will connect to Moonraker running on a different device on the same LAN.")
         Logger.Info("   - OctoEverywhere Bambu Connect - Where this plugin will connect to a Bambu Lab printer on the same LAN.")
+        Logger.Info("   - OctoEverywhere Elegoo Connect - Where this plugin will connect to an Elegoo Centauri Carbon 1 or Centauri Carbon 2 printer on the same LAN.")
+        Logger.Info("   - OctoEverywhere Prusa Link - Where this plugin will connect to a Prusa Link printer on the same LAN.")
         Logger.Blank()
         Logger.Warn("This installer is NOT for:")
         Logger.Info("   - OctoPrint or OctoKlipper - If you're using OctoPrint, install OctoEverywhere directly in OctoPrint from the plugin manager.")
@@ -271,6 +276,7 @@ class Installer:
         Logger.Info("  -companion       - Makes the setup target a OctoEverywhere Companion plugin setup.")
         Logger.Info("  -bambu           - Makes the setup target a OctoEverywhere Bambu Connect plugin setup.")
         Logger.Info("  -elegoo          - Makes the setup target a OctoEverywhere Elegoo Connect plugin setup.")
+        Logger.Info("  -prusalink       - Makes the setup target a Prusa Link server instance.")
         Logger.Info("  -noatuoselect    - Disables auto selecting a moonraker instance, allowing the user to always choose.")
         Logger.Info("  -debug           - Enable debug logging to the console.")
         Logger.Info("  -skipsudoactions - Skips sudo required actions. This is useful for debugging, but will make the install not fully work.")

@@ -1,0 +1,177 @@
+# Copyright (C) Dnspython Contributors, see LICENSE for text of ISC license
+
+# Copyright (C) 2004-2007, 2009-2011 Nominum, Inc.
+#
+# Permission to use, copy, modify, and distribute this software and its
+# documentation for any purpose with or without fee is hereby granted,
+# provided that the above copyright notice and this permission notice
+# appear in all copies.
+#
+# THE SOFTWARE IS PROVIDED "AS IS" AND NOMINUM DISCLAIMS ALL WARRANTIES
+# WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+# MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL NOMINUM BE LIABLE FOR
+# ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT
+# OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+import base64
+import datetime
+import struct
+import time
+from typing import TypeVar
+
+import dns._text_util
+import dns.dnssectypes
+import dns.exception
+import dns.immutable
+import dns.name
+import dns.rdata
+import dns.rdatatype
+
+
+class BadSigTime(dns.exception.DNSException):
+    """Time in DNS SIG or RRSIG resource record cannot be parsed."""
+
+
+def sigtime_to_posixtime(what):
+    if not dns._text_util.is_ascii_digits(what):
+        raise BadSigTime
+    if len(what) <= 10:
+        return int(what)
+    if len(what) != 14:
+        raise BadSigTime
+    year = int(what[0:4])
+    month = int(what[4:6])
+    day = int(what[6:8])
+    hour = int(what[8:10])
+    minute = int(what[10:12])
+    second = int(what[12:14])
+    try:
+        value = datetime.datetime(
+            year, month, day, hour, minute, second, tzinfo=datetime.UTC
+        )
+    except ValueError:
+        raise BadSigTime
+    return int(value.timestamp())
+
+
+def posixtime_to_sigtime(what):
+    return time.strftime("%Y%m%d%H%M%S", time.gmtime(what))
+
+
+T = TypeVar("T", bound="RRSIGBase")
+
+
+@dns.immutable.immutable
+class RRSIGBase(dns.rdata.Rdata):
+    """Base class for rdata that is like a RRSIG record"""
+
+    __slots__ = [
+        "type_covered",
+        "algorithm",
+        "labels",
+        "original_ttl",
+        "expiration",
+        "inception",
+        "key_tag",
+        "signer",
+        "signature",
+    ]
+
+    def __init__(
+        self,
+        rdclass,
+        rdtype,
+        type_covered,
+        algorithm,
+        labels,
+        original_ttl,
+        expiration,
+        inception,
+        key_tag,
+        signer,
+        signature,
+    ):
+        super().__init__(rdclass, rdtype)
+        self.type_covered: dns.rdatatype.RdataType = self._as_rdatatype(type_covered)
+        self.algorithm: dns.dnssectypes.Algorithm = dns.dnssectypes.Algorithm.make(
+            algorithm
+        )
+        self.labels: int = self._as_uint8(labels)
+        self.original_ttl: int = self._as_ttl(original_ttl)
+        self.expiration: int = self._as_uint32(expiration)
+        self.inception: int = self._as_uint32(inception)
+        self.key_tag: int = self._as_uint16(key_tag)
+        self.signer: dns.name.Name = self._as_name(signer)
+        self.signature: bytes = self._as_bytes(signature)
+
+    def covers(self):
+        return self.type_covered
+
+    def to_styled_text(self, style: dns.rdata.RdataStyle) -> str:
+        ctext = dns.rdatatype.to_text(self.type_covered)
+        expiration = posixtime_to_sigtime(self.expiration)
+        inception = posixtime_to_sigtime(self.inception)
+        signer = self.signer.to_styled_text(style)
+        sig = dns.rdata._styled_base64ify(self.signature, style, True)
+        return (
+            f"{ctext} {self.algorithm} {self.labels} {self.original_ttl} "
+            + f"{expiration} {inception} {self.key_tag} {signer} {sig}"
+        )
+
+    @classmethod
+    def from_text(
+        cls: type[T],
+        rdclass,
+        rdtype,
+        tok,
+        origin=None,
+        relativize=True,
+        relativize_to=None,
+    ) -> T:
+        type_covered = dns.rdatatype.from_text(tok.get_string())
+        algorithm = dns.dnssectypes.Algorithm.from_text(tok.get_string())
+        labels = tok.get_int()
+        original_ttl = tok.get_ttl()
+        expiration = sigtime_to_posixtime(tok.get_string())
+        inception = sigtime_to_posixtime(tok.get_string())
+        key_tag = tok.get_int()
+        signer = tok.get_name(origin, relativize, relativize_to)
+        b64 = tok.concatenate_remaining_identifiers().encode()
+        signature = base64.b64decode(b64, validate=True)
+        return cls(
+            rdclass,
+            rdtype,
+            type_covered,
+            algorithm,
+            labels,
+            original_ttl,
+            expiration,
+            inception,
+            key_tag,
+            signer,
+            signature,
+        )
+
+    def _to_wire(self, file, compress=None, origin=None, canonicalize=False):
+        header = struct.pack(
+            "!HBBIIIH",
+            self.type_covered,
+            self.algorithm,
+            self.labels,
+            self.original_ttl,
+            self.expiration,
+            self.inception,
+            self.key_tag,
+        )
+        file.write(header)
+        self.signer.to_wire(file, None, origin, canonicalize)
+        file.write(self.signature)
+
+    @classmethod
+    def from_wire_parser(cls: type[T], rdclass, rdtype, parser, origin=None) -> T:
+        header = parser.get_struct("!HBBIIIH")
+        signer = parser.get_name(origin)
+        signature = parser.get_remaining()
+        return cls(rdclass, rdtype, *header, signer, signature)  # pyright: ignore

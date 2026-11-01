@@ -6,4 +6,6 @@ class ServerHost(object):
     Unknown = 0
     OctoPrint = 1
     Moonraker = 2
-
+    Bambu = 3
+    Elegoo = 4
+    Elegoo2 = 5
