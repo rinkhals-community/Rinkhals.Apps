@@ -3,13 +3,13 @@
 
     "name": "NFS Mount",
     "description": "Replace local gcode storage with NFS to offload I/O",
-    "version": "0.1",
+    "version": "0.2",
 
     "properties": {
         "server": {
             "display": "NFS Server",
-            "type": "string",
-            "default": "192.168.1.100"
+            "type": "text",
+            "default": ""
         },
         "port": {
             "display": "NFS Port",
@@ -18,8 +18,8 @@
         },
         "share": {
             "display": "NFS Share Path",
-            "type": "string",
-            "default": "/mnt/share"
+            "type": "text",
+            "default": ""
         }
     }
 }

@@ -1,7 +1,0 @@
-{
-    "$version": "1",
-
-    "name": "Klipper (vanilla)",
-    "description": "Vanilla Klipper to replace Anycubic GoKlipper reimplementation",
-    "version": "0.1"
-}

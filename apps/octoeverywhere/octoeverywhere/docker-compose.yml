@@ -3,16 +3,20 @@ services:
   octoeverywhere-connect:
     image: octoeverywhere/octoeverywhere:latest
     environment:
-        # Required: The mode of OctoEverywhere Companion you want use.
-        #   - bambu:   Bambu Connect - for Bambu Lab 3D printers such as the Bambu Lab A1, P1, and X1 series.
-        #   - elegoo:  Elegoo Connect - for Elegoo OS 3D printers such as the Elegoo Centauri & Elegoo Centauri Carbon.
-        #   - klipper: Use this for Klipper / Moonraker based printers.
+        # Required: The mode of the OctoEverywhere Companion plugin you want to use:
+        #   - bambu:      Bambu Connect - for Bambu Lab 3D printers such as the Bambu Lab A1, P1, X1, X2, H2, etc.
+        #   - prusalink:  Prusa 3D printers running PrusaLink or Prusa Connect.
+        #   - klipper:    Use this for Klipper / Moonraker based printers.
+        #   - elegoo:     Elegoo Connect For Elegoo Centauri Carbon (original).
+        #   - elegoo_cc2: Elegoo Connect For Elegoo Centauri Carbon 2.
         #
-        # Set this to the mode you want to use, and then uncomment the required settings for the mode bellow.
+        # Set this to the mode you want to use.
+        # YOU MUST ALSO UNCOMMENT THE REQUIRED SETTINGS FOR THE MODE BELLOW.
         - COMPANION_MODE=bambu
 
+
         #
-        # Required for Bambu Connect
+        # Bambu Connect
         #
         #  https://octoeverywhere.com/s/access-code
         #- ACCESS_CODE=5285c831
@@ -25,14 +29,25 @@ services:
 
 
         #
-        # Required for Elegoo Connect
+        # Elegoo Connect - Elegoo Centauri Carbon (original)
         #
         #  Find using the printer's display or use https://octoeverywhere.com/s/elegoo-ip
         #- PRINTER_IP=XXX.XXX.XXX.XXX
 
 
         #
-        # Required For Klipper / Moonraker
+        # Elegoo Connect - Elegoo Centauri Carbon 2
+        #
+        #  Find using the printer's display or use https://octoeverywhere.com/s/cc2-ip
+        #- PRINTER_IP=XXX.XXX.XXX.XXX
+        #
+        #  Find using the printer's display or use https://octoeverywhere.com/s/cc2-access-code
+        #  If the access code is disabled on the printer, use the default value of '123456'.
+        #- ACCESS_CODE=123456
+
+
+        #
+        # Klipper / Moonraker
         #
         #  Required - The IP address of the Klipper/Moonraker/Webserver/Printer
         #- PRINTER_IP=XXX.XXX.XXX.XXX
@@ -40,8 +55,31 @@ services:
         #  Optional - The port of Moonraker. This defaults to 7125 if not set.
         #- MOONRAKER_PORT=7125
         #
+        #  Optional - If your Moonraker needs API key auth, you can generate it in Mainsail or Fluidd and set it here.
+        #- MOONRAKER_API_KEY=someApiKey
+        #
         #  Optional - The port of frontend webserver. This defaults to 80 if not set.
         #- WEBSERVER_PORT=80
+
+
+        #
+        #  PrusaLink
+        #
+        #  Required - The IP address of your PrusaLink 3D printer
+        #- PRINTER_IP=XXX.XXX.XXX.XXX
+        #
+        #  Required - EITHER your PrusaLink username/password or API key.
+        #
+        #  Get Help -> https://octoeverywhere.com/s/prusa-link-password
+        #- USERNAME=username
+        #- PASSWORD=your-password
+        #
+        #  Get Help -> https://octoeverywhere.com/s/prusa-link-api-key
+        #- API_KEY=your-api-key
+        #
+        #  Optional - The Prusa Link port. This defaults to 80 if not set.
+        #- PRUSALINK_PORT=80
+
 
         #
         # Optional Settings For All Modes
@@ -50,29 +88,63 @@ services:
         # https://en.wikipedia.org/wiki/List_of_tz_database_time_zones#List
         - TZ=America/New_York
 
+        #
+        # Optional Settings For the MQTT Relay Mux Broker Server
+        #
+        # For Bambu Lab and Elegoo printers, this will run an optional MQTT relay server.
+        # The MQTT relay will combine the connections of all clients to a single MQTT connection to the printer, allowing any number of clients to connect to the plugin without hitting connection limits on the printer.
+        - MQTT_RELAY_ENABLED=true
+        #
+        # The primary port accepts plain MQTT or TLS automatically for each connection.
+        - MQTT_RELAY_PORT=1883
+        # Additional TLS-only port. Set to 0 to disable this listener, then remove its ports mapping below.
+        - MQTT_RELAY_TLS_PORT=8883
+        # A self-signed certificate is generated automatically and persisted in /data.
+        # Apps that verify certificates may need a trust setting or your own certificate.
+        # Optional: mount custom PEM files and set their paths inside the container.
+        # For one combined certificate/private-key PEM, set only MQTT_RELAY_TLS_CERT_PATH. Keep it private.
+        #- MQTT_RELAY_TLS_CERT_PATH=/certs/fullchain.pem
+        #- MQTT_RELAY_TLS_KEY_PATH=/certs/privkey.pem
+        #
+        # If true, the MQTT relay will require clients to authenticate with the same credentials as the upstream printer connection.
+        - MQTT_RELAY_REQUIRE_UPSTREAM_AUTH=true
+        #
+        # If MQTT_RELAY_REQUIRE_UPSTREAM_AUTH is false, a static username and password can be set here for clients to authenticate to the MQTT relay.
+        #- MQTT_RELAY_USERNAME=
+        #- MQTT_RELAY_PASSWORD=
+
+    ports:
+      # Publish the ports your MQTT apps use: 1883 accepts plain MQTT or TLS; 8883 accepts TLS only.
+      # First port = host port; second = container port. Each instance needs unique host ports.
+      # Existing containers must be recreated (docker compose up -d) to add the 8883 mapping.
+      - "1883:1883"
+      - "8883:8883"
+
     volumes:
       # This can also be an absolute path, e.g. /var/octoeverywhere/plugin/data or /c/users/name/plugin/data
       - ./data:/data
 
 
-
-
   #
-  # Add as many printers and printer types as you want!
+  # Add as many printers and modes as you want!
   #
-  # octoeverywhere-connect-2:
+  #  octoeverywhere-connect-2:
   #   image: octoeverywhere/octoeverywhere:latest
   #   environment:
-  #       # Required: The mode of OctoEverywhere Companion you want use.
-  #       #   - bambu:   Bambu Connect - for Bambu Lab 3D printers such as the Bambu Lab A1, P1, and X1 series.
-  #       #   - elegoo:  Elegoo Connect - for Elegoo OS 3D printers such as the Elegoo Centauri & Elegoo Centauri Carbon.
-  #       #   - klipper: Use this for Klipper / Moonraker based printers.
+  #       # Required: The mode of the OctoEverywhere Companion plugin you want to use:
+  #       #   - bambu:      Bambu Connect - for Bambu Lab 3D printers such as the Bambu Lab A1, P1, X1, X2, H2, etc.
+  #       #   - prusalink:  Prusa 3D printers running PrusaLink or Prusa Connect.
+  #       #   - klipper:    Use this for Klipper / Moonraker based printers.
+  #       #   - elegoo:     Elegoo Connect For Elegoo Centauri Carbon (original).
+  #       #   - elegoo_cc2: Elegoo Connect For Elegoo Centauri Carbon 2.
   #       #
-  #       # Set this to the mode you want to use, and then uncomment the required settings for the mode bellow.
+  #       # Set this to the mode you want to use.
+  #       # YOU MUST ALSO UNCOMMENT THE REQUIRED SETTINGS FOR THE MODE BELLOW.
   #       - COMPANION_MODE=bambu
 
+
   #       #
-  #       # Required for Bambu Connect
+  #       # Bambu Connect
   #       #
   #       #  https://octoeverywhere.com/s/access-code
   #       #- ACCESS_CODE=5285c831
@@ -85,14 +157,25 @@ services:
 
 
   #       #
-  #       # Required for Elegoo Connect
+  #       # Elegoo Connect - Elegoo Centauri Carbon (original)
   #       #
   #       #  Find using the printer's display or use https://octoeverywhere.com/s/elegoo-ip
   #       #- PRINTER_IP=XXX.XXX.XXX.XXX
 
 
   #       #
-  #       # Required For Klipper / Moonraker
+  #       # Elegoo Connect - Elegoo Centauri Carbon 2
+  #       #
+  #       #  Find using the printer's display or use https://octoeverywhere.com/s/cc2-ip
+  #       #- PRINTER_IP=XXX.XXX.XXX.XXX
+  #       #
+  #       #  Find using the printer's display or use https://octoeverywhere.com/s/cc2-access-code
+  #       #  If the access code is disabled on the printer, use the default value of '123456'.
+  #       #- ACCESS_CODE=123456
+
+
+  #       #
+  #       # Klipper / Moonraker
   #       #
   #       #  Required - The IP address of the Klipper/Moonraker/Webserver/Printer
   #       #- PRINTER_IP=XXX.XXX.XXX.XXX
@@ -100,8 +183,31 @@ services:
   #       #  Optional - The port of Moonraker. This defaults to 7125 if not set.
   #       #- MOONRAKER_PORT=7125
   #       #
+  #       #  Optional - If your Moonraker needs API key auth, you can generate it in Mainsail or Fluidd and set it here.
+  #       #- MOONRAKER_API_KEY=someApiKey
+  #       #
   #       #  Optional - The port of frontend webserver. This defaults to 80 if not set.
   #       #- WEBSERVER_PORT=80
+
+
+  #       #
+  #       #  PrusaLink
+  #       #
+  #       #  Required - The IP address of your PrusaLink 3D printer
+  #       #- PRINTER_IP=XXX.XXX.XXX.XXX
+  #       #
+  #       #  Required - EITHER your PrusaLink username/password or API key.
+  #       #
+  #       #  Get Help -> https://octoeverywhere.com/s/prusa-link-password
+  #       #- USERNAME=username
+  #       #- PASSWORD=your-password
+  #       #
+  #       #  Get Help -> https://octoeverywhere.com/s/prusa-link-api-key
+  #       #- API_KEY=your-api-key
+  #       #
+  #       #  Optional - The Prusa Link port. This defaults to 80 if not set.
+  #       #- PRUSALINK_PORT=80
+
 
   #       #
   #       # Optional Settings For All Modes
@@ -110,6 +216,36 @@ services:
   #       # https://en.wikipedia.org/wiki/List_of_tz_database_time_zones#List
   #       - TZ=America/New_York
 
+  #       #
+  #       # Optional Settings For the MQTT Relay Mux Broker Server
+  #       #
+  #       # For Bambu Lab and Elegoo printers, this will run an optional MQTT relay server.
+  #       # The MQTT relay will combine the connections of all clients to a single MQTT connection to the printer, allowing any number of clients to connect to the plugin without hitting connection limits on the printer.
+  #       - MQTT_RELAY_ENABLED=true
+  #       #
+  #       # The primary port accepts plain MQTT or TLS automatically for each connection.
+  #       - MQTT_RELAY_PORT=1883
+  #       # Additional TLS-only port. Set to 0 to disable this listener, then remove its ports mapping below.
+  #       - MQTT_RELAY_TLS_PORT=8883
+  #       # A self-signed certificate is generated automatically and persisted in /data.
+  #       # Optional: mount custom PEM files and set their paths inside the container.
+  #       # For one combined certificate/private-key PEM, set only MQTT_RELAY_TLS_CERT_PATH. Keep it private.
+  #       #- MQTT_RELAY_TLS_CERT_PATH=/certs/fullchain.pem
+  #       #- MQTT_RELAY_TLS_KEY_PATH=/certs/privkey.pem
+  #       #
+  #       # If true, the MQTT relay will require clients to authenticate with the same credentials as the upstream printer connection.
+  #       - MQTT_RELAY_REQUIRE_UPSTREAM_AUTH=true
+  #       #
+  #       # If MQTT_RELAY_REQUIRE_UPSTREAM_AUTH is false, a static username and password can be set here for clients to authenticate to the MQTT relay.
+  #       #- MQTT_RELAY_USERNAME=
+  #       #- MQTT_RELAY_PASSWORD=
+
+  #   ports:
+  #     # Each relay needs unique host ports. Connect this printer's apps to 1884 or 8884.
+  #     # Apps fixed to port 8883 need a separate host IP address or computer per relay.
+  #     - "1884:1883"
+  #     - "8884:8883"
+
   #   volumes:
   #     # This can also be an absolute path, e.g. /var/octoeverywhere/plugin/data or /c/users/name/plugin/data
-  #     - ./data:/data
+  #     - ./data-2:/data

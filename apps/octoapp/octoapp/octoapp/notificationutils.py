@@ -1,60 +1,89 @@
+from typing import IO, Dict, Any, Optional, Tuple
+
 from .sentry import Sentry
 from .layerutils import LayerUtils
+from .logging import LoggerLike
+from .notificationshandler import NotificationsHandler
 
 class NotificationUtils:
-    
+
     NotificationCommand = "OCTOAPP_NOTIFY"
-    FirstLayerCompletedAt = "FirstLayerCompletedAt" 
-    ThirdLayerCompletedAt = "ThirdLayerCompletedAt" 
+    FirstLayerCompletedAt = "FirstLayerCompletedAt"
+    ThirdLayerCompletedAt = "ThirdLayerCompletedAt"
+
+    _Instance:"NotificationUtils" = None #pyright: ignore[reportAssignmentType]
 
     @staticmethod
-    def CreateNotificationCommand(message):
-        return NotificationUtils.NotificationCommand + " MESSAGE=" + message
-    
+    def Init(logger:LoggerLike):
+        NotificationUtils._Instance = NotificationUtils(logger)
+
 
     @staticmethod
-    def GetMessageIfNotifyCommand(line):
-        def removeQuotes(s):
+    def Get():
+        return NotificationUtils._Instance
+
+    def __init__(self, logger:LoggerLike) -> None:
+        self.Logger = logger
+
+    def CreateNotificationCommand(self, message:str, detail:Optional[str]=None):
+        cmd = NotificationUtils.NotificationCommand + " MESSAGE=" + message
+        if detail:
+            cmd += " DETAIL=" + detail
+        return cmd
+
+
+    def GetMessageIfNotifyCommand(self, line:str) -> Optional[Tuple[str, Optional[str]]]:
+        def removeQuotes(s:str):
             if s.startswith('"') and s.endswith('"'):
                 return s[1:-1]
             elif s.startswith("'") and s.endswith("'"):
                 return s[1:-1]
             return s
-        
-        base = NotificationUtils.CreateNotificationCommand("")
+
+        def parseParams(raw:str) -> Tuple[str, Optional[str]]:
+            raw = removeQuotes(raw.strip())
+            # Support "MESSAGE=title DETAIL=body" syntax
+            detail = None
+            if " DETAIL=" in raw:
+                parts = raw.split(" DETAIL=", 1)
+                raw = parts[0].strip()
+                detail = removeQuotes(parts[1].strip()) or None
+            message = raw[len("MESSAGE="):] if raw.startswith("MESSAGE=") else raw
+            return (removeQuotes(message), detail)
+
+        base = self.CreateNotificationCommand("")
         commands = [ base, ";" + base, "; " + base, "M118 E1 " + base]
-        
+
         for command in commands:
             if line.startswith(command):
-                return removeQuotes(line[len(command):])
-        
-    @staticmethod
-    def SendScheduledNotifications(notifications, notificationHandler, filePos, lastFilePos):
+                return parseParams(line[len(command):])
+
+    def SendScheduledNotifications(self, notifications: Dict[int, Any], notificationHandler: NotificationsHandler, filePos:int, lastFilePos:int):
         for notificationFilePos in notifications:
             if notificationFilePos > lastFilePos and filePos >= notificationFilePos:
-                message = notifications[notificationFilePos]
-                Sentry.Info("NOTIFICATIONS", "Sending scheduled notification at %d: %s" % (filePos, message))
-                if message == NotificationUtils.FirstLayerCompletedAt:
+                entry = notifications[notificationFilePos]
+                if entry == NotificationUtils.FirstLayerCompletedAt:
                     notificationHandler.OnFirstLayerDone()
-                elif message == NotificationUtils.ThirdLayerCompletedAt:
+                elif entry == NotificationUtils.ThirdLayerCompletedAt:
                     notificationHandler.OnThirdLayerDone()
                 else:
-                    notificationHandler.OnCustomNotification(message)
-    
-    @staticmethod
-    def ExtractNotifications(response, stopAfterLayer3 = False):
+                    message, detail = entry
+                    self.Logger.info(f"Sending scheduled notification at {filePos}: {message}")
+                    notificationHandler.OnCustomNotification(message, detail)
+
+    def ExtractNotifications(self, response:IO[Any], stopAfterLayer3:bool = False) -> Dict[int, Any]:
         buffer = ""
         filePos = 0
-        context = {}
-        notifications = {}
-    
-        def processLine(line):
+        context:Dict[str,Any] = {}
+        notifications:Dict[int, str] = {}
+
+        def processLine(line:str) -> bool:
             context['layerCounter'] = context.get('layerCounter', 0)
-            
+
             try:
                 if LayerUtils.IsLayerChange(line, context):
                     if context['layerCounter'] <= 4:
-                        Sentry.Info("NOTIFICATIONS", "Layer " + str(context['layerCounter']) + " completed at at " + str(filePos))
+                        self.Logger.info( "Layer " + str(context['layerCounter']) + " completed at at " + str(filePos))
 
                     if context['layerCounter'] == 1:
                         notifications[filePos] = NotificationUtils.FirstLayerCompletedAt
@@ -65,11 +94,11 @@ class NotificationUtils:
                             return False
 
                     context['layerCounter'] += 1
-                
-                notifyMessage = NotificationUtils.GetMessageIfNotifyCommand(line)
-                if notifyMessage is not None:
-                    Sentry.Info("NOTIFICATIONS", "Custom notification at " + str(filePos))
-                    notifications[filePos] = notifyMessage
+
+                notifyParams = self.GetMessageIfNotifyCommand(line)
+                if notifyParams is not None:
+                    self.Logger.info( "Custom notification at " + str(filePos))
+                    notifications[filePos] = notifyParams
 
             except Exception as e:
                 Sentry.ExceptionNoSend("Failed to detect layer change", e)
@@ -78,20 +107,22 @@ class NotificationUtils:
 
         # Do not read by line! We need to keep track of \r and \n because they are part of the filePos
         # later used. If read by line we do not know if \r\n or \n was used
+        line = ""
         while True:
-            chunk = response.read(4096)
+            chunk: Any = response.read(4096)
             if not chunk:
                 break
 
-            buffer += chunk if type(chunk) == str else chunk.decode('utf-8')
+
+            buffer += chunk if isinstance(chunk, str) else chunk.decode('utf-8')
             while '\n' in buffer:
                 line, buffer = buffer.split('\n', 1)
                 filePos += len(line) + 1 # +1 for \n
                 if processLine(line.strip()) is False:
-                    Sentry.Info("NOTIFICATIONS", "Processing stopped prematurely, all notifications extracted")
+                    self.Logger.info( "Processing stopped prematurely, all notifications extracted")
                     return notifications
 
-        if buffer:
+        if buffer and len(line) > 0:
             processLine(line)
-        
+
         return notifications

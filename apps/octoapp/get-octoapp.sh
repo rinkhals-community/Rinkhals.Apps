@@ -1,13 +1,13 @@
 #!/bin/sh
 
 # Run from Docker:
-#   docker run --rm -it -v .\apps:/apps ghcr.io/jbatonnet/rinkhals/build /apps/octoapp/get-octoapp.sh
+#   docker run --rm -it -v .\apps:/apps ghcr.io/rinkhals-community/rinkhals/build /apps/octoapp/get-octoapp.sh
 
 mkdir /work
 cd /work
 
 
-OCTOAPP_VERSION=2.1.10
+OCTOAPP_VERSION=3.2.4
 OCTOAPP_DIRECTORY=/apps/octoapp
 
 

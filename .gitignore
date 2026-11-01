@@ -6,3 +6,4 @@ files/4-rinkhals/usr/share/data/framebuffer.bmp
 build/cache
 build/dev.md
 apps/cloud2lan-bridge/agora_rtc_api.h
+__pycache__/

@@ -2,6 +2,9 @@ import os
 import sys
 import logging
 import logging.handlers
+from typing import Optional
+
+from octoeverywhere.websocketimpl import Client
 
 from .config import Config
 
@@ -9,7 +12,7 @@ class LoggerInit:
 
     # Sets up and returns the main logger object
     @staticmethod
-    def GetLogger(config:Config, logDir:str, logLevelOverride_CanBeNone:str) -> logging.Logger:
+    def GetLogger(config:Config, logDir:str, logLevelOverride:Optional[str]) -> logging.Logger:
         logger = logging.getLogger()
 
         # From the possible logging values, read the current value from the config.
@@ -21,15 +24,25 @@ class LoggerInit:
             "ERROR",
         ]
         logLevel = config.GetStrIfInAcceptableList(Config.LoggingSection, Config.LogLevelKey, "INFO", possibleValueList)
+        # GetStrIfInAcceptableList does a case insensitive check, so we need to make sure the logging case is correct.
+        logLevel = logLevel.upper()
+
+        # Check the environment variable for the log level.
+        if any(os.getenv(name) is not None for name in ("DEBUG", "-DEBUG", "debug", "-debug")):
+            print("Environment variable DEBUG set, setting log level to DEBUG")
+            logLevel = "DEBUG"
 
         # Allow the dev config to override the log level.
-        if logLevelOverride_CanBeNone is not None:
-            logLevelOverride_CanBeNone = logLevelOverride_CanBeNone.upper()
-            print("Dev config override log level from "+logLevel+" to "+logLevelOverride_CanBeNone)
-            logLevel = logLevelOverride_CanBeNone
+        if logLevelOverride is not None:
+            logLevelOverride = logLevelOverride.upper()
+            print("Dev config override log level from "+logLevel+" to "+logLevelOverride)
+            logLevel = logLevelOverride
 
         # Set the final log level.
         logger.setLevel(logLevel)
+
+        # Set the websocket lib debug level if needed.
+        Client.SetWebsocketDebuggingLevel(logLevel == "DEBUG")
 
         # Define our format
         formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')

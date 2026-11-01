@@ -1,7 +1,9 @@
 import os
 import time
 import configparser
-import requests
+from typing import Optional
+
+from octoeverywhere.linkhelper import LinkHelper
 
 from .Util import Util
 from .Logging import Logger
@@ -13,7 +15,12 @@ class Linker:
 
     c_MinPrinterIdLength = 40
 
-    def Run(self, context:Context):
+    def Run(self, context:Context) -> None:
+
+        # Get the amount of time we will wait for the plugin to install. For creality devices, give them more time since they are low powered.
+        pluginStartWaitTimeBeforeWarningSec = 10.0
+        if context.IsCrealityOs():
+            pluginStartWaitTimeBeforeWarningSec = 20.0
 
         # First, wait for the config file to be created and the printer ID to show up.
         printerId = None
@@ -29,7 +36,7 @@ class Linker:
             # If we failed, try to handle the case where the service might be having an error.
             if printerId is None:
                 timeDelta = time.time() - startTimeSec
-                if timeDelta > 10.0:
+                if timeDelta > pluginStartWaitTimeBeforeWarningSec:
                     Logger.Warn("The local plugin service is taking a while to start, there might be something wrong.")
                     if Util.AskYesOrNoQuestion("Do you want to keep waiting?"):
                         startTimeSec = time.time()
@@ -48,7 +55,7 @@ class Linker:
 
         # Check if the printer is already connected to an account.
         # If so, report and we don't need to do the setup.
-        (isConnectedToService, printerNameIfConnectedToAccount) = self._IsPrinterConnectedToAnAccount(printerId)
+        (isConnectedToService, printerNameIfConnectedToAccount) = LinkHelper.IsPrinterConnectedToAnAccount(Logger.GetPyLogger(), printerId)
         if isConnectedToService and printerNameIfConnectedToAccount is not None:
             Logger.Header("This printer is securely connected to your OctoEverywhere account as '"+str(printerNameIfConnectedToAccount)+"'")
             return
@@ -61,13 +68,13 @@ class Linker:
             if Util.AskYesOrNoQuestion("Would you like to link it now?") is False:
                 Logger.Blank()
                 Logger.Header("You can connect this printer anytime, using this URL: ")
-                Logger.Warn(self._GetAddPrinterUrl(printerId))
+                Logger.Warn(LinkHelper.GetAddPrinterUrl(printerId))
                 return
 
         # Help the user setup the printer!
         Logger.Blank()
         Logger.Blank()
-        Logger.Warn( "You're 10 seconds away from free and unlimited printer access from anywhere!")
+        Logger.Warn("You're 10 seconds away from free and unlimited printer access from anywhere!")
         self._PrintShortCodeStyleOrFullUrl(printerId)
         Logger.Blank()
         Logger.Blank()
@@ -77,7 +84,7 @@ class Linker:
         notConnectedTimeSec = time.time()
         while True:
             # Query status.
-            (isConnectedToService, printerNameIfConnectedToAccount) = self._IsPrinterConnectedToAnAccount(printerId)
+            (isConnectedToService, printerNameIfConnectedToAccount) = LinkHelper.IsPrinterConnectedToAnAccount(Logger.GetPyLogger(), printerId)
 
             if printerNameIfConnectedToAccount is not None:
                 # Connected!
@@ -122,7 +129,7 @@ class Linker:
                     Logger.Blank()
                     Logger.Blank()
                     Logger.Warn("You can use the following URL at anytime to link this printer to your account. Or run this install script again for help.")
-                    Logger.Header(self._GetAddPrinterUrl(printerId))
+                    Logger.Header(LinkHelper.GetAddPrinterUrl(printerId))
                     Logger.Blank()
                     Logger.Blank()
                     return
@@ -131,33 +138,29 @@ class Linker:
             time.sleep(1.0)
 
 
-    def _PrintShortCodeStyleOrFullUrl(self, printerId):
+    # Returns the amount of time the code is valid for.
+    def _PrintShortCodeStyleOrFullUrl(self, printerId:str) -> Optional[int]:
         # To make the setup easier, we will present the user with a short code if we can get one.
         # If not, fallback to the full URL.
         try:
-            # Try to get a short code. We do a quick timeout so if this fails, we just present the user the longer URL.
-            # Any failures, like rate limiting, server error, whatever, and we just use the long URL.
-            r = requests.post('https://octoeverywhere.com/api/shortcode/create', json={"Type": 1, "PrinterId": printerId}, timeout=10.0)
-            if r.status_code == 200:
-                jsonResponse = r.json()
-                if "Result" in jsonResponse and "Code" in jsonResponse["Result"]:
-                    codeStr = jsonResponse["Result"]["Code"]
-                    if len(codeStr) > 0:
-                        Logger.Warn("To securely link this printer to your OctoEverywhere account, go to the following website and use the code.")
-                        Logger.Blank()
-                        Logger.Header("Website: https://octoeverywhere.com/code")
-                        Logger.Header("Code:    "+codeStr)
-                        return
+            (shortCode, validForSeconds) = LinkHelper.GetLinkShortCode(Logger.GetPyLogger(), printerId)
+            if shortCode is not None:
+                Logger.Warn("To securely link this printer to your OctoEverywhere account, go to the following website and use the code.")
+                Logger.Blank()
+                Logger.Header("Website: https://octoeverywhere.com/code")
+                Logger.Header("Code:    "+shortCode)
+                return validForSeconds
         except Exception:
             pass
 
         Logger.Warn("Use this URL to securely link this printer to your OctoEverywhere account:")
-        Logger.Header(self._GetAddPrinterUrl(printerId))
+        Logger.Header(LinkHelper.GetAddPrinterUrl(printerId))
+        return None
 
 
     # Get's the printer id from the instances secrets config file, if the config exists.
     @staticmethod
-    def GetPrinterIdFromServiceSecretsConfigFile(context:Context) -> str or None:
+    def GetPrinterIdFromServiceSecretsConfigFile(context:Context) -> Optional[str]:
         # This path and name must stay in sync with where the plugin will write the file.
         oeServiceConfigFilePath = os.path.join(context.LocalFileStorageFolder, "octoeverywhere.secrets")
 
@@ -201,47 +204,3 @@ class Linker:
             Logger.Debug("Printer ID found, but the length is less than "+str(Linker.c_MinPrinterIdLength)+" chars? value:`"+printerId+"`")
             return None
         return printerId
-
-
-    # Checks with the service to see if the printer is setup on a account.
-    # Returns a tuple of two values
-    #   1 - bool - Is the printer connected to the service
-    #   2 - string - If the printer is setup on an account, the printer name.
-    def _IsPrinterConnectedToAnAccount(self, printerId):
-        # Adding retry logic, since one call can fail if the server is updating or whatever.
-        attempt = 0
-        while True:
-            try:
-                # Keep track of attempts and timeout if there have been too many.
-                attempt += 1
-                if attempt > 5:
-                    Logger.Error(f"Failed to query current printer info from service after {attempt} attempts.")
-                    return (False, None)
-
-                # Query the printer status.
-                r = requests.post('https://octoeverywhere.com/api/printer/info', json={"Id": printerId}, timeout=20)
-
-                Logger.Debug("OE Printer info API Result: "+str(r.status_code))
-                # If the status code is above 500, retry.
-                if r.status_code >= 500:
-                    raise Exception(f"Failed call with status code {r.status_code}")
-
-                # Anything else we report as not connected.
-                if r.status_code != 200:
-                    return (False, None)
-
-                # On success, try to parse the response and see if it's connected.
-                jResult = r.json()
-                Logger.Debug("OE Printer API info; Name:"+jResult["Result"]["Name"] + " HasOwners:" +str(jResult["Result"]["HasOwners"]))
-
-                # Only return the name if there the printer is linked to an account.
-                printerName = None
-                if jResult["Result"]["HasOwners"] is True:
-                    printerName = jResult["Result"]["Name"]
-                return (True, printerName)
-            except Exception:
-                Logger.Warn("Failed to get printer info from service, trying again in just a second...")
-                time.sleep(2.0 * attempt)
-
-    def _GetAddPrinterUrl(self, printerId):
-        return "https://octoeverywhere.com/getstarted?printerid="+printerId

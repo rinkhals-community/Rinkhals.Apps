@@ -4,6 +4,7 @@ import threading
 import hashlib
 import random
 import string
+from typing import Optional, Tuple
 
 from octoeverywhere.sentry import Sentry
 from octoeverywhere.ostypeidentifier import OsTypeIdentifier
@@ -17,9 +18,9 @@ class UiInjector():
     # This is how often we will check the state of things.
     # Since our checks are light weight, there's no harm in doing this somewhat frequently.
     # We don't have any other way of detecting file changes right now, so this is our only way.
-    c_UpdateCheckIntervalSec = 60
+    c_UpdateCheckIntervalSec = 60 * 5 # 5 minutes
 
-    _Instance = None
+    _Instance:"UiInjector" = None #pyright: ignore[reportAssignmentType]
     _Debug = False
 
 
@@ -29,16 +30,16 @@ class UiInjector():
 
 
     @staticmethod
-    def Get():
+    def Get() -> "UiInjector":
         return UiInjector._Instance
 
 
     def __init__(self, logger:logging.Logger, oeRepoRoot:str):
         self.Logger = logger
         self.OeRepoRoot = oeRepoRoot
-        self.StaticUiJsFilePath = None
-        self.StaticUiCssFilePath = None
-        self.StaticFileHash = None
+        self.StaticUiJsFilePath:Optional[str] = None
+        self.StaticUiCssFilePath:Optional[str] = None
+        self.StaticFileHash:Optional[str] = None
         self.WorkerEvent = threading.Event()
         self.WorkerThread = threading.Thread(target=self._Worker)
         self.WorkerThread.start()
@@ -58,7 +59,7 @@ class UiInjector():
                 self.WorkerEvent.wait(UiInjector.c_UpdateCheckIntervalSec)
 
             except Exception as e:
-                Sentry.Exception("UiInjector worker exception.", e)
+                Sentry.OnException("UiInjector worker exception.", e)
 
 
     # Does the work.
@@ -71,6 +72,9 @@ class UiInjector():
             # Try to find the possible front ends.
             # First, we might have a few places to search.
             searchRootDirs = [ self.GetParentDirectory(self.OeRepoRoot) ]
+
+            # Used on the snapmaker u1 for frontends.
+            searchRootDirs.append("/home/lava/")
 
             # If we are running on the sonic pad or the k1, the path we want to search is different.
             osType = OsTypeIdentifier.DetectOsType()
@@ -98,7 +102,7 @@ class UiInjector():
                             # If successful, make sure our latest js and css files are also there.
                             self._UpdateStaticFilesIntoRootIfNeeded(htmlStaticRoot)
         except Exception as e:
-            Sentry.Exception("UiInjector _ExecuteInjectAndUpdate.", e)
+            Sentry.OnException("UiInjector _ExecuteInjectAndUpdate.", e)
 
 
     # Ensures we can get paths to the static files in our repo and hashes them.
@@ -125,15 +129,14 @@ class UiInjector():
                 if not data:
                     break
                 sha1.update(data)
-        #pylint: disable=consider-using-f-string
-        self.StaticFileHash = "{0}".format(sha1.hexdigest())
+        self.StaticFileHash = f"{sha1.hexdigest()}"
         self.StaticFileHash = self.StaticFileHash[:10]
-        self.Logger.debug("Static UI Files Hash: "+self.StaticFileHash)
+        #self.Logger.debug("Static UI Files Hash: %s", self.StaticFileHash)
 
 
     # Given a known static path, try to inject our UI files.
     # If successful, returns true.
-    def _DoInject(self, staticHtmlRootPath) -> bool:
+    def _DoInject(self, staticHtmlRootPath:str) -> bool:
         indexFilePath = os.path.join(staticHtmlRootPath, "index.html")
         if os.path.exists(indexFilePath) is False:
             self.Logger.info(f"Failed to find index.html at {indexFilePath}")
@@ -161,13 +164,13 @@ class UiInjector():
 
 
     # Searches the text for our special tag.
-    def _FindSpecialJsTagIndex(self, htmlLower) -> int:
+    def _FindSpecialJsTagIndex(self, htmlLower:str) -> int:
         c_jsTagSearch = "src=\"/oe/ui."
         return htmlLower.find(c_jsTagSearch)
 
 
     # Searches the text for our special tag.
-    def _FindSpecialCssTagIndex(self, htmlLower) -> int:
+    def _FindSpecialCssTagIndex(self, htmlLower:str) -> int:
         c_cssTagSearch = "href=\"/oe/ui."
         return htmlLower.find(c_cssTagSearch)
 
@@ -176,7 +179,7 @@ class UiInjector():
     # Returns:
     #   bool - If found
     #   bool - If updated
-    def _UpdateExistingInjections(self, indexHtmlFilePath):
+    def _UpdateExistingInjections(self, indexHtmlFilePath:str) -> Tuple[bool, bool]:
         try:
             # Read the entire file.
             htmlText = None
@@ -211,6 +214,9 @@ class UiInjector():
             currentJsHash = htmlText[jsHashStart:jsHashEnd]
             currentCssHash = htmlText[cssHashStart:cssHashEnd]
 
+            if self.StaticFileHash is None:
+                raise Exception("Static file hash is None, this should never happen.")
+
             # Ensure they are up-to-date
             if self.StaticFileHash == currentJsHash and self.StaticFileHash == currentCssHash:
                 self.Logger.debug("Found existing ui tags and the hash matches the current files.")
@@ -228,14 +234,14 @@ class UiInjector():
             return True, True
         except Exception as e:
             if e is UnicodeDecodeError and "invalid continuation byte" in str(e):
-                self.Logger.warn("_InjectIntoHtml failed, the html file has invalid utf-8")
+                self.Logger.warning("_InjectIntoHtml failed, the html file has invalid utf-8")
             else:
-                Sentry.Exception("_InjectIntoHtml failed for "+indexHtmlFilePath, e)
+                Sentry.OnException("_InjectIntoHtml failed for "+indexHtmlFilePath, e)
         return False, False
 
 
     # Assuming there are no injects, this adds them.
-    def _InjectIntoHtml(self, indexHtmlFilePath) -> bool:
+    def _InjectIntoHtml(self, indexHtmlFilePath:str) -> bool:
         try:
             # Read the entire file.
             htmlText = None
@@ -273,21 +279,21 @@ class UiInjector():
                 with open(indexHtmlFilePath, 'w', encoding="utf-8") as f:
                     f.write(htmlText)
             except PermissionError as e:
-                self.Logger.warn(f"Failed to write to {indexHtmlFilePath}, permission error. This is ok. "+str(e))
+                self.Logger.warning(f"Failed to write to {indexHtmlFilePath}, permission error. This is ok. "+str(e))
                 return False
 
             self.Logger.info("No existing ui tags found, so we added them")
             return True
         except Exception as e:
             if e is UnicodeDecodeError and "invalid continuation byte" in str(e):
-                self.Logger.warn("Failed to inject UI helpers into html, the html file has invalid utf-8")
+                self.Logger.warning("Failed to inject UI helpers into html, the html file has invalid utf-8")
             else:
-                Sentry.Exception("_InjectIntoHtml failed for "+indexHtmlFilePath, e)
+                Sentry.OnException("_InjectIntoHtml failed for "+indexHtmlFilePath, e)
             return False
 
 
     # If it can be found, updates the sw.js file, which is required to get the index refreshed from the service worker.
-    def _UpdateSwHash(self, staticHtmlRootPath) -> None:
+    def _UpdateSwHash(self, staticHtmlRootPath:str) -> None:
         # This logic is specific to how workbox works, but both Mainsail and Fluidd use it.
         # Basically workbox is a PWA service worker lib. It handles site caching and a lot of other stuff.
         # The way it handles caching is that it makes a revision number of all of the files it knows of when the project is build,
@@ -300,7 +306,7 @@ class UiInjector():
         if os.path.exists(swJsFilePath) is False:
             # For the "Creality" frontend "in a folder called frontend" this js file won't be found.
             if "frontend" not in swJsFilePath:
-                self.Logger.warn(f"Failed to find sw.js at {swJsFilePath}")
+                self.Logger.warning(f"Failed to find sw.js at {swJsFilePath}")
             return
         try:
             # Read the entire file.
@@ -326,7 +332,7 @@ class UiInjector():
                     # Check without quotes.
                     indexHtmlStrPos = swTextLower.rfind("url:\"index.html\"", 0, indexHtmlStrPos)
                     if indexHtmlStrPos == -1:
-                        self.Logger.warn("_UpdateSwHash failed to find the right index.html")
+                        self.Logger.warning("_UpdateSwHash failed to find the right index.html")
                         return
                 # The url can be first or last in the json object, so we need to find the object.
                 jsonObjectStart = swTextLower.rfind('{', 0, indexHtmlStrPos)
@@ -348,14 +354,14 @@ class UiInjector():
                 revisionEnd = swTextLower.find('"', revisionStart)
                 if revisionEnd == -1:
                     # Try to find a different index.html string.
-                    self.Logger.warn("_UpdateSwHash failed to find revisionEnd json object.")
+                    self.Logger.warning("_UpdateSwHash failed to find revisionEnd json object.")
                     continue
                 # Success!
                 break
 
             # Sanity check we found something
             if revisionStart is None or revisionEnd is None:
-                self.Logger.warn("_UpdateSwHash broke the while loop with no revision start or end?")
+                self.Logger.warning("_UpdateSwHash broke the while loop with no revision start or end?")
                 return
 
             # Parse the current revision.
@@ -372,11 +378,11 @@ class UiInjector():
 
             self.Logger.info(f"Sw.js [{swJsFilePath}] updated.")
         except Exception as e:
-            Sentry.Exception("_UpdateSwHash failed for "+staticHtmlRootPath, e)
+            Sentry.OnException("_UpdateSwHash failed for "+staticHtmlRootPath, e)
 
 
     # Copies our static files into the html root, where they are expected to be.
-    def _UpdateStaticFilesIntoRootIfNeeded(self, staticHtmlRootPath):
+    def _UpdateStaticFilesIntoRootIfNeeded(self, staticHtmlRootPath:str) -> None:
         try:
             # Ensure the dir exists.
             oeStaticFileRoot = os.path.join(staticHtmlRootPath, "oe")
@@ -388,6 +394,9 @@ class UiInjector():
             cssStaticFileName = f"ui.{self.StaticFileHash}.css"
             jsStaticFilePath = os.path.join(oeStaticFileRoot, jsStaticFileName)
             cssStaticFilePath = os.path.join(oeStaticFileRoot, cssStaticFileName)
+
+            if self.StaticUiCssFilePath is None or self.StaticUiJsFilePath is None:
+                raise Exception("Static UI file paths are None, this should never happen.")
 
             # Ensure the js file exists.
             if os.path.exists(jsStaticFilePath) is False:
@@ -406,9 +415,9 @@ class UiInjector():
                 if f != jsStaticFileName and f != cssStaticFileName:
                     os.remove(os.path.join(oeStaticFileRoot, f))
         except Exception as e:
-            Sentry.Exception("_UpdateStaticFilesIntoRootIfNeeded failed for "+staticHtmlRootPath, e)
+            Sentry.OnException("_UpdateStaticFilesIntoRootIfNeeded failed for "+staticHtmlRootPath, e)
 
 
     # Returns the parent directory of the passed directory or file path.
-    def GetParentDirectory(self, path):
+    def GetParentDirectory(self, path:str) -> str:
         return os.path.abspath(os.path.join(path, os.pardir))

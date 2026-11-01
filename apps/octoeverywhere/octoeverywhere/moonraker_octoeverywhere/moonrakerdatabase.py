@@ -41,7 +41,7 @@ class MoonrakerDatabase:
         self.Logger.debug("Ensure database items posted successfully.")
 
 
-    def _Debug_EnumerateDataBase(self):
+    def _Debug_EnumerateDataBase(self) -> None:
         try:
             result = MoonrakerClient.Get().SendJsonRpcRequest("server.database.list")
             if result.HasError():
@@ -56,6 +56,6 @@ class MoonrakerDatabase:
                 if result.HasError():
                     self.Logger.error("_Debug_EnumerateDataBase failed to get items for "+n+". "+result.GetLoggingErrorStr())
                     return
-                self.Logger.debug("Database namespace "+n+" : "+json.dumps(result.GetResult(), indent=4, separators=(", ", ": ")))
+                self.Logger.debug("Database namespace %s : %s", n, json.dumps(result.GetResult(), indent=4, separators=(", ", ": ")))
         except Exception as e:
-            Sentry.Exception("_Debug_EnumerateDataBase exception.", e)
+            Sentry.OnException("_Debug_EnumerateDataBase exception.", e)

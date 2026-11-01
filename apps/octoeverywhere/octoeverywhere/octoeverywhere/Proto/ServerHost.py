@@ -8,3 +8,5 @@ class ServerHost(object):
     Moonraker = 2
     Bambu = 3
     Elegoo = 4
+    Elegoo2 = 5
+    PrusaLink = 6

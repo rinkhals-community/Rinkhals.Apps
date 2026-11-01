@@ -1,7 +1,5 @@
 # Copyright (C) Dnspython Contributors, see LICENSE for text of ISC license
 
-from typing import Dict
-
 import dns.exception
 
 # pylint: disable=unused-import
@@ -16,7 +14,7 @@ from dns._asyncbackend import (  # noqa: F401  lgtm[py/unused-import]
 
 _default_backend = None
 
-_backends: Dict[str, Backend] = {}
+_backends: dict[str, Backend] = {}
 
 # Allow sniffio import to be disabled for testing purposes
 _no_sniffio = False
@@ -29,10 +27,10 @@ class AsyncLibraryNotFoundError(dns.exception.DNSException):
 def get_backend(name: str) -> Backend:
     """Get the specified asynchronous backend.
 
-    *name*, a ``str``, the name of the backend.  Currently the "trio"
-    and "asyncio" backends are available.
-
-    Raises NotImplementedError if an unknown backend name is specified.
+    :param name: The name of the backend. Currently ``"trio"`` and
+        ``"asyncio"`` are available.
+    :type name: str
+    :raises NotImplementedError: If an unknown backend name is specified.
     """
     # pylint: disable=import-outside-toplevel,redefined-outer-name
     backend = _backends.get(name)

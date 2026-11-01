@@ -1,9 +1,11 @@
 import time
 import logging
 import threading
+from typing import Optional
 
 from ..sentry import Sentry
 from ..repeattimer import RepeatTimer
+from ..interfaces import IPrinterStateReporter, INotificationHandler
 
 # A simple class to watch for the bed to cooldown and then fires a notification.
 class BedCooldownWatcher:
@@ -17,7 +19,7 @@ class BedCooldownWatcher:
     c_maxWatcherRuntimeSec = 60 * 60
 
 
-    def __init__(self, logger:logging.Logger, notificationHandler, printerStateInterface):
+    def __init__(self, logger:logging.Logger, notificationHandler:INotificationHandler, printerStateInterface:IPrinterStateReporter):
 
         # Default the  the bed is under ~100F, we will consider it cooled down.
         # This can be changed in the config by the user.
@@ -26,8 +28,8 @@ class BedCooldownWatcher:
         self.Logger = logger
         self.NotificationHandler = notificationHandler
         self.PrinterStateInterface = printerStateInterface
-        self.Timer = None
-        self.TimerStartSec = None
+        self.Timer:Optional[RepeatTimer] = None
+        self.TimerStartSec:Optional[float] = None
         self.IsFirstTimerRead = True
         self.Lock = threading.Lock()
 
@@ -55,7 +57,7 @@ class BedCooldownWatcher:
 
     # Sets the temp that the bed must be under to be considered cooled down.
     def SetBedCooldownThresholdTemp(self, tempC:float):
-        self.Logger.debug(f"Bed cooldown watcher, setting threshold temp to {tempC}")
+        self.Logger.debug("Bed cooldown watcher, setting threshold temp to %s", tempC)
         self.CooldownThresholdTempC = tempC
 
 
@@ -68,6 +70,10 @@ class BedCooldownWatcher:
 
     def _timerCallback(self):
         try:
+            # Ensure we have a starting time.
+            if self.TimerStartSec is None:
+                self.TimerStartSec = time.time()
+
             # Check if we should stop watching.
             if time.time() - self.TimerStartSec > BedCooldownWatcher.c_maxWatcherRuntimeSec:
                 self.Logger.info("Bed cooldown watcher, max runtime reached. Stopping.")
@@ -87,7 +93,7 @@ class BedCooldownWatcher:
             # Check if we are cooled down yet.
             if bedTempCelsiusFloat > self.CooldownThresholdTempC:
                 # Keep waiting.
-                self.Logger.debug(f"Bed cooldown watcher, bed temp is {bedTempCelsiusFloat}. Waiting...")
+                self.Logger.debug("Bed cooldown watcher, bed temp is %s. Waiting...", bedTempCelsiusFloat)
                 return
 
             # If this is the first read and the bed is already cool, we won't notify.
@@ -104,4 +110,4 @@ class BedCooldownWatcher:
             self.NotificationHandler.OnBedCooldownComplete(bedTempCelsiusFloat)
 
         except Exception as e:
-            Sentry.Exception("BedCooldownWatcher exception in timer callback", e)
+            Sentry.OnException("BedCooldownWatcher exception in timer callback", e)

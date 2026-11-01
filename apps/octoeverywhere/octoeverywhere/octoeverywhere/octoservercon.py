@@ -1,14 +1,17 @@
 import time
 import random
-from datetime import datetime
+import logging
+import threading
+from typing import Any, Dict, List, Optional
 
 from .sentry import Sentry
+from .buffer import Buffer
 from .websocketimpl import Client
 from .octosessionimpl import OctoSession
 from .repeattimer import RepeatTimer
-from .octopingpong import OctoPingPong
-from .threaddebug import ThreadDebug
-from .dnstest import DnsTest
+from .pingpong import PingPong
+from .interfaces import IOctoStream, IOctoEverywhereHost, IPopUpInvoker, IStateChangeHandler, IWebSocketClient, WebSocketOpCode
+from .hostcommon import HostCommon
 
 #
 # This class is responsible for connecting and maintaining a connection to a server.
@@ -16,7 +19,7 @@ from .dnstest import DnsTest
 # Handling disconnects, errors, backoff, and retry logic.
 # Handling RunFor logic which limits how long a server connection stays active.
 #
-class OctoServerCon:
+class OctoServerCon(IOctoStream):
 
     # The RunFor system allows the host to specify how long this server connection should be active.
     # This time includes all valid connections and disconnects. Simply put, after x amount of time, the class
@@ -42,7 +45,7 @@ class OctoServerCon:
 
 
     # Must be > 0 or the increment logic will fail (since it's value X 2)
-    # We want to keep this low though, so incase the connection closes due to a OctoStream error,
+    # We want to keep this low though, so in case the connection closes due to a OctoStream error,
     # we will reconnect quickly again. Remember we always add the random reconnect time as well.
     WsConnectBackOffSec_Default = 1
     # We always add a random second count to the reconnect sleep to add variance. This is the min value.
@@ -53,13 +56,32 @@ class OctoServerCon:
     WsConnectRandomMaxSec = 30
 
 
-    def __init__(self, host, endpoint, isPrimaryConnection, shouldUseLowestLatencyServer, printerId, privateKey, logger, uiPopupInvoker, statusChangeHandler, pluginVersion, runForSeconds, summonMethod, serverHostType, isCompanion):
+    def __init__(
+                self,
+                host:IOctoEverywhereHost,
+                endpoint:str,
+                isPrimaryConnection:bool,
+                shouldUseLowestLatencyServer:bool,
+                printerId:str,
+                privateKey:str,
+                logger:logging.Logger,
+                uiPopupInvoker:IPopUpInvoker,
+                statusChangeHandler:Optional[IStateChangeHandler],
+                pluginVersion:str,
+                runForSeconds:int,
+                summonMethod:int,
+                serverHostType:int,
+                isCompanion:bool,
+                isDockerContainer:bool,
+                conProperties:Optional[Dict[str, Any]] = None
+                ):
         self.ProtocolVersion = 1
-        self.OctoSession = None
+        self.OctoSession:Optional[OctoSession] = None
+        self.StateLock = threading.Lock()
         self.IsDisconnecting = False
         self.IsWsConnecting = False
         self.ActiveSessionId = 0
-        self.Ws = None
+        self.Ws:Optional[IWebSocketClient] = None
         self.WsConnectBackOffSec = self.WsConnectBackOffSec_Default
         self.NoWaitReconnect = False
 
@@ -73,6 +95,8 @@ class OctoServerCon:
         self.SummonMethod = summonMethod
         self.ServerHostType = serverHostType
         self.IsCompanion = isCompanion
+        self.IsDockerContainer = isDockerContainer
+        self.ConProperties = conProperties
 
         self.DefaultEndpoint = endpoint
         self.CurrentEndpoint = self.DefaultEndpoint
@@ -81,30 +105,30 @@ class OctoServerCon:
 
         # Check that the settings are valid..
         if self.ShouldUseLowestLatencyServer and self.IsPrimaryConnection is False:
-            self.Logger.Error("Non primary OctoServerCon cannot use ShouldUseLowestLatencyServer, since it might not connect to where it was requested.")
+            self.Logger.error("Non primary OctoServerCon cannot use ShouldUseLowestLatencyServer, since it might not connect to where it was requested.")
 
         # If this is the primary connection, register for the latency data complete callback.
         # This callback wil only fire on the very first time the plugin is ran.
         if self.IsPrimaryConnection:
-            OctoPingPong.Get().RegisterPluginFirstRunLatencyCompleteCallback(self.OnFirstRunLatencyDataComplete)
+            PingPong.Get().RegisterPluginFirstRunLatencyCompleteCallback(self.OnFirstRunLatencyDataComplete)
 
         # Note! Will be None for secondary connections!
         self.StatusChangeHandler = statusChangeHandler
 
         # Setup RunFor
         self.RunForSeconds = runForSeconds
-        self.CreationTime = datetime.now()
-        self.LastUserActivityTime = self.CreationTime
+        self.CreationTimeSec = time.time()
+        self.LastUserActivityTimeSec = self.CreationTimeSec
 
 
     # Returns a printable string that says the endpoint and the active session id.
-    def GetConnectionString(self):
+    def GetConnectionString(self) -> str:
         # Use the currently in use endpoint.
-        return str(self.CurrentEndpoint)+"["+str(self.ActiveSessionId)+"]"
+        return f"{self.CurrentEndpoint}[{self.ActiveSessionId}]"
 
 
     # Returns the endpoint to use, be it the default or the lowest latency.
-    def GetEndpoint(self):
+    def GetEndpoint(self) -> str:
         newEndpoint = None
 
         # Check if we can use the lowest latency server.
@@ -113,9 +137,9 @@ class OctoServerCon:
             # This will happen if we tried to connect to the lowest latency server and failed.
             if self.TempDisableLowestLatencyEndpoint is False:
                 # Check if we have a known lowest latency server.
-                lowestLatencySub = OctoPingPong.Get().GetLowestLatencyServerSub()
+                lowestLatencySub = PingPong.Get().GetLowestLatencyServerSub()
                 if lowestLatencySub is not None:
-                    newEndpoint = "wss://"+lowestLatencySub+".octoeverywhere.com/octoclientws"
+                    newEndpoint = "wss://"+lowestLatencySub+".octoeverywhere.com/"+HostCommon.c_OctoEverywhereOctoClientEndpointBase
                     self.Logger.info("Attempting to use lowest latency server: "+newEndpoint)
 
         # Otherwise use the default endpoint.
@@ -126,7 +150,7 @@ class OctoServerCon:
         return self.CurrentEndpoint
 
 
-    def OnOpened(self, ws):
+    def OnOpened(self, ws:IWebSocketClient) -> None:
         self.Logger.info("Connected To OctoEverywhere, server con "+self.GetConnectionString()+". Starting handshake...")
 
         # On success make the lowest latency endpoint possible again, since we successfully connected to it or the primary.
@@ -137,18 +161,19 @@ class OctoServerCon:
         # Also after the open call has been successful, ensure the disconnecting flag is cleared.
         # This ensures any races between the disconnect function and a new connection won't result in the
         # flag getting stuck to being set.
-        self.IsDisconnecting = False
+        with self.StateLock:
+            self.IsDisconnecting = False
 
         # Create a new session for this websocket connection.
-        self.OctoSession = OctoSession(self, self.Logger, self.PrinterId, self.PrivateKey, self.IsPrimaryConnection, self.ActiveSessionId, self.UiPopupInvoker, self.PluginVersion, self.ServerHostType, self.IsCompanion)
+        self.OctoSession = OctoSession(self, self.Logger, self.PrinterId, self.PrivateKey, self.IsPrimaryConnection, self.ActiveSessionId, self.UiPopupInvoker, self.PluginVersion, self.ServerHostType, self.IsCompanion, self.IsDockerContainer, self.ConProperties)
         self.OctoSession.StartHandshake(self.SummonMethod)
 
 
-    def OnClosed(self, ws):
+    def OnClosed(self, ws:IWebSocketClient):
         self.Logger.info("Service websocket closed.")
 
 
-    def OnError(self, ws, err):
+    def OnError(self, ws:IWebSocketClient, err:Exception):
         # If this error happened while we were connecting, set the TempDisableLowestLatencyEndpoint to true to block the lowest latency endpoint.
         # This is because the host might not be available temporally, so we will use the default.
         if self.IsWsConnecting:
@@ -156,37 +181,38 @@ class OctoServerCon:
             self.Logger.info("Blocking lowest latency endpoint, since we failed while the WS connect was happening.")
         self.Logger.error("OctoEverywhere Ws error: " +str(err))
 
-        # TODO - remove this code after debugging some DNS issues.
-        # We added this logic to do an active test of the DNS names.
-        if "failure in name resolution" in str(err):
-            dnsTest = DnsTest(self.Logger)
-            dnsTest.RunTestSync()
 
-
-    def OnMsg(self, ws, msg):
+    def OnData(self, ws:IWebSocketClient, msg:Buffer, opCode:WebSocketOpCode):
         # When we get any message, consider it user activity.
-        self.LastUserActivityTime = datetime.now()
+        self.LastUserActivityTimeSec = time.time()
 
-        if self.OctoSession :
+        if self.OctoSession:
             # Grab the session id now, since it can change by the time this call is done.
             # For example, if this call creates an error that ends up shutting down the ws.
             localSessionId = self.ActiveSessionId
             try:
                 self.OctoSession.HandleMessage(msg)
             except Exception as e:
-                Sentry.Exception("Exception in OctoSession.HandleMessage " + self.GetConnectionString() + ".", e)
+                Sentry.OnException("Exception in OctoSession.HandleMessage " + self.GetConnectionString() + ".", e)
                 self.OnSessionError(localSessionId, 0)
 
+            # Do a quick watch dog check to ensure messages aren't hanging the main websocket thread.
+            deltaSec = time.time() - self.LastUserActivityTimeSec
+            if deltaSec > 0.100:
+                self.Logger.warning("It took " + str(deltaSec) + " seconds to process the last message. This might mean the main websocket thread is hung. Last message received was opcode "+str(opCode)+".")
 
-    def OnHandshakeComplete(self, sessionId, octoKey, connectedAccounts):
-        if sessionId != self.ActiveSessionId:
+
+    def OnHandshakeComplete(self, sessionId:int, octoKey:str, connectedAccounts:List[str]):
+        # Use lock when reading ActiveSessionId to prevent race condition with RunBlocking
+        with self.StateLock:
+            currentSessionId = self.ActiveSessionId
+        if sessionId != currentSessionId:
             self.Logger.info("Got a handshake complete for an old session, "+str(sessionId)+", ignoring.")
             return
 
         self.Logger.info("Handshake complete, server con "+self.GetConnectionString()+", successfully connected to OctoEverywhere!")
 
         # Only primary connections have this handler.
-        # For secondary connections, octoKey and connectedAccounts will be None.
         if self.StatusChangeHandler is not None:
             self.StatusChangeHandler.OnPrimaryConnectionEstablished(octoKey, connectedAccounts)
 
@@ -195,8 +221,11 @@ class OctoServerCon:
 
 
     # Called by the session if we should kill this socket.
-    def OnSessionError(self, sessionId, backoffModifierSec):
-        if sessionId != self.ActiveSessionId:
+    def OnSessionError(self, sessionId:int, backoffModifierSec:int):
+        # Use lock when reading ActiveSessionId to prevent race condition with RunBlocking
+        with self.StateLock:
+            currentSessionId = self.ActiveSessionId
+        if sessionId != currentSessionId:
             self.Logger.info("Got a session error callback for an old session, "+str(sessionId)+", ignoring.")
             return
 
@@ -230,7 +259,7 @@ class OctoServerCon:
     # A summon request can be sent by the services if the user is connected to a different
     # server than we are connected to. In such a case we will multi connect a temp non-primary connection
     # to the request server as well, that will be to service the user.
-    def OnSummonRequest(self, sessionId, summonConnectUrl, summonMethod):
+    def OnSummonRequest(self, sessionId:int, summonConnectUrl:str, summonMethod:int):
         self.Host.OnSummonRequest(summonConnectUrl, summonMethod)
 
 
@@ -238,19 +267,23 @@ class OctoServerCon:
         # Only close the OctoStream once, even though we might get multiple calls.
         # This can happen because disconnecting might case proxy socket errors, for example
         # if we closed all of the sockets locally and then the server tries to close one.
-        if self.IsDisconnecting is False:
-            self.IsDisconnecting = True
+        # Use lock to prevent race condition where two threads could both enter the cleanup code.
+        shouldCloseWebStreams = False
+        with self.StateLock:
+            if self.IsDisconnecting is False:
+                self.IsDisconnecting = True
+                shouldCloseWebStreams = True
+            else:
+                self.Logger.info("OctoServerCon Disconnect was called, but we are skipping the CloseAllWebStreamsAndDisable because it has already been done.")
+
+        if shouldCloseWebStreams:
             # Try to close all of the sockets before we disconnect, so we send the messages.
             # It's important to try catch this logic to ensure we always end up calling close on the current websocket.
             try:
                 if self.OctoSession:
                     self.OctoSession.CloseAllWebStreamsAndDisable()
             except Exception as e:
-                Sentry.Exception("Exception when calling CloseAllWebStreamsAndDisable from Disconnect.", e)
-        else:
-            self.Logger.info("OctoServerCon Disconnect was called, but we are skipping the CloseAllWebStreamsAndDisable because it has already been done.")
-            # TODO - Remove this after we figure out this websocket lib dead lock bug.
-            ThreadDebug.DoThreadDumpLogout(self.Logger)
+                Sentry.OnException("Exception when calling CloseAllWebStreamsAndDisable from Disconnect.", e)
 
         # On every disconnect call, try to disconnect the websocket. We do this because we have seen that for some reason calling Close doesn't seem
         # to always actually cause the websocket to close and cause RunUntilClosed to return. Thus we hope if we keep trying to close it, maybe it will.
@@ -265,23 +298,24 @@ class OctoServerCon:
 
 
     # Returns if the RunFor time has expired, including considering user activity.
-    def IsRunForTimeComplete(self):
+    def IsRunForTimeComplete(self) -> bool:
         # Check if we are past our RunFor time.
-        hasRanFor = datetime.now() - self.CreationTime
-        if hasRanFor.total_seconds() > self.RunForSeconds:
+        nowSec = time.time()
+        hasRanForSec = nowSec - self.CreationTimeSec
+        if hasRanForSec > self.RunForSeconds:
             # Check the last user activity.
-            timeSinceUserActivity = datetime.now() - self.LastUserActivityTime
-            if timeSinceUserActivity.total_seconds() > self.RunForMinTimeSinceLastUserActivitySec:
+            timeSinceUserActivitySec = nowSec - self.LastUserActivityTimeSec
+            if timeSinceUserActivitySec > self.RunForMinTimeSinceLastUserActivitySec:
                 # We have passed the RunFor time and the min amount of time since the last user activity.
-                self.Logger.info("Server con "+self.GetConnectionString()+" IS past it's RunFor time "+str(hasRanFor)+" and IS past it's time since last user activity "+str(timeSinceUserActivity))
+                self.Logger.info("Server con "+self.GetConnectionString()+" IS past it's RunFor time "+str(hasRanForSec)+" and IS past it's time since last user activity "+str(timeSinceUserActivitySec))
                 return True
             else:
                 # Check how long we have been waiting on user activity.
-                timeSinceRunForShouldHaveEnded = hasRanFor.total_seconds() - self.RunForSeconds
-                if timeSinceRunForShouldHaveEnded > self.RunForMaxUserActivityWaitTimeSec:
-                    self.Logger.info("Server con "+self.GetConnectionString()+" IS past it's RunFor time "+str(hasRanFor)+", but IS NOT past it's time since last user activity "+str(timeSinceUserActivity) + " BUT we have exceeded the max user activity time.")
+                timeSinceRunForShouldHaveEndedSec = hasRanForSec - self.RunForSeconds
+                if timeSinceRunForShouldHaveEndedSec > self.RunForMaxUserActivityWaitTimeSec:
+                    self.Logger.info("Server con "+self.GetConnectionString()+" IS past it's RunFor time "+str(hasRanForSec)+", but IS NOT past it's time since last user activity "+str(timeSinceUserActivitySec) + " BUT we have exceeded the max user activity time.")
                     return True
-                self.Logger.info("Server con "+self.GetConnectionString()+" IS past it's RunFor time "+str(hasRanFor)+", but IS NOT past it's time since last user activity "+str(timeSinceUserActivity))
+                self.Logger.info("Server con "+self.GetConnectionString()+" IS past it's RunFor time "+str(hasRanForSec)+", but IS NOT past it's time since last user activity "+str(timeSinceUserActivitySec))
         return False
 
 
@@ -292,7 +326,7 @@ class OctoServerCon:
                 self.Logger.info("Server con "+self.GetConnectionString()+" RunFor is complete and will be disconnected.")
                 self.Disconnect()
             except Exception as e:
-                Sentry.Exception("Exception in OnRunForTimerCallback during disconnect. "+self.GetConnectionString()+".", e)
+                Sentry.OnException("Exception in OnRunForTimerCallback during disconnect. "+self.GetConnectionString()+".", e)
 
 
     # A callback fired only for the primary connection and only when the first latency data is ready after the plugin's first run.
@@ -304,15 +338,12 @@ class OctoServerCon:
             self.NoWaitReconnect = True
             self.Disconnect()
         except Exception as e:
-            Sentry.Exception("Exception in OnFirstRunLatencyDataComplete during disconnect. "+self.GetConnectionString()+".", e)
+            Sentry.OnException("Exception in OnFirstRunLatencyDataComplete during disconnect. "+self.GetConnectionString()+".", e)
 
 
     def RunBlocking(self):
-        runForTimeChecker = None
-        try:
-            # Start the RunFor time checker.
-            # This will always be stopped in the finally before we exit this function.
-            runForTimeChecker = RepeatTimer(self.Logger, "OctoServer-RunForTimer", self.RunForTimeCheckerIntervalSec, self.OnRunForTimerCallback)
+        # Start the RunFor time checker.
+        with RepeatTimer(self.Logger, "OctoServer-RunForTimer", self.RunForTimeCheckerIntervalSec, self.OnRunForTimerCallback) as runForTimeChecker:
             runForTimeChecker.start()
 
             while 1:
@@ -322,7 +353,8 @@ class OctoServerCon:
                     # We do this just before connects, because this flag weeds out all of the error noise
                     # that might happen while we are performing a disconnect. But at this time, all of that should be
                     # 100% done now.
-                    self.IsDisconnecting = False
+                    with self.StateLock:
+                        self.IsDisconnecting = False
 
                     # Set the connecting flag, so we know if we are in the middle of a ws connect.
                     # This is set to false when the websocket is established.
@@ -330,14 +362,16 @@ class OctoServerCon:
 
                     # Since there can be old pending actions from old sessions (session == one websocket connection).
                     # We will keep track of the current session, so old errors from sessions don't effect the new one.
-                    self.ActiveSessionId += 1
+                    # Use lock to prevent race with OnHandshakeComplete and OnSessionError.
+                    with self.StateLock:
+                        self.ActiveSessionId += 1
 
                     # Get the new endpoint. This will either be the default endpoint or the lowest latency endpoint.
                     endpoint = self.GetEndpoint()
 
                     # Connect to the service.
                     # When this returns, make sure it's fully closed.
-                    self.Ws = Client(endpoint, self.OnOpened, self.OnMsg, None, self.OnClosed, self.OnError)
+                    self.Ws = Client(url=endpoint, onWsOpen=self.OnOpened, onWsData=self.OnData, onWsClose=self.OnClosed, onWsError=self.OnError)
                     with self.Ws:
                         self.Logger.info("Attempting to talk to OctoEverywhere, server con "+self.GetConnectionString() + " wsId:"+self.GetWsId(self.Ws))
                         self.Ws.RunUntilClosed()
@@ -351,7 +385,7 @@ class OctoServerCon:
 
                 except Exception as e:
                     self.TempDisableLowestLatencyEndpoint = True
-                    Sentry.Exception("Exception in OctoEverywhere's main RunBlocking function. server con:"+self.GetConnectionString()+".", e)
+                    Sentry.OnException("Exception in OctoEverywhere's main RunBlocking function. server con:"+self.GetConnectionString()+".", e)
                     time.sleep(20)
 
                 # On each disconnect, check if the RunFor time is now done.
@@ -379,20 +413,17 @@ class OctoServerCon:
                     # If we have failed and are waiting over 3 minutes, we will return which will check the server
                     # protocol again, since it might have changed.
                     return
-        finally:
-            # Before we exit this function, we need to always stop the repeat timer we started.
-            if runForTimeChecker is not None:
-                runForTimeChecker.Stop()
 
 
-    def SendMsg(self, buffer:bytearray, msgStartOffsetBytes:int, msgSize:int):
+    def SendMsg(self, buffer:Buffer, msgStartOffsetBytes:int, msgSize:int) -> None:
         # When we send any message, consider it user activity.
-        self.LastUserActivityTime = datetime.now()
-        self.Ws.Send(buffer, msgStartOffsetBytes, msgSize, True)
-
-
-    def GetWsId(self, ws):
+        self.LastUserActivityTimeSec = time.time()
         ws = self.Ws
+        if ws is not None:
+            ws.Send(buffer, msgStartOffsetBytes, msgSize, True)
+
+
+    def GetWsId(self, ws:Optional[IWebSocketClient]) -> str:
         if ws is not None:
             return str(id(ws))
         return "UNKNOWN"

@@ -1,7 +1,7 @@
 #!/bin/sh
 
 # From a Windows machine:
-#   docker run --rm -it -v .\build:/build -v .\files:/files -v .\apps:/apps ghcr.io/jbatonnet/rinkhals/build /build/build-all-swus.sh
+#   docker run --rm -it -v .\build:/build -v .\files:/files -v .\apps:/apps ghcr.io/rinkhals-community/rinkhals/build /build/build-all-swus.sh
 
 
 set -e

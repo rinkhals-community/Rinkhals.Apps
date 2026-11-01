@@ -19,13 +19,12 @@ class Paths:
 
     # For the K2, this is the path we know we will find the printer configs and printer log locations.
     # They will be the standard Klipper setup, such as printer_data/config, printer_data/logs, etc.
-    # TODO - We should put files in /mnt/UDISK since it has more space, but the default moonraker and such files are in /usr/share/moonraker/ etc.
     CrealityOsUserDataPath_K2 = "/mnt/UDISK"
 
     # Returns the correct service file folder path based on the OS
     @staticmethod
-    def GetServiceFileFolderPath(context) -> str:
-        if context.IsCrealityOs():
+    def GetServiceFileFolderPath(context) -> str: #pyright: ignore[reportUnknownParameterType]
+        if context.IsCrealityOs(): #pyright: ignore[reportUnknownMemberType]
             return Paths.CrealityOsServiceFilePath
         else:
             return Paths.SystemdServiceFilePath

@@ -17,7 +17,10 @@ start() {
     cd "$APP_ROOT"
 
     chmod +x cloud2lan-supervisor.sh
-    python3 ./mode_watchdog.py >> "${RINKHALS_LOGS:-/tmp/rinkhals}/app-cloud2lan-bridge.log" 2>&1 &
+    # The watchdog is long-lived, so it must not inherit the caller's fds. When
+    # start is invoked from the on-screen menu (rinkhals-ui.py), an inherited
+    # pipe stays open and freezes the touchscreen
+    python3 ./mode_watchdog.py </dev/null >> "${RINKHALS_LOGS:-/tmp/rinkhals}/app-cloud2lan-bridge.log" 2>&1 &
 }
 stop() {
     # Kill from the top down — watchdog kills its children via process group

@@ -31,14 +31,14 @@ def _validate_float_string(what):
     if what.isdigit():
         return
     try:
-        (left, right) = what.split(b".")
+        left, right = what.split(b".")
     except ValueError:
         raise dns.exception.FormError
     if left == b"" and right == b"":
         raise dns.exception.FormError
-    if not left == b"" and not left.decode().isdigit():
+    if not left == b"" and not left.isdigit():
         raise dns.exception.FormError
-    if not right == b"" and not right.decode().isdigit():
+    if not right == b"" and not right.isdigit():
         raise dns.exception.FormError
 
 
@@ -64,9 +64,9 @@ class GPOS(dns.rdata.Rdata):
         _validate_float_string(latitude)
         _validate_float_string(longitude)
         _validate_float_string(altitude)
-        self.latitude = latitude
-        self.longitude = longitude
-        self.altitude = altitude
+        self.latitude: bytes = latitude
+        self.longitude: bytes = longitude
+        self.altitude: bytes = altitude
         flat = self.float_latitude
         if flat < -90.0 or flat > 90.0:
             raise dns.exception.FormError("bad latitude")
@@ -74,7 +74,7 @@ class GPOS(dns.rdata.Rdata):
         if flong < -180.0 or flong > 180.0:
             raise dns.exception.FormError("bad longitude")
 
-    def to_text(self, origin=None, relativize=True, **kw):
+    def to_styled_text(self, style: dns.rdata.RdataStyle) -> str:
         return (
             f"{self.latitude.decode()} {self.longitude.decode()} "
             f"{self.altitude.decode()}"

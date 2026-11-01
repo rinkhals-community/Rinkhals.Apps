@@ -1,0 +1,59 @@
+name: Auto-bump pinned upstream versions
+
+# Weekly job that opens version-bump PRs for catalog apps whose pinned upstream
+# version has drifted from current. The actual bump logic lives in
+# scripts/auto-bump-versions.sh - this workflow is just a thin runner so the
+# script also works locally with `--dry-run`.
+
+on:
+  schedule:
+    # Mondays 09:00 UTC. Avoid weekends so maintainers see PRs during their
+    # working week, not first thing Saturday.
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (no branches, commits, or PRs)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write       # push branches
+  pull-requests: write  # open PRs
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # script resets to origin/master between iterations
+
+      # The bump rebuilds app payloads in Docker, including armv7 Python
+      # packages, so it needs the registry and ARM emulation
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Configure git identity
+        run: |
+          git config user.name  "rinkhals-bot"
+          git config user.email "bot@rinkhals-community.invalid"
+
+      - name: Run auto-bump
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            bash scripts/auto-bump-versions.sh --dry-run
+          else
+            bash scripts/auto-bump-versions.sh
+          fi

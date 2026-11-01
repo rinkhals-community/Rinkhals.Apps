@@ -4,14 +4,14 @@ import base64
 
 from .Util import Util
 from .Logging import Logger
-from .Context import Context
+from .Context import Context, ElegooPrinterProtocols
 from .Context import OsTypes
 
 
 # Responsible for creating, running, and ensuring the service is installed and running.
 class Service:
 
-    def Install(self, context:Context):
+    def Install(self, context:Context) -> None:
         Logger.Header("Setting Up OctoEverywhere's System Service...")
 
         # We always re-write the service file, to make sure it's current.
@@ -49,7 +49,12 @@ class Service:
         if context.IsBambuSetup:
             moduleNameToRun = "bambu_octoeverywhere"
         elif context.IsElegooSetup:
-            moduleNameToRun = "elegoo_octoeverywhere"
+            if context.ElegooPrinterProtocol == ElegooPrinterProtocols.Cc2:
+                moduleNameToRun = "elegoo_cc2_octoeverywhere"
+            else:
+                moduleNameToRun = "elegoo_octoeverywhere"
+        elif context.IsPrusaLinkSetup:
+            moduleNameToRun = "prusalink_octoeverywhere"
 
         # Base on the OS type, install the service differently
         if context.OsType == OsTypes.Debian:
@@ -63,7 +68,7 @@ class Service:
 
 
     # Install for debian setups
-    def _InstallDebian(self, context:Context, argsJsonBase64:str, moduleNameToRun:str):
+    def _InstallDebian(self, context:Context, argsJsonBase64:str, moduleNameToRun:str) -> None:
         serviceName = "Moonraker"
         optionalAfter = "moonraker.service"
         if context.IsBambuSetup:
@@ -71,6 +76,9 @@ class Service:
             optionalAfter = ""
         if context.IsElegooSetup:
             serviceName = "Elegoo Printers"
+            optionalAfter = ""
+        if context.IsPrusaLinkSetup:
+            serviceName = "Prusa Link"
             optionalAfter = ""
         s = f'''\
     # OctoEverywhere For {serviceName}
@@ -87,6 +95,9 @@ class Service:
     Type=simple
     User={context.UserName}
     WorkingDirectory={context.RepoRootFolder}
+    # We added these to try to control PY's memory usage on low memory systems.
+    Environment="MALLOC_TRIM_THRESHOLD_=65536"
+    Environment="MALLOC_ARENA_MAX=2"
     ExecStart={context.VirtualEnvPath}/bin/python3 -m {moduleNameToRun} "{argsJsonBase64}"
     Restart=always
     # Since we will only restart on a fatal Logger.Error, set the restart time to be a bit higher, so we don't spin and spam.
@@ -113,7 +124,7 @@ class Service:
 
 
     # Install for sonic pad setups.
-    def _InstallSonicPadAndK2(self, context:Context, argsJsonBase64:str, moduleNameToRun:str):
+    def _InstallSonicPadAndK2(self, context:Context, argsJsonBase64:str, moduleNameToRun:str) -> None:
         # First, write the service file
         # Notes:
         #   Set start to be 66, so we start after Moonraker.
@@ -133,8 +144,9 @@ OOM_ADJ=-17
 
 start_service() {{
     procd_open_instance
-    procd_set_param env HOME=/root
-    procd_set_param env PYTHONPATH={context.RepoRootFolder}
+    # procd_set_param replaces an existing parameter. Keep all environment
+    # variables in one call so later values don't discard PYTHONPATH.
+    procd_set_param env HOME=/root PYTHONPATH={context.RepoRootFolder} MALLOC_TRIM_THRESHOLD_=65536 MALLOC_ARENA_MAX=2
     procd_set_param oom_adj $OOM_ADJ
     procd_set_param command {context.VirtualEnvPath}/bin/python3 -m {moduleNameToRun} "{argsJsonBase64}"
     procd_close_instance
@@ -160,7 +172,7 @@ start_service() {{
 
 
     # Install for k1 and k1 max
-    def _InstallK1(self, context:Context, argsJsonBase64:str, moduleNameToRun:str):
+    def _InstallK1(self, context:Context, argsJsonBase64:str, moduleNameToRun:str)  -> None:
         # On the K1 start-stop-daemon is used to run services.
         # But, to launch our service, we have to use the py module run, which requires a environment var to be
         # set for PYTHONPATH. The command can't set the env, so we write this script to our store, where we then run
@@ -188,7 +200,10 @@ exit $?
 PID_FILE=/var/run/octoeverywhere.pid
 
 start() {
-        HOME=/root start-stop-daemon -S -q -b -m -p $PID_FILE --exec '''+runScriptFilePath+'''
+    # We added these to try to control PY's memory usage on low memory systems.
+    export MALLOC_TRIM_THRESHOLD_=65536
+    export MALLOC_ARENA_MAX=2
+    HOME=/root start-stop-daemon -S -q -b -m -p $PID_FILE --exec '''+runScriptFilePath+'''
 }
 stop() {
         start-stop-daemon -K -q -p $PID_FILE
@@ -249,7 +264,7 @@ exit $?
 
 
     @staticmethod
-    def RestartK1Service(serviceFilePath:str, throwOnBadReturnCode = True):
+    def RestartK1Service(serviceFilePath:str, throwOnBadReturnCode = True)  -> None:
         # These some times fail depending on the state of the service, which is fine.
         Util.RunShellCommand(f"{serviceFilePath} stop", False)
 
@@ -261,7 +276,7 @@ exit $?
 
 
     @staticmethod
-    def RestartSonicPadService(serviceFilePath:str, throwOnBadReturnCode = True):
+    def RestartSonicPadService(serviceFilePath:str, throwOnBadReturnCode = True)  -> None:
         # These some times fail depending on the state of the service, which is fine.
         Util.RunShellCommand(f"{serviceFilePath} stop", False)
         Util.RunShellCommand(f"{serviceFilePath} reload", False)
@@ -270,7 +285,7 @@ exit $?
 
 
     @staticmethod
-    def RestartDebianService(serviceName:str, throwOnBadReturnCode = True):
+    def RestartDebianService(serviceName:str, throwOnBadReturnCode = True)  -> None:
         (returnCode, output, errorOut) = Util.RunShellCommand("systemctl stop "+serviceName, throwOnBadReturnCode)
         if returnCode != 0:
             Logger.Warn(f"Service {serviceName} might have failed to stop. Output: {output} Error: {errorOut}")

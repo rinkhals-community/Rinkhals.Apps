@@ -1,14 +1,28 @@
+import json
+import logging
+from typing import Any, Dict, Optional, Union, List, cast
+
 from octoeverywhere.commandhandler import CommandResponse, CommandHandler
+from octoeverywhere.filesystemcommands import FileSystemCommandHelper
+from octoeverywhere.httpresult import HttpResult
+from octoeverywhere.materialsystem import MaterialSystemHelper
+from octoeverywhere.interfaces import IPlatformCommandHandler, FEATURE_LIGHT_CONTROL, FEATURE_HOMING, ConnectionInfo
+from octoeverywhere.WebStream.uploadbody import UploadBody
+from linux_host.config import Config
 
 from .elegooclient import ElegooClient
 from .elegoomodels import PrinterState
 from .elegoofilemanager import ElegooFileManager
 
 # This class implements the Platform Command Handler Interface
-class ElegooCommandHandler:
+class ElegooCommandHandler(IPlatformCommandHandler):
 
-    def __init__(self, logger) -> None:
+    c_ChamberLightName = "chamber"
+
+
+    def __init__(self, logger:logging.Logger, config:Config) -> None:
         self.Logger = logger
+        self.Config = config
 
 
     # !! Platform Command Handler Interface Function !!
@@ -23,7 +37,7 @@ class ElegooCommandHandler:
     # Returning None will result in the "Printer not connected" state.
     # Or one of the CommandHandler.c_CommandError_... ints can be returned, which will be sent as the result.
     #
-    def GetCurrentJobStatus(self):
+    def GetCurrentJobStatus(self, includeMaterialSystem:bool=False) -> Union[int, None, Dict[str, Any]]:
         # Try to get the current state.
         printerState = ElegooClient.Get().GetState()
 
@@ -58,6 +72,9 @@ class ElegooCommandHandler:
         # Get the time so far and time remaining
         durationSec = printerState.DurationSec if printerState.DurationSec is not None else 0
         timeLeftSec = printerState.GetTimeRemainingSec()
+        if timeLeftSec is not None:
+            # In some system buggy cases, the time left can be super high and won't fit into a int32, so we cap it.
+            timeLeftSec = min(timeLeftSec, 2147483600)
 
         # Either of these can be set, or both or none.
         filamentUsedMm = 0
@@ -78,17 +95,23 @@ class ElegooCommandHandler:
         chamberActual = printerState.ChamberActual if printerState.ChamberActual is not None else 0.0
         chamberTarget = printerState.ChamberTarget if printerState.ChamberTarget is not None else 0.0
 
+        # Get light status.
+        # None if there are no lights, otherwise a list of lights and their status.
+        lights: Optional[List[Dict[str, Any]]] = None
+        if printerState.ChamberLightOn is not None:
+            lights = [ {"Name": self.c_ChamberLightName, "On": printerState.ChamberLightOn} ]
+
         # Build the object and return.
-        return {
+        result:Dict[str, Any] = {
             "State": state,
             "SubState": subState_CanBeNone,
             "Error": errorStr_CanBeNone,
+            "Lights": lights,
             "CurrentPrint":
             {
                 "Progress" : progress,
                 "DurationSec" : durationSec,
-                # In some system buggy cases, the time left can be super high and won't fit into a int32, so we cap it.
-                "TimeLeftSec" : min(timeLeftSec, 2147483600),
+                "TimeLeftSec" : timeLeftSec,
                 "FileName" : fileName,
                 "EstTotalFilUsedMm" : filamentUsedMm,
                 "EstTotalFilWeightMg" : filamentWeightMg,
@@ -104,24 +127,45 @@ class ElegooCommandHandler:
                 }
             }
         }
+        if includeMaterialSystem:
+            result["MaterialSystem"] = MaterialSystemHelper.BuildOneToOne([
+                MaterialSystemHelper.BuildTool(0, "Tool 0", True, hotendActual, hotendTarget)
+            ], ["External Spool"])
+        return result
 
 
     # !! Platform Command Handler Interface Function !!
     # This must return the platform version as a string.
-    def GetPlatformVersionStr(self):
+    def GetPlatformVersionStr(self) -> str:
         # TODO - Ideally we would get this from teh attributes object, but there's nothing in there
         # right now we know IDs the printer.
         return "Elegoo-Centauri"
 
 
     # !! Platform Command Handler Interface Function !!
+    # Returns an int with the supported feature flags for this platform, such as FEATURE_LIGHT_CONTROL, etc
+    def GetSupportedFeatureFlags(self) -> int:
+        # These are all we support right now.
+        return 0 | FEATURE_LIGHT_CONTROL | FEATURE_HOMING
+
+
+    # !! Platform Command Handler Interface Function !!
+    # Returns the current connection info from the config.
+    def GetConnectionInfo(self) -> ConnectionInfo:
+        return ConnectionInfo(
+            self.Config.GetStr(Config.SectionCompanion, Config.CompanionKeyIpOrHostname, None),
+            self.Config.GetInt(Config.SectionCompanion, Config.CompanionKeyPort, None),
+        )
+
+
+    # !! Platform Command Handler Interface Function !!
     # This must check that the printer state is valid for the pause and the plugin is connected to the host.
     # If not, it must return the correct two error codes accordingly.
     # This must return a CommandResponse.
-    def ExecutePause(self, smartPause, suppressNotificationBool, disableHotendBool, disableBedBool, zLiftMm, retractFilamentMm, showSmartPausePopup) -> CommandResponse:
+    def ExecutePause(self, smartPause:bool, suppressNotificationBool:bool, disableHotendBool:bool, disableBedBool:bool, zLiftMm:int, retractFilamentMm:int, showSmartPausePopup:bool) -> CommandResponse:
         result = ElegooClient.Get().SendRequest(129)
         if result.HasError():
-            return CommandResponse.Error(400, "Failed to send command to printer.")
+            return self._BuildElegooCommandError("pause", result)
         return CommandResponse.Success(None)
 
 
@@ -132,7 +176,7 @@ class ElegooCommandHandler:
     def ExecuteResume(self) -> CommandResponse:
         result = ElegooClient.Get().SendRequest(131)
         if result.HasError():
-            return CommandResponse.Error(400, "Failed to send command to printer.")
+            return self._BuildElegooCommandError("resume", result)
         return CommandResponse.Success(None)
 
 
@@ -143,5 +187,145 @@ class ElegooCommandHandler:
     def ExecuteCancel(self) -> CommandResponse:
         result = ElegooClient.Get().SendRequest(130)
         if result.HasError():
-            return CommandResponse.Error(400, "Failed to send command to printer.")
+            return self._BuildElegooCommandError("cancel", result)
         return CommandResponse.Success(None)
+
+
+    # !! Platform Command Handler Interface Function !!
+    # Starts a print from a virtual file system path.
+    def ExecuteStart(self, args:Optional[Dict[str, Any]]) -> CommandResponse:
+        return CommandResponse.Error(CommandHandler.c_CommandError_FeatureNotSupported, FileSystemCommandHelper.UnsupportedPlatformError("Elegoo", CommandHandler.c_StartCommand))
+
+
+    # !! Platform Command Handler Interface Function !!
+    # Sets the light state for the specified light type.
+    def ExecuteSetLight(self, lightName:str, on:bool) -> CommandResponse:
+        if lightName != self.c_ChamberLightName:
+            return CommandResponse.Error(400, f"Unknown light name: {lightName}")
+
+        # Command 403 is the light control command
+        # SecondLight is the chamber light, RgbLight is the LED strip (we keep it off)
+        result = ElegooClient.Get().SendRequest(403, {"LightStatus": {"SecondLight": on, "RgbLight": [0, 0, 0]}})
+        if result.HasError():
+            return self._BuildElegooCommandError("set-light", result)
+        return CommandResponse.Success(None)
+
+
+    # !! Platform Command Handler Interface Function !!
+    # Moves the specified axis by the given distance in mm.
+    def ExecuteMoveAxis(self, axis:str, distanceMm:float) -> CommandResponse:
+        # Validate axis parameter
+        axis_upper = axis.upper()
+        if axis_upper not in ["X", "Y", "Z"]:
+            self.Logger.error(f"ExecuteMoveAxis: Invalid axis '{axis}'")
+            return CommandResponse.Error(400, "Invalid axis. Must be X, Y, or Z")
+        return CommandResponse.Error(CommandHandler.c_CommandError_FeatureNotSupported, "Not Supported")
+
+
+    # !! Platform Command Handler Interface Function !!
+    # Homes all axes.
+    def ExecuteHome(self) -> CommandResponse:
+        data = {"Axis": "XYZ"}
+        result = ElegooClient.Get().SendRequest(402, data)
+        if result.HasError():
+            return self._BuildElegooCommandError("home", result)
+        return CommandResponse.Success(None)
+
+
+    # !! Platform Command Handler Interface Function !!
+    # Extrudes or retracts filament for the specified extruder.
+    def ExecuteExtrude(self, extruder:int, distanceMm:float) -> CommandResponse:
+        return CommandResponse.Error(CommandHandler.c_CommandError_FeatureNotSupported, "Not Supported")
+
+
+    # !! Platform Command Handler Interface Function !!
+    # Sets the temperature for bed, chamber, or tool.
+    def ExecuteSetTemp(self, bedC:Optional[float], chamberC:Optional[float], toolC:Optional[float], toolNumber:Optional[int]) -> CommandResponse:
+        return CommandResponse.Error(CommandHandler.c_CommandError_FeatureNotSupported, "Not Supported")
+
+
+    # !! Platform Command Handler Interface Function !!
+    # Sends an Elegoo SDCP JSON command and returns the JSON response.
+    def ExecuteSendCommand(self, transportType:str, request:Dict[str, Any], rawPayload:Dict[str, Any]) -> CommandResponse:
+        if transportType != "websocket":
+            return CommandResponse.Error(CommandHandler.c_CommandError_FeatureNotSupported, f"This is an Elegoo printer that uses the SDCP protocol over a websocket, so it only accepts send-command requests with TransportType 'websocket'. The received TransportType was '{transportType}'. Set 'TransportType' to 'websocket' and put the SDCP command in 'Request'. Example: {{\"TransportType\": \"websocket\", \"Request\": {{\"Cmd\": 1, \"Data\": {{}}}}}}.")
+
+        parsed = CommandHandler.ParseWebsocketSendCommand(rawPayload, request)
+        if isinstance(parsed, CommandResponse):
+            return parsed
+
+        # Elegoo speaks SDCP, where the command identifier is an int Cmd and the payload is a Data object.
+        cmdId = parsed.Method
+        data = parsed.Params
+        # Support a raw native SDCP payload of the form {"Data": {"Cmd": ..., "Data": {...}}}, where the common parse
+        # surfaces the outer "Data" object as the params and no command identifier.
+        if cmdId is None and "Cmd" in data:
+            cmdId = data.get("Cmd", None)
+            nestedData = data.get("Data", {})
+            if not isinstance(nestedData, dict):
+                return CommandResponse.Error(400, f"This Elegoo SDCP command was given in the native nested form {{\"Data\": {{\"Cmd\": ..., \"Data\": {{...}}}}}}, but the inner 'Data' field must be a JSON object and a value of type '{type(nestedData).__name__}' was received. The inner 'Data' holds the command parameters, e.g. \"Request\": {{\"Data\": {{\"Cmd\": 1, \"Data\": {{}}}}}}.")
+            data = cast(Dict[str, Any], nestedData)
+
+        if cmdId is None or not isinstance(cmdId, int) or isinstance(cmdId, bool):
+            return CommandResponse.Error(400, f"This Elegoo printer uses SDCP, which requires an integer command id. Provide it as 'Cmd' (or 'cmd') inside 'Request', e.g. \"Request\": {{\"Cmd\": 1, \"Data\": {{...}}}}, but no valid integer command id was found (received value: {json.dumps(cmdId, default=str)}).")
+
+        requestEcho:Dict[str, Any] = {"Cmd": cmdId, "Data": data}
+        result = ElegooClient.Get().SendRequest(cmdId, data, waitForResponse=parsed.WaitForResponse, timeoutSec=parsed.TimeoutSec)
+        if result.HasError():
+            code = result.GetErrorCode()
+            # Transport failures are returned as actionable OE error codes (no useful payload).
+            if code == result.OE_ERROR_WS_NOT_CONNECTED:
+                if ElegooClient.Get().IsDisconnectDueToTooManyClients():
+                    return CommandResponse.Error(CommandHandler.c_CommandError_CantConnectTooManyClients, "Too many clients are already connected to the printer.")
+                return CommandResponse.Error(CommandHandler.c_CommandError_HostNotConnected, "Printer Not Connected")
+            if code == result.OE_ERROR_TIMEOUT:
+                return CommandResponse.Error(CommandHandler.c_CommandError_ExecutionFailure, "No response received from the printer within the timeout. Some commands don't return a response - set WaitForResponse to false for those.")
+            if code == result.OE_ERROR_EXCEPTION:
+                return CommandResponse.Error(CommandHandler.c_CommandError_ExecutionFailure, result.GetErrorStr() or "Failed to send command.")
+            # A printer-side command error (e.g. a failed ack) still carries the full SDCP response. Surface it.
+            payload = result.GetResult()
+            if payload is not None:
+                return CommandHandler.BuildSendCommandResult("websocket", requestEcho, payload, isError=True, waitForResponse=parsed.WaitForResponse, timeoutSec=parsed.TimeoutSec)
+            return CommandResponse.Error(400, result.GetLoggingErrorStr())
+
+        # Fire-and-forget: nothing was awaited.
+        if parsed.WaitForResponse is False:
+            return CommandHandler.BuildSendCommandResult("websocket", requestEcho, responseReceived=False, waitForResponse=parsed.WaitForResponse, timeoutSec=parsed.TimeoutSec)
+
+        return CommandHandler.BuildSendCommandResult("websocket", requestEcho, result.GetResult(), isError=False, waitForResponse=parsed.WaitForResponse, timeoutSec=parsed.TimeoutSec)
+
+
+    def ExecuteFileList(self, args:Optional[Dict[str, Any]]) -> CommandResponse:
+        return CommandResponse.Error(CommandHandler.c_CommandError_FeatureNotSupported, FileSystemCommandHelper.UnsupportedPlatformError("Elegoo"))
+
+
+    def ExecuteFileUpload(self, args:Optional[Dict[str, Any]], uploadBody:UploadBody) -> CommandResponse:
+        return CommandResponse.Error(CommandHandler.c_CommandError_FeatureNotSupported, FileSystemCommandHelper.UnsupportedPlatformError("Elegoo"))
+
+
+    def ExecuteFileDownload(self, args:Optional[Dict[str, Any]]) -> HttpResult:
+        return FileSystemCommandHelper.BuildRawError(CommandHandler.c_CommandError_FeatureNotSupported, FileSystemCommandHelper.UnsupportedPlatformError("Elegoo"), CommandHandler.c_FilesDownloadCommand)
+
+
+    def ExecuteGetPluginLogs(self, args:Optional[Dict[str, Any]]) -> HttpResult:
+        return FileSystemCommandHelper.BuildLogFileResultFromLogger(self.Logger, "octoeverywhere.log", CommandHandler.c_GetPluginLogsCommand, "octoeverywhere.log", args)
+
+
+    def ExecuteFileDetails(self, args:Optional[Dict[str, Any]]) -> CommandResponse:
+        return CommandResponse.Error(CommandHandler.c_CommandError_FeatureNotSupported, FileSystemCommandHelper.UnsupportedPlatformError("Elegoo"))
+
+
+    def ExecuteFileDelete(self, args:Optional[Dict[str, Any]]) -> CommandResponse:
+        return CommandResponse.Error(CommandHandler.c_CommandError_FeatureNotSupported, FileSystemCommandHelper.UnsupportedPlatformError("Elegoo"))
+
+
+    def _BuildElegooCommandError(self, commandName:str, result:Any) -> CommandResponse:
+        code = result.GetErrorCode()
+        if code == result.OE_ERROR_WS_NOT_CONNECTED:
+            if ElegooClient.Get().IsDisconnectDueToTooManyClients():
+                return CommandResponse.Error(CommandHandler.c_CommandError_CantConnectTooManyClients, f"{commandName} failed on Elegoo: too many clients are already connected to the printer.")
+            return CommandResponse.Error(CommandHandler.c_CommandError_HostNotConnected, FileSystemCommandHelper.PrinterNotConnectedError("Elegoo", commandName))
+        if code == result.OE_ERROR_TIMEOUT:
+            return CommandResponse.Error(CommandHandler.c_CommandError_ExecutionFailure, f"{commandName} failed on Elegoo: no response received from the printer before timeout.")
+        errorStr = result.GetErrorStr() or result.GetLoggingErrorStr()
+        return CommandResponse.Error(CommandHandler.c_CommandError_ExecutionFailure, f"{commandName} failed on Elegoo: {errorStr}")

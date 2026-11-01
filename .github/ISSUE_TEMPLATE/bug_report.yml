@@ -1,0 +1,132 @@
+name: App bug report
+description: Something is broken in a Rinkhals app
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before you file
+      options:
+        - label: I searched [existing issues](https://github.com/rinkhals-community/Rinkhals.Apps/issues) and found no duplicate
+          required: true
+        - label: This is a bug in an app, not in Rinkhals itself (firmware bugs go to the [main repo](https://github.com/rinkhals-community/Rinkhals/issues))
+          required: true
+
+  - type: dropdown
+    id: app-name
+    attributes:
+      label: Which app
+      options:
+        - Cloud to LAN Bridge
+        - Cloudflare Tunnel
+        - Discovery Helper
+        - Klipper (vanilla)
+        - NFS Mount
+        - OctoApp Companion
+        - OctoEverywhere
+        - Remote Debugging
+        - stunnel (TLS add-on)
+        - Tailscale
+        - Other / custom app
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: How was the app installed
+      options:
+        - SWU package from the releases page
+        - Manual copy via SSH/SFTP
+        - Other (explain below)
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: A clear description of the bug and what you expected instead.
+      placeholder: When I do X, Y happens. I expected Z.
+    validations:
+      required: true
+
+  - type: input
+    id: printer-model
+    attributes:
+      label: Printer model
+      placeholder: "e.g. Kobra 3 V2 Combo"
+    validations:
+      required: true
+
+  - type: input
+    id: printer-firmware
+    attributes:
+      label: Anycubic firmware version
+      placeholder: "e.g. 1.1.2.8"
+    validations:
+      required: true
+
+  - type: input
+    id: rinkhals-version
+    attributes:
+      label: Rinkhals version
+      placeholder: "e.g. 20260526_04"
+    validations:
+      required: true
+
+  - type: input
+    id: app-version
+    attributes:
+      label: App version (if known)
+      description: Check app.json or the release tag you downloaded.
+      placeholder: "e.g. 1.84.0, or 20260527_01 release"
+
+  - type: textarea
+    id: other-apps
+    attributes:
+      label: Other apps running
+      description: List any other Rinkhals apps that are enabled. App conflicts are a common cause of issues.
+      placeholder: "e.g. Tailscale, stunnel, OctoEverywhere"
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Specific steps so a developer can follow along and see the same result.
+      placeholder: |
+        1. Install the app via ...
+        2. Enable it ...
+        3. Do ...
+        4. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        Paste relevant log output here, or attach a debug bundle.
+
+        Most apps write logs to `/useremain/home/rinkhals/apps/<app-name>/`. Check for .log files there.
+        You can also generate a full debug bundle: https://rinkhals-community.github.io/Rinkhals/guides/generate-debug-bundle/
+      render: text
+      placeholder: Paste log output or drag a debug bundle .zip here.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: logs-confirm
+    attributes:
+      label: Log confirmation
+      options:
+        - label: I have provided logs or a debug bundle, OR I have explained why I cannot
+          required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Screenshots, network setup, config changes you made, anything relevant.

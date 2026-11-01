@@ -2,13 +2,13 @@
 
 # From a Windows machine:
 #   <cd to this git repo root>
-#   docker run --rm -it -v .\apps:/apps ghcr.io/jbatonnet/rinkhals/build /apps/octoeverywhere/get-octoeverywhere.sh
+#   docker run --rm -it -v .\apps:/apps ghcr.io/rinkhals-community/rinkhals/build /apps/octoeverywhere/get-octoeverywhere.sh
 
 mkdir /work
 cd /work
 
 
-OCTOEVERYWHERE_VERSION=4.1.0
+OCTOEVERYWHERE_VERSION=5.4.1
 OCTOEVERYWHERE_DIRECTORY=/apps/octoeverywhere
 
 

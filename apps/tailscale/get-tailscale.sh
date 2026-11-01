@@ -2,13 +2,13 @@
 
 # From a Windows machine:
 #   <cd to this git repo root>
-#   docker run --rm -it -v .\apps:/apps ghcr.io/jbatonnet/rinkhals/build /apps/tailscale/get-tailscale.sh
+#   docker run --rm -it -v .\apps:/apps ghcr.io/rinkhals-community/rinkhals/build /apps/tailscale/get-tailscale.sh
 
 mkdir /work
 cd /work
 
 
-TAILSCALE_VERSION="1.84.0"
+TAILSCALE_VERSION="1.104.4"
 TAILSCALE_DIRECTORY=/apps/tailscale
 
 

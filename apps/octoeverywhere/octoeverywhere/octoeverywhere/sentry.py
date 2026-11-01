@@ -1,12 +1,21 @@
 import os
+import errno
 import logging
+import socket
 import time
 import traceback
+import threading
+from http.client import IncompleteRead
+from typing import Any, Dict, List, Optional
 
-# import sentry_sdk
-# from sentry_sdk import Hub
-# from sentry_sdk.integrations.logging import LoggingIntegration
-# from sentry_sdk.integrations.threading import ThreadingIntegration
+import octowebsocket
+import requests
+import urllib3
+
+import sentry_sdk
+from sentry_sdk import Hub
+from sentry_sdk.integrations.logging import LoggingIntegration
+from sentry_sdk.integrations.threading import ThreadingIntegration
 
 from .exceptions import NoSentryReportException
 from .threaddebug import ThreadDebug
@@ -15,10 +24,10 @@ from .threaddebug import ThreadDebug
 class Sentry:
 
     # Holds the process logger.
-    _Logger:logging.Logger = None
+    _Logger:logging.Logger = None #pyright: ignore[reportAssignmentType]
 
     # Flags to help Sentry get setup.
-    IsSentrySetup:bool = False
+    IsSentrySetup:bool = False # This is important since the sentry setup is async and is disabled for some plugin modes.
     IsDevMode:bool = False
     FilterExceptionsByPackage:bool = False
     LastErrorReport:float = time.time()
@@ -35,57 +44,120 @@ class Sentry:
     # This actually setups sentry.
     # It's only called after the plugin version is known, and thus it might be a little into the process lifetime.
     @staticmethod
-    def Setup(versionString:str, distType:str, isDevMode:bool = False, enableProfiling:bool = False, filterExceptionsByPackage:bool = False, restartOnCantCreateThreadBug:bool = False):
+    def Setup(versionString:str, distType:str, isDevMode:bool=False, canEnableProfiling:bool=False, filterExceptionsByPackage:bool=False, restartOnCantCreateThreadBug:bool=False):
         # Set the dev mode flag.
         Sentry.IsDevMode = isDevMode
         Sentry.FilterExceptionsByPackage = filterExceptionsByPackage
         Sentry.RestartProcessOnCantCreateThreadBug = restartOnCantCreateThreadBug
 
         # Only setup sentry if we aren't in dev mode.
-        # Disable sentry for now since it seems to be causing a lot of spawned threads and we don't use it right now.
-        # if Sentry.IsDevMode is False:
-        #     try:
-        #         # We don't want sentry to capture error logs, which is it's default.
-        #         # We do want the logging for breadcrumbs, so we will leave it enabled.
-        #         sentry_logging = LoggingIntegration(
-        #             level=logging.INFO,        # Capture info and above as breadcrumbs
-        #             event_level=logging.FATAL  # Only send FATAL errors and above.
-        #         )
-        #         # Setup and init
-        #         sentry_sdk.init(
-        #             dsn= "https://883879bfa2402df86c098f6527f96bfa@oe-sentry.octoeverywhere.com/4",
-        #             integrations= [
-        #                 sentry_logging,
-        #                 ThreadingIntegration(propagate_hub=True),
-        #             ],
-        #             # This is the recommended format
-        #             release= f"oe-plugin@{versionString}",
-        #             dist= distType,
-        #             environment= "dev" if isDevMode else "production",
-        #             before_send= Sentry._beforeSendFilter,
-        #             # This means we will send 100% of errors, maybe we want to reduce this in the future?
-        #             enable_tracing= enableProfiling,
-        #             sample_rate= 1.0,
-        #             # Only enable these if we enable profiling. We can't do it in OctoPrint, because it picks up a lot of OctoPrint functions.
-        #             traces_sample_rate= 0.01 if enableProfiling else 0.0,
-        #             profiles_sample_rate= 0.01 if enableProfiling else 0.0,
-        #         )
-        #     except Exception as e:
-        #         if Sentry._Logger is not None:
-        #             Sentry._Logger.error("Failed to init Sentry: "+str(e))
+        if Sentry.IsDevMode:
+            return
 
-        #     # Set that sentry is ready to use.
-        #     Sentry.IsSentrySetup = True
+        # Spin off a thread to make the sentry config api request and then init the sdk.
+        def setupSentryThread():
+            # Give it a few attempts, in case the network isn't ready yet.
+            attempt = 0
+            while attempt < 3:
+                try:
+                    attempt += 1
+                    Sentry._setupSentryInternal(versionString, distType, isDevMode, canEnableProfiling)
+                    return
+                except Exception as e:
+                    if Sentry._Logger is not None:
+                        Sentry._Logger.error("Failed to setup sentry, retrying: "+str(e))
+                    time.sleep(10)
+        thread = threading.Thread(target=setupSentryThread, daemon=True)
+        thread.start()
+
+
+    # Throws on failure.
+    @staticmethod
+    def _setupSentryInternal(versionString:str, distType:str, isDevMode:bool, canEnableProfiling:bool) -> None:
+
+        # Make the API call to get the Sentry config.
+        response = requests.post("https://octoeverywhere.com/api/plugin/sentryconfig", json={'PluginVersion': versionString, 'DistType': distType}, timeout=20)
+        if response.status_code != 200:
+            raise Exception(f"Failed to get sentry config, status code {response.status_code}")
+
+        # Parse the response.
+        responseJson = response.json()
+        result = responseJson.get("Result", None)
+        if result is None:
+            raise Exception(f"Failed to get sentry config, result {result}")
+
+        # First, check if we are enabled at all.
+        enabled = result.get("Enabled", None)
+        if enabled is None or enabled is False:
+            # Sentry is not enabled, just return.
+            if Sentry._Logger is not None:
+                Sentry._Logger.info("Sentry is disabled by server config.")
+            return
+
+        # Get the rates, default to off.
+        tracingSampleRate = result.get("TracingSampleRate", None)
+        if tracingSampleRate is None or tracingSampleRate > 1.0 or tracingSampleRate < 0.0:
+            if Sentry._Logger is not None:
+                Sentry._Logger.warning(f"Sentry got an invalid tracing sample rate. {tracingSampleRate}, setting to 0.0")
+            tracingSampleRate = 0.0
+
+        profilingSampleRate = result.get("ProfilingSampleRate", None)
+        if profilingSampleRate is None or profilingSampleRate > 1.0 or profilingSampleRate < 0.0:
+            if Sentry._Logger is not None:
+                Sentry._Logger.warning(f"Sentry got an invalid profiling sample rate. {profilingSampleRate}, setting to 0.0")
+            profilingSampleRate = 0.0
+
+        errorSampleRate = result.get("ErrorSampleRate", None)
+        if errorSampleRate is None or errorSampleRate > 1.0 or errorSampleRate < 0.0:
+            if Sentry._Logger is not None:
+                Sentry._Logger.warning(f"Sentry got an invalid error sample rate. {errorSampleRate}, setting to 0.0")
+            errorSampleRate = 0.0
+
+        # If we can't enable profiling, disable them.
+        if canEnableProfiling is False:
+            tracingSampleRate = 0.0
+            profilingSampleRate = 0.0
+
+        # We don't want sentry to capture error logs, which is it's default.
+        # We do want the logging for breadcrumbs, so we will leave it enabled.
+        # We had this set at level=logging.INFO, event_level=logging.FATAL but that caused too many breadcrumbs to be captured.
+        # But it was causing Sentry to capture and hold on to a lot of process memory. So we disabled it.
+        # If we need this, we should look into read adding it back with a lower level.
+        sentryLogging = LoggingIntegration(
+            level=None,        # Capture info and above as breadcrumbs
+            event_level=None  # Only send FATAL errors and above.
+        )
+        # Setup and init
+        sentry_sdk.init(
+            dsn= "https://782efc0e5d44c8239aedf79215e3690d@oe-reports.octoeverywhere.com/4",
+            integrations= [
+                sentryLogging,
+                ThreadingIntegration(propagate_hub=True),
+            ],
+            # This is the recommended format
+            release= f"oe-plugin@{versionString}",
+            dist= distType,
+            environment= "dev" if isDevMode else "production",
+            before_send= Sentry._beforeSendFilter,
+            sample_rate= errorSampleRate,
+            enable_tracing= tracingSampleRate > 0.0,
+            traces_sample_rate= tracingSampleRate,
+            profiles_sample_rate= profilingSampleRate,
+            # This is very important! If we don't set this lower, Sentry will hold a lot of debugging context in memory which kills low memory devices.
+            max_breadcrumbs= 0,
+        )
+
+        # Set that sentry is ready to use.
+        Sentry.IsSentrySetup = True
 
 
     @staticmethod
     def SetPrinterId(printerId:str):
-        #sentry_sdk.set_context("octoeverywhere", { "printer-id": printerId })
-        pass
+        sentry_sdk.set_context("octoeverywhere", { "printer-id": printerId })
 
 
     @staticmethod
-    def _beforeSendFilter(event, hint):
+    def _beforeSendFilter(event:Any, hint:Any):
 
         # If we want to filter by package, do it now.
         if Sentry.FilterExceptionsByPackage:
@@ -94,7 +166,9 @@ class Sentry:
             # send things that have some origin in our code. This can be any file in the stack or any module with our name in it.
             # Otherwise, we will ignore it.
             exc_info = hint.get("exc_info")
-            if exc_info is None or len(exc_info) < 2 or hasattr(exc_info[2], "tb_frame") is False:
+            # Note the < 3 guard must stay in sync with the exc_info[2] access below, otherwise a short
+            # exc_info tuple would throw an IndexError right here inside the before-send hook.
+            if exc_info is None or len(exc_info) < 3 or hasattr(exc_info[2], "tb_frame") is False:
                 Sentry._Logger.error("Failed to extract exception stack in sentry before send.")
                 return None
 
@@ -121,7 +195,7 @@ class Sentry:
         # We will simply only allows up to 5 errors reported every 4h.
         timeSinceErrorSec = time.time() - Sentry.LastErrorReport
         if timeSinceErrorSec < 60 * 60 * 4:
-            if Sentry.LastErrorCount > 5:
+            if Sentry.LastErrorCount >= 5:
                 return None
         else:
             # A new time window has been entered.
@@ -137,44 +211,59 @@ class Sentry:
 
     # Adds a breadcrumb to the sentry log, which is helpful to figure out what happened before an exception.
     @staticmethod
-    def Breadcrumb(msg:str, data:dict = None, level:str = "info", category:str = "breadcrumb"):
-        #sentry_sdk.add_breadcrumb(message=msg, data=data, level=level, category=category)
-        pass
+    def Breadcrumb(msg:str, data:Optional[Dict[Any, Any]]=None, level:str="info", category:str="breadcrumb"):
+        if Sentry.IsSentrySetup:
+            sentry_sdk.add_breadcrumb(message=msg, data=data, level=level, category=category)
+
+
+    # Sends an info log to sentry.
+    # This is useful for debugging things that shouldn't be happening.
+    @staticmethod
+    def LogInfo(msg:str, extras:Optional[Dict[Any, Any]]=None) -> None:
+        if Sentry._Logger is None:
+            return
+        Sentry._Logger.info(f"Sentry Info: {msg}")
+        if Sentry.IsSentrySetup:
+            with sentry_sdk.push_scope() as scope:
+                scope.set_level("error")
+                if extras is not None:
+                    for key, value in extras.items():
+                        scope.set_extra(key, value)
+                sentry_sdk.capture_message(msg)
 
 
     # Sends an error log to sentry.
     # This is useful for debugging things that shouldn't be happening.
     @staticmethod
-    def LogError(msg:str, extras:dict = None) -> None:
+    def LogError(msg:str, extras:Optional[Dict[Any, Any]]=None) -> None:
         if Sentry._Logger is None:
             return
         Sentry._Logger.error(f"Sentry Error: {msg}")
-        # Never send in dev mode, as Sentry will not be setup.
-        # if Sentry.IsSentrySetup and Sentry.IsDevMode is False:
-        #     with sentry_sdk.push_scope() as scope:
-        #         scope.set_level("error")
-        #         if extras is not None:
-        #             for key, value in extras.items():
-        #                 scope.set_extra(key, value)
-        #         sentry_sdk.capture_message(msg)
+        if Sentry.IsSentrySetup:
+            with sentry_sdk.push_scope() as scope:
+                scope.set_level("error")
+                if extras is not None:
+                    for key, value in extras.items():
+                        scope.set_extra(key, value)
+                sentry_sdk.capture_message(msg)
 
 
     # Logs and reports an exception.
     # If there's no exception, use LogError instead.
     @staticmethod
-    def Exception(msg:str, exception:Exception, extras:dict = None):
+    def OnException(msg:str, exception:Exception, extras:Optional[Dict[Any, Any]]=None):
         Sentry._handleException(msg, exception, True, extras)
 
 
     # Only logs an exception, without reporting.
     @staticmethod
-    def ExceptionNoSend(msg:str, exception:Exception, extras:dict = None):
+    def OnExceptionNoSend(msg:str, exception:Exception, extras:Optional[Dict[Any, Any]]=None):
         Sentry._handleException(msg, exception, False, extras)
 
 
     # Does the work
     @staticmethod
-    def _handleException(msg:str, exception:Exception, sendException:bool, extras:dict = None):
+    def _handleException(msg:str, exception:Exception, sendException:bool, extras:Optional[Dict[Any, Any]]=None):
 
         # This could be called before the class has been inited, in such a case just return.
         if Sentry._Logger is None:
@@ -197,13 +286,13 @@ class Sentry:
             return
 
         # Never send in dev mode, as Sentry will not be setup.
-        # if Sentry.IsSentrySetup and sendException and Sentry.IsDevMode is False:
-        #     with sentry_sdk.push_scope() as scope:
-        #         scope.set_extra("Exception Message", msg)
-        #         if extras is not None:
-        #             for key, value in extras.items():
-        #                 scope.set_extra(key, value)
-        #         sentry_sdk.capture_exception(exception)
+        if Sentry.IsSentrySetup and sendException:
+            with sentry_sdk.push_scope() as scope:
+                scope.set_extra("Exception Message", msg)
+                if extras is not None:
+                    for key, value in extras.items():
+                        scope.set_extra(key, value)
+                sentry_sdk.capture_exception(exception)
 
 
     # If the exception is that we can't start new thread, this logs it, and then restarts if needed.
@@ -213,7 +302,7 @@ class Sentry:
     @staticmethod
     def _HandleCantCreateThreadException(logger:logging.Logger, e:Exception) -> bool:
         # Filter the exception
-        if e is not RuntimeError or "can't start new thread" not in str(e):
+        if not isinstance(e, RuntimeError) or "can't start new thread" not in str(e):
             return False
 
         # If we can't restart, return false, and the normal exception handling will occur.
@@ -227,19 +316,139 @@ class Sentry:
         Sentry._IsHandlingCantCreateThreadException = True
 
         # Log the error
-        ThreadDebug.DoThreadDumpLogout(logger, True)
+        ThreadDebug.DoThreadDumpLogout(logger)
         logger.error("~~~~~~~~~ Process Restarting Due To Threading Bug ~~~~~~~~~~~~")
-        Sentry.Exception("Can't start new thread - restarting the process.", e)
+        Sentry.OnException("Can't start new thread - restarting the process.", e)
 
         # Flush Sentry
         # Once this is called, Sentry is shutdown, so we must restart.
-        # try:
-        #     client = Hub.current.client
-        #     if client is not None:
-        #         client.close(timeout=5.0)
-        # except Exception:
-        #     pass
+        try:
+            client = Hub.current.client
+            if client is not None:
+                client.close(timeout=5.0)
+        except Exception:
+            pass
 
         # Restart the process - We must use this function to actually force the process to exit
         # The systemd handler will restart us.
         os.abort()
+
+
+    # A helper for dealing with common websocket / http connection exceptions.
+    # We don't want to report these to sentry, as they are common and not actionable.
+    @staticmethod
+    def IsCommonConnectionException(e:Exception) -> bool:
+        def matchesException(exception:Exception, exceptionClass:Any, msgs:Optional[List[str]]=None) -> bool:
+            # First, ensure that the exception matches the one we are filtering for.
+            if not isinstance(exception, exceptionClass):
+                return False
+            # If no messages are provided, then any exception of this type matches.
+            if msgs is None:
+                return True
+            # Check the exception string for any of the provided messages.
+            exceptionStr = str(exception).lower().strip()
+            for t in msgs:
+                if t.lower() in exceptionStr:
+                    return True
+            # If no messages matched, then we matched the exception type, but not the message, so return false.
+            return False
+
+        def matchesWrappedConnectionException(exception:Exception, depth:int=0) -> bool:
+            if depth > 5 or isinstance(exception, requests.exceptions.SSLError):
+                return False
+            if isinstance(exception, (requests.exceptions.ConnectionError, urllib3.exceptions.MaxRetryError,
+                                      urllib3.exceptions.NewConnectionError, urllib3.exceptions.ProtocolError)):
+                causes = [arg for arg in exception.args if isinstance(arg, Exception)]
+                if isinstance(exception, urllib3.exceptions.MaxRetryError) and isinstance(exception.reason, Exception):
+                    causes.append(exception.reason)
+                if not causes:
+                    cause = exception.__cause__ if exception.__cause__ is not None else exception.__context__
+                    if isinstance(cause, Exception):
+                        causes.append(cause)
+                # requests also wraps resource exhaustion and malformed HTTP as ConnectionError. Only ignore it
+                # when its underlying errors are known transport failures, not merely because of the wrapper.
+                return bool(causes) and all(matchesWrappedConnectionException(cause, depth + 1) for cause in causes)
+            if isinstance(exception, (IncompleteRead, urllib3.exceptions.TimeoutError)):
+                return True
+            return Sentry.IsCommonConnectionException(exception)
+
+        try:
+            # Match socket errors by errno, since their text varies between operating systems.
+            if isinstance(e, OSError) and e.errno in (errno.ECONNREFUSED, errno.ECONNRESET, errno.ECONNABORTED,
+                                                     errno.EHOSTUNREACH, errno.ENETUNREACH, errno.ENETDOWN,
+                                                     errno.ETIMEDOUT, errno.EPIPE):
+                return True
+            if isinstance(e, OSError) and getattr(e, "winerror", None) in (10050, 10051, 10053, 10054, 10060, 10061, 10065):
+                return True
+            if isinstance(e, socket.gaierror) and e.errno in (socket.EAI_AGAIN, socket.EAI_NONAME, socket.EAI_FAIL):
+                return True
+            if isinstance(e, octowebsocket.WebSocketAddressException):
+                # websocket-client wraps gaierror in args and preserves the exception context. Keep its errno,
+                # since some platforms only describe EAI_AGAIN as "Try again".
+                for cause in [e.__cause__, e.__context__] + list(e.args):
+                    if isinstance(cause, socket.gaierror) and Sentry.IsCommonConnectionException(cause):
+                        return True
+            if isinstance(e, requests.exceptions.Timeout):
+                return True
+            if isinstance(e, requests.exceptions.ConnectionError):
+                return matchesWrappedConnectionException(e)
+            # This means a device was at the IP, but the port isn't open.
+            if matchesException(e, (ConnectionRefusedError, ConnectionResetError, ConnectionAbortedError, BrokenPipeError)):
+                return True
+            # This means the IP doesn't route to a device.
+            if matchesException(e, OSError, ["No route to host", "Network is unreachable", "Network unreachable", "Host is unreachable"]):
+                return True
+            if matchesException(e, socket.gaierror, ["Name does not resolve"]):
+                return True
+            # This means the other side never responded.
+            if matchesException(e, TimeoutError):
+                return True
+            if matchesException(e, octowebsocket.WebSocketTimeoutException):
+                return True
+            # This just means the server closed the socket,
+            #   or the socket connection was lost after a long delay
+            #   or there was a DNS name resolve failure.
+            if matchesException(e, octowebsocket.WebSocketConnectionClosedException, ["Connection to remote host was lost.", "ping/pong timed out", "Name or service not known"]):
+                return True
+            # Invalid host name.
+            if matchesException(e, octowebsocket.WebSocketAddressException, ["Name or service not known", "Temporary failure in name resolution", "Name does not resolve", "nodename nor servname provided, or not known"]):
+                return True
+            # We don't care.
+            if matchesException(e, octowebsocket.WebSocketConnectionClosedException):
+                return True
+            # If the ping pong tim
+            if matchesException(e, octowebsocket.WebSocketTimeoutException, ["ping/pong timed out"]):
+                return True
+        except Exception:
+            pass
+        return False
+
+
+    # A helper for dealing with common http exceptions, so we don't send them to sentry.
+    @staticmethod
+    def IsCommonHttpError(e:Exception) -> bool:
+        try:
+            if Sentry.IsCommonConnectionException(e):
+                return True
+            if isinstance(e, requests.exceptions.TooManyRedirects):
+                return True
+            if isinstance(e, urllib3.exceptions.ReadTimeoutError):
+                return True
+            # A webcam can stop halfway through a frame when it goes offline. Only ignore protocol errors
+            # with a known interrupted-read cause; malformed HTTP responses should still be reported.
+            if isinstance(e, IncompleteRead):
+                return True
+            if isinstance(e, (urllib3.exceptions.ProtocolError, requests.exceptions.ChunkedEncodingError)):
+                causes = [e.__cause__] + list(e.args)
+                for cause in causes:
+                    if isinstance(cause, IncompleteRead):
+                        return True
+                    if isinstance(cause, Exception) and Sentry.IsCommonConnectionException(cause):
+                        return True
+                    if isinstance(cause, urllib3.exceptions.ProtocolError):
+                        for innerCause in cause.args:
+                            if isinstance(innerCause, IncompleteRead) or (isinstance(innerCause, Exception) and Sentry.IsCommonConnectionException(innerCause)):
+                                return True
+        except Exception:
+            pass
+        return False
