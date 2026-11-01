@@ -344,22 +344,30 @@ int main(int argc, char *argv[]) {
     printf("[INIT] Area code set from environment: 0x%08X\n", area_code);
   }
 
+  // The SDK reads this as a 32-bit ARM struct, so log_path at offset 76 is a
+  // 4-byte pointer. Typed values go in with memcpy, since the byte buffer has
+  // no alignment guarantee for a uint32_t or pointer store
+  _Static_assert(sizeof(const char *) == 4,
+                 "service_options layout assumes 32-bit pointers");
+
   uint8_t service_options[0x7c];
   memset(service_options, 0, sizeof(service_options));
-  *(uint32_t *)service_options = area_code;
+  memcpy(service_options, &area_code, sizeof(area_code));
 
+  const char *log_path = "/tmp";
+  uint32_t log_level;
   bool enable_sdk_log = false;
   if (enable_sdk_log) {
-    service_options[68] = 0; // service_options[log_disable] = true
-    service_options[69] = 0; // log_disable_desensitize = true
-    *(uint32_t *)(service_options + 72) = 8; // log_level = RTC_LOG_DEBUG
-    *(const char **)(service_options + 76) = "/tmp"; // log_path = NULL
+    service_options[68] = 0; // log_disable = false
+    service_options[69] = 0; // log_disable_desensitize = false
+    log_level = 8;           // RTC_LOG_DEBUG
   } else {
-    service_options[68] = 1;                 // log_disable = true
-    service_options[69] = 1;                 // log_disable_desensitize = true
-    *(uint32_t *)(service_options + 72) = 0; // log_level = RTC_LOG_DEFAULT
-    *(const char **)(service_options + 76) = "/tmp"; // log_path = NULL
+    service_options[68] = 1; // log_disable = true
+    service_options[69] = 1; // log_disable_desensitize = true
+    log_level = 0;           // RTC_LOG_DEFAULT
   }
+  memcpy(service_options + 72, &log_level, sizeof(log_level));
+  memcpy(service_options + 76, &log_path, sizeof(log_path));
 
   snprintf((char *)(service_options + 0x58), 0x21, "%s", license);
 

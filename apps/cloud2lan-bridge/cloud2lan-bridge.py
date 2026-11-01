@@ -356,6 +356,8 @@ class Program:
             self.agora_proc = subprocess.Popen(
                 cmd, shell=True,
                 cwd=script_dir,
+                # agora_pusher defaults to the global area, China needs its own
+                env={**os.environ, 'AGORA_AREA_CODE': self.area_code},
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 preexec_fn=os.setsid,

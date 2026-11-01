@@ -16,4 +16,10 @@ app.sh start
 
 ## Developing
 
-The agora header file can be sourced from the [agora linux SDK docs](https://api-ref.agora.io/en/iot-sdk/linux/1.x/agora__rtc__api_8h_source.html).
+`agora_pusher` is built from `agora_pusher.c` against `agora_rtc_api_interop_rinkhals.h`, a minimal header written from the public [Agora IoT SDK docs](https://api-ref.agora.io/en/iot-sdk/linux/1.x/agora__rtc__api_8h_source.html) so the SDK's own header isn't redistributed. The SDK itself is loaded at runtime from the printer's firmware (`/ac_lib/lib/third_lib/libagora-rtc-sdk.so`).
+
+After changing `agora_pusher.c`, rebuild the committed binary with the printer's uClibc toolchain:
+
+```sh
+docker run --platform=linux/arm/v7 --rm -v ./apps:/apps ghcr.io/jbatonnet/armv7-uclibc:rinkhals /apps/cloud2lan-bridge/build-agora-pusher.sh
+```
