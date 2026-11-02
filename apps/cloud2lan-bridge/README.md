@@ -6,6 +6,8 @@ This application adds support for Cloud only features for your printer with the 
 
 Bind the printer to your Anycubic account in cloud mode as usual, then turn on **LAN mode** in this app's settings (on the touchscreen or in the Rinkhals web portal). Turning it off switches the printer back to cloud mode.
 
+**Reboot the printer after changing the setting.** The touchscreen only reads the mode when it starts, so until you reboot its LAN toggle shows the old mode, and tapping it to "turn LAN mode on" would remove the printer from your account.
+
 **Don't use the touchscreen's own LAN toggle for this.** On recent firmware (seen on the KS1 with 2.7.2.7), it removes the printer from your Anycubic account before switching, so the Anycubic app no longer lists it and the bridge has nothing to serve. The app's setting switches modes through gkapi without that step. If you've already used the touchscreen toggle, switch back to cloud mode, scan the QR code again in the Anycubic app, then use the app's setting.
 
 ## Architecture & Process Hierarchy
