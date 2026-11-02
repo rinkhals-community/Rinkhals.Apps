@@ -1,6 +1,6 @@
 # Unbiased Bed Mesh
 
-A Rinkhals app for the Anycubic Kobra 3. It probes the bed mesh point by point, spiralling onto each point so the direction the head arrives from stops skewing the reading. That cancels the probe bias baked into Klipper's snake-pattern calibration.
+A Rinkhals app for the Anycubic Kobra 3 and Kobra S1. It probes the bed mesh point by point, spiralling onto each point so the direction the head arrives from stops skewing the reading. That cancels the probe bias baked into Klipper's snake-pattern calibration.
 
 ## The problem
 
@@ -22,7 +22,10 @@ It runs once and exits. No daemon, nothing watching files, nothing that starts i
 
 ## Supported printers
 
-Only the Kobra 3 so far, since that's where it has been run. Other models heat, wipe and park differently (the S1 family has no `MOVE_HEAT_POS`, for example), so each needs its own sequence and a test run before it's added. On any other model the app logs why and stops without moving anything.
+- Kobra 3
+- Kobra S1 (tested on firmware 2.7.2.7). Its mesh came out within 0.04 mm of the stock `BED_MESH_CALIBRATE` mesh taken right before it, at every point. The S1 we tested didn't have the zigzag in the first place, so how much it helps on an S1 depends on the printer.
+
+Other models heat, wipe and park differently (the S1 family has no `MOVE_HEAT_POS`, for example), so each needs its own sequence and a test run before it's added. On any other model the app logs why and stops without moving anything.
 
 ## Before you run it
 

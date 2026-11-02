@@ -71,8 +71,10 @@ HEAT_TIMEOUT_S: float = 600.0  # bed warm-up from cold can take ~5 minutes
 #   K3: heat at MOVE_HEAT_POS, wipe, cool for probing, re-home Z on the hot
 #       bed (the bed warps while heating and the wipe nudges the head)
 #   KS1: heat at the purge chute (there is no MOVE_HEAT_POS), wipe, then cool
-#       parked on the silicone pad (WIPE_STOP) so the nozzle can't ooze, and
-#       leave the wiper. The hot Z re-home has only been checked on the K3
+#       parked on the silicone pad (WIPE_STOP) so the nozzle can't ooze, leave
+#       the wiper and re-home Z hot. The stock BED_MESH_CALIBRATE also homes
+#       hot; homed cold, every point read about 0.22 mm higher than the stock
+#       mesh taken right after it, with the same shape
 # A model is only listed once the app has been run on it. Model code is
 # exported by tools.sh and inherited through app.sh.
 HEAT_SEQUENCES: dict[str, list[str]] = {
@@ -93,6 +95,7 @@ HEAT_SEQUENCES: dict[str, list[str]] = {
         "WIPE_STOP",
         f"M109 S{HOTEND_PROBE_C}",
         "WIPE_EXIT",
+        "G28 Z",
     ],
 }
 KOBRA_MODEL_CODE: str = os.environ.get("KOBRA_MODEL_CODE", "")
