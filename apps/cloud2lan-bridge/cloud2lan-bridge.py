@@ -200,7 +200,9 @@ class Program:
         
         # Intercept stream start event — launch agora_pusher
         if isinstance(payload, dict) and payload.get('action') == 'startCapture':
-            log(LOG_INFO, f"[ROUTER] Intercepted startCapture payload: {json.dumps(payload)}")
+            # The payload carries the Agora token, license and encryption key, so it
+            # only goes in the log with DEBUG set, like every other raw payload
+            log(LOG_DEBUG, f"[ROUTER] Intercepted startCapture payload: {json.dumps(payload)}")
             shengwang_data = payload.get('data', {}).get('shengwang', {})
             if not shengwang_data:
                 log(LOG_DEBUG, "[ROUTER] Dropping join status message echo.")
@@ -342,7 +344,7 @@ class Program:
         # Build: ffmpeg ... | agora_pusher ...
         # Add nobuffer, low_delay, and analyzeduration 0 to completely eliminate ffmpeg startup lag
         cmd = (
-            f"ffmpeg -nostdin -loglevel quiet "
+            f"/ac_lib/lib/third_bin/ffmpeg -nostdin -loglevel quiet "
             f"-fflags nobuffer -flags low_delay -analyzeduration 0 -probesize 32 "
             f"-i http://127.0.0.1:18088/flv "
             f"-vcodec copy -f h264 - | "
@@ -356,10 +358,18 @@ class Program:
             self.agora_proc = subprocess.Popen(
                 cmd, shell=True,
                 cwd=script_dir,
-                # agora_pusher defaults to the global area, China needs its own
-                env={**os.environ, 'AGORA_AREA_CODE': self.area_code},
+                # agora_pusher defaults to the global area, China needs its own.
+                # The firmware's ffmpeg needs its libraries from third_lib, which
+                # is only on the library path when the app was started at boot
+                env={
+                    **os.environ,
+                    'AGORA_AREA_CODE': self.area_code,
+                    'LD_LIBRARY_PATH': '/ac_lib/lib/third_lib:' + os.environ.get('LD_LIBRARY_PATH', ''),
+                },
+                # stdout echoes the credentials, stderr only has diagnostics, so
+                # let stderr through to the app log
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stderr=None,
                 preexec_fn=os.setsid,
             )
             log(LOG_INFO, f"[AGORA] Pipeline started (PID {self.agora_proc.pid})")
