@@ -2,6 +2,15 @@
     "$version": "1",
 
     "name": "Cloud to LAN bridge",
-    "description": "Enable most Cloud features to still work even when LAN mode is enabled. This app will bridge all Cloud messages to the LAN, enabling control from Anycubic apps in LAN mode. It will only work if LAN mode is enabled",
-    "version": "1.1"
+    "description": "Enable most Cloud features to still work even when LAN mode is enabled. This app will bridge all Cloud messages to the LAN, enabling control from Anycubic apps in LAN mode. Turn LAN mode on from this app's settings, then reboot the printer: the touchscreen's LAN toggle removes the printer from your Anycubic account",
+    "version": "1.2",
+
+    "properties": {
+        "lan_mode": {
+            "display": "LAN mode (keeps the printer on your Anycubic account, reboot after changing)",
+            "type": "enum",
+            "options": ["False", "True"],
+            "default": "False"
+        }
+    }
 }

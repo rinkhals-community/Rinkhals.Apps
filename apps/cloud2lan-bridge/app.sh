@@ -1,9 +1,22 @@
 . /useremain/rinkhals/.current/tools.sh
 
-APP_ROOT=$(dirname $(realpath $0))
+APP_ROOT="$(dirname "$(realpath "$0")")"
+
+# busybox ps cuts command lines short, which hides the supervisor's script name
+# from tools.sh kill_by_name, so match on the full /proc/<pid>/cmdline instead.
+# One grep over all of them: a fork per process made stop slow enough for start
+# to hit Rinkhals' 5s timeout at boot. Arguments are NUL separated in cmdline,
+# so a pattern can't span two of them
+kill_by_cmdline() {
+    for CMDLINE in $(grep -lF "$@" /proc/[0-9]*/cmdline 2>/dev/null); do
+        PID=${CMDLINE#/proc/}
+        PID=${PID%/cmdline}
+        [ "$PID" != "$$" ] && kill -9 $PID 2>/dev/null
+    done
+}
 
 status() {
-    PID=$(get_by_name cloud2lan-bridge.py)
+    PID=$(get_by_name mode_watchdog.py)
 
     if [ "$PID" == "" ]; then
         report_status $APP_STATUS_STOPPED
@@ -14,21 +27,21 @@ status() {
 start() {
     stop
 
-    cd $APP_ROOT
+    cd "$APP_ROOT"
 
-    chmod +x cloud2lan-bridge.sh
-    # Detach stdin/stdout/stderr from /dev/null. cloud2lan-bridge.sh is a
-    # long-lived supervisor, so if it inherited this shell's fds it would hold
-    # them open. When start is invoked from the on-screen menu (rinkhals-ui.py),
-    # which captures the command's output through a pipe, that keeps the pipe's
-    # write end open and hangs the UI (a frozen touchscreen). The supervisor
-    # writes everything to app-cloud2lan-bridge.log.
-    ./cloud2lan-bridge.sh </dev/null >/dev/null 2>&1 &
+    chmod +x cloud2lan-supervisor.sh
+    # The watchdog is long-lived, so it must not inherit the caller's fds. When
+    # start is invoked from the on-screen menu (rinkhals-ui.py), an inherited
+    # pipe stays open and freezes the touchscreen
+    python3 ./mode_watchdog.py </dev/null >> "${RINKHALS_LOGS:-/tmp/rinkhals}/app-cloud2lan-bridge.log" 2>&1 &
 }
 stop() {
-    # Kill the supervisor first so it doesn't immediately respawn the python.
-    kill_by_name cloud2lan-bridge.sh
-    kill_by_name cloud2lan-bridge.py
+    # Kill from the top down — watchdog kills its children via process group
+    kill_by_name mode_watchdog.py
+    # Belt-and-suspenders: kill anything that survived, supervisor first so it
+    # can't restart the bridge
+    kill_by_cmdline -e cloud2lan-supervisor.sh
+    kill_by_cmdline -e cloud2lan-bridge.py -e agora_pusher -e 127.0.0.1:18088/flv
 }
 
 case "$1" in
