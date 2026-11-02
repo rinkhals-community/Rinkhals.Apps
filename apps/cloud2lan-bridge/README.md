@@ -2,12 +2,18 @@
 
 This application adds support for Cloud only features for your printer with the Rinkhals firmware while your printer is in LAN mode.
 
+## Usage
+
+Bind the printer to your Anycubic account in cloud mode as usual, then turn on **LAN mode** in this app's settings (on the touchscreen or in the Rinkhals web portal). Turning it off switches the printer back to cloud mode.
+
+**Don't use the touchscreen's own LAN toggle for this.** On recent firmware (seen on the KS1 with 2.7.2.7), it removes the printer from your Anycubic account before switching, so the Anycubic app no longer lists it and the bridge has nothing to serve. The app's setting switches modes through gkapi without that step. If you've already used the touchscreen toggle, switch back to cloud mode, scan the QR code again in the Anycubic app, then use the app's setting.
+
 ## Architecture & Process Hierarchy
-The application runs as a strict parent→child process tree managed by an inotify watchdog to ensure instant, complete shutdown when switching from LAN mode to Cloud mode:
+The application runs as a strict parent→child process tree managed by a watchdog to ensure instant, complete shutdown when switching from LAN mode to Cloud mode:
 
 ```text
 app.sh start
-  └── mode_watchdog.py                  ← Inotify watcher for remote_ctrl_mode, starts cloud2lan-supervisor or kills child processes
+  └── mode_watchdog.py                  ← Watches remote_ctrl_mode and the LAN mode setting, starts cloud2lan-supervisor or kills child processes
         └── cloud2lan-supervisor.sh         ← Crash-loop restarter
               └── cloud2lan-bridge.py           ← MQTT bridge & payload interceptor
                     └── agora_pusher              ← Video streaming

@@ -1,27 +1,39 @@
 #!/usr/bin/env python3
 """
-mode_watchdog.py — inotify-based watcher for /useremain/dev/remote_ctrl_mode
+mode_watchdog.py — watcher for /useremain/dev/remote_ctrl_mode
 
 When the mode file changes to CLOUD, the entire child process group is killed
 with SIGKILL. When it changes back to LAN, the supervisor is respawned.
+
+It also owns the app's "lan_mode" setting. The touchscreen's LAN toggle unbinds
+the printer from the Anycubic account before switching (firmware 2.7.2.7 on the
+KS1 does), which leaves the bridge nothing to serve. Changing the setting
+switches modes through gkapi directly, without the unbind, and the setting is
+kept in step with the real mode whichever way it changes.
 """
 
 import os
 import sys
+import json
 import signal
+import socket
 import subprocess
-import ctypes
-import ctypes.util
 import time
 from datetime import datetime
 
 MODE_FILE = "/useremain/dev/remote_ctrl_mode"
 SUPERVISOR_SCRIPT = "cloud2lan-supervisor.sh"
+POLL_INTERVAL = 1
 
-# inotify constants
-IN_MODIFY = 0x00000002
-IN_CLOSE_WRITE = 0x00000008
-IN_MASK = IN_MODIFY | IN_CLOSE_WRITE
+# Rinkhals keeps a user app's settings next to its directory, see tools.sh
+# set_app_property
+CONFIG_FILE = os.path.dirname(os.path.realpath(__file__)) + ".config"
+LAN_SETTING = "lan_mode"
+
+# The JSON-RPC endpoint the touchscreen uses to talk to gkapi. Messages are
+# JSON objects terminated by 0x03
+GKAPI_ADDRESS = ("127.0.0.1", 18086)
+GKAPI_RPC_ID = 31337
 
 def log(msg):
     print(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} [watchdog] {msg}", flush=True)
@@ -35,48 +47,58 @@ def is_lan_mode():
         return False
 
 # ---------------------------------------------------------------------------
-# inotify via ctypes (no external dependencies)
+# LAN mode setting
 # ---------------------------------------------------------------------------
-_libc = None
-
-def _load_libc():
-    global _libc
-    if _libc is not None:
-        return _libc
-    # Try common libc names — works on glibc, musl, uclibc
-    for name in (ctypes.util.find_library("c"), "libc.so.6", "libc.so", None):
-        try:
-            _libc = ctypes.CDLL(name, use_errno=True)
-            return _libc
-        except (OSError, TypeError):
-            continue
-    return None
-
-def inotify_wait(path):
-    """Block until `path` is modified. Returns True on success, False if
-    inotify is unavailable (caller should fall back to polling)."""
-    libc = _load_libc()
-    if libc is None:
-        return False
+def read_config():
     try:
-        fd = libc.inotify_init()
-        if fd < 0:
-            return False
-        wd = libc.inotify_add_watch(fd, path.encode("utf-8"), IN_MASK)
-        if wd < 0:
-            os.close(fd)
-            return False
-        # Block until the kernel delivers an event
-        os.read(fd, 4096)
-        os.close(fd)
-        return True
+        with open(CONFIG_FILE, "r") as f:
+            return json.load(f)
     except Exception:
-        return False
+        return {}
 
-def wait_for_mode_change():
-    """Wait for the mode file to change. Uses inotify; falls back to 2s poll."""
-    if not inotify_wait(MODE_FILE):
-        time.sleep(2)
+def read_lan_setting():
+    value = read_config().get(LAN_SETTING)
+    if value is None:
+        return None
+    return str(value).lower() == "true"
+
+def write_lan_setting(lan):
+    config = read_config()
+    config[LAN_SETTING] = "True" if lan else "False"
+    try:
+        with open(CONFIG_FILE, "w") as f:
+            json.dump(config, f)
+    except Exception as e:
+        log(f"Could not save the LAN mode setting: {e}")
+
+def gkapi_call(method):
+    request = json.dumps({"id": GKAPI_RPC_ID, "method": method, "params": {}})
+    with socket.create_connection(GKAPI_ADDRESS, timeout=5) as s:
+        s.sendall(request.encode() + b"\x03")
+        buffer = b""
+        while True:
+            data = s.recv(4096)
+            if not data:
+                raise ConnectionError("gkapi closed the connection")
+            buffer += data
+            # gkapi also pushes status updates on the connection, skip them
+            while b"\x03" in buffer:
+                message, buffer = buffer.split(b"\x03", 1)
+                response = json.loads(message)
+                if response.get("id") == GKAPI_RPC_ID:
+                    if "error" in response:
+                        raise RuntimeError(response["error"])
+                    return response.get("result")
+
+def switch_mode(lan):
+    method = "Printer/OpenLanPrint" if lan else "Printer/CloseLanPrint"
+    log(f"LAN mode setting changed, calling {method}")
+    try:
+        gkapi_call(method)
+        return True
+    except Exception as e:
+        log(f"{method} failed: {e}")
+        return False
 
 # ---------------------------------------------------------------------------
 # Child process management
@@ -174,8 +196,27 @@ def main():
 
     log("Started. Watching " + MODE_FILE)
 
+    last_lan = None
+    last_setting = None
+
     while True:
-        if is_lan_mode():
+        lan = is_lan_mode()
+        setting = read_lan_setting()
+
+        if lan != last_lan:
+            # The mode changed at startup, from the touchscreen or after our own
+            # switch. Show the real mode in the setting, never act on a stale one
+            if setting != lan:
+                write_lan_setting(lan)
+            last_setting = lan
+        elif setting is not None and setting != last_setting:
+            last_setting = setting
+            if setting != lan and not switch_mode(setting):
+                write_lan_setting(lan)
+                last_setting = lan
+        last_lan = lan
+
+        if lan:
             if _child_pgid is None:
                 log("LAN mode detected. Starting bridge...")
                 spawn_supervisor()
@@ -189,7 +230,7 @@ def main():
                 log("CLOUD mode detected. Killing bridge...")
                 kill_children()
 
-        wait_for_mode_change()
+        time.sleep(POLL_INTERVAL)
 
 if __name__ == "__main__":
     main()
