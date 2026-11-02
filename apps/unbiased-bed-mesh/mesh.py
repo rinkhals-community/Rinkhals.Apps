@@ -1,6 +1,7 @@
 """
 Mesh data types, geometry helpers, and the two files we write:
-printer_mutable.cfg (the mesh itself) and app.json (the UI status line).
+printer_mutable.cfg (the mesh itself) and the app's Rinkhals config (the UI
+status line).
 
 This module has no WebSocket / printer awareness: pure data and disk I/O.
 """
@@ -15,7 +16,7 @@ from log import log
 
 MUTABLE_CFG_PATH: str = "/userdata/app/gk/printer_mutable.cfg"
 LOG_FILE_HINT: str = (
-    "/tmp/unbiased-bed-mesh.log"  # informational; shell redirects stdout/stderr here
+    "/tmp/rinkhals/app-unbiased-bed-mesh.log"  # informational; app.sh redirects stdout/stderr here
 )
 
 
@@ -107,26 +108,51 @@ def _format_points(zs: list[float], nx: int, ny: int) -> str:
     return "\n".join(rows)
 
 
+def _write_atomic(path: str, data: dict[str, Any], **json_args: Any) -> None:
+    """
+    Write JSON to a tmp file in the same dir, fsync it, rename it over the
+    target and fsync the directory. Without the fsyncs, a power cut shortly
+    after the rename can leave an empty file behind, and an empty
+    printer_mutable.cfg stops the printer from booting properly.
+    """
+    dirname: str = os.path.dirname(path) or "."
+    mode: int = os.stat(path).st_mode & 0o777 if os.path.exists(path) else 0o644
+    fd, tmp_path = tempfile.mkstemp(prefix=".tmp.", dir=dirname)
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(data, f, **json_args)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp_path, mode)
+        os.rename(tmp_path, path)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+    dir_fd: int = os.open(dirname, os.O_RDONLY)
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
+
+
 def write_mesh_to_mutable(
     path: str,
     cfg: BedMeshConfig,
     zs: list[float],
 ) -> None:
     """
-    Read printer_mutable.cfg (if present), replace the `bed_mesh default`
-    block with our values, write back atomically. Other top-level keys
-    (input_shaper, etc.) are preserved.
+    Read printer_mutable.cfg, replace the `bed_mesh default` block with our
+    values, write back atomically. Other top-level keys (input_shaper, etc.)
+    are preserved. Refuses to touch a file that isn't valid JSON, since it
+    also holds the printer's other calibration.
     """
     data: dict[str, Any] = {}
     if os.path.isfile(path):
         with open(path, "r") as f:
-            try:
-                data = json.load(f)
-            except json.JSONDecodeError as e:
-                log(
-                    f"warning: existing mutable cfg is not valid JSON ({e}), overwriting"
-                )
-                data = {}
+            data = json.load(f)
 
     nx, ny = cfg.probe_count
     data["bed_mesh default"] = {
@@ -144,22 +170,10 @@ def write_mesh_to_mutable(
         "y_count": str(ny),
     }
 
-    # Atomic write: tmp file in the same dir, rename over the target.
-    dirname: str = os.path.dirname(path) or "."
-    fd, tmp_path = tempfile.mkstemp(prefix=".mutable.", suffix=".tmp", dir=dirname)
-    try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(data, f, sort_keys=True, indent=4)
-        os.rename(tmp_path, path)
-    except Exception:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
+    _write_atomic(path, data, sort_keys=True, indent=4)
 
 
-# ---------- app.json status report ----------
+# ---------- app.json and the UI status report ----------
 
 
 def read_app_json(app_json_path: str | None) -> dict[str, Any]:
@@ -181,27 +195,21 @@ def read_app_json(app_json_path: str | None) -> dict[str, Any]:
 
 def write_status(app_json_path: str | None, text: str) -> None:
     """
-    Update properties.last_result.default in app.json so the Rinkhals UI shows
-    the last-run status. No-op when app_json_path is None or unreachable; any
-    failure here is logged but never raised (status update must not mask the
-    real run result).
+    Set the app's last_result property so the Rinkhals UI shows the last-run
+    status. Rinkhals keeps a user app's properties in <app dir>.config, the
+    same file tools.sh set_app_property writes, so app.json is never
+    modified. No-op when app_json_path is None; any failure is logged but
+    never raised (status update must not mask the real run result).
     """
     if not app_json_path:
         return
-    if not os.path.isfile(app_json_path):
-        log(f"warning: cannot update status, {app_json_path} not found")
-        return
+    config_path: str = os.path.dirname(os.path.realpath(app_json_path)) + ".config"
     try:
-        with open(app_json_path) as f:
-            data = json.load(f)
-        props = data.setdefault("properties", {})
-        last = props.setdefault(
-            "last_result", {"display": "Last run", "type": "report"}
-        )
-        last["default"] = text
-        tmp = app_json_path + ".tmp"
-        with open(tmp, "w") as f:
-            json.dump(data, f, indent=4)
-        os.rename(tmp, app_json_path)
+        config: dict[str, Any] = {}
+        if os.path.isfile(config_path):
+            with open(config_path) as f:
+                config = json.load(f)
+        config["last_result"] = text
+        _write_atomic(config_path, config, indent=4)
     except (OSError, json.JSONDecodeError) as e:
-        log(f"warning: updating {app_json_path} failed: {e}")
+        log(f"warning: updating {config_path} failed: {e}")

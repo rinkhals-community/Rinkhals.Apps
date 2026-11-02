@@ -1,6 +1,6 @@
 # Unbiased Bed Mesh
 
-A Rinkhals app for Anycubic Kobra printers. It probes the bed mesh point by point, spiralling onto each point so the direction the head arrives from stops skewing the reading. That cancels the probe bias baked into Klipper's snake-pattern calibration.
+A Rinkhals app for the Anycubic Kobra 3. It probes the bed mesh point by point, spiralling onto each point so the direction the head arrives from stops skewing the reading. That cancels the probe bias baked into Klipper's snake-pattern calibration.
 
 ## The problem
 
@@ -16,9 +16,13 @@ For every point it spirals in through all four quadrants and touches down only a
 4. Spirals onto each point (eight segments, four quadrants, about 47 mm of travel at 1500 mm/min) and probes once it arrives.
 5. Probes with `SAMPLE_RETRACT_DIST=5` to work around the strain gauge triggering again on the next sample.
 6. Writes the mesh into `printer_mutable.cfg` using the same JSON layout GoKlipper writes, leaving any other keys (such as `input_shaper`) untouched.
-7. Reminds you to restart Klipper yourself (from the UI, or with `restart_klipper.sh`). It does not restart Klipper for you, because that leaves the printer in an unmanaged state on Kobra firmware.
+7. Reminds you to reboot the printer. GoKlipper only loads the mesh at startup, and Rinkhals refuses `RESTART` / `FIRMWARE_RESTART` because they lock GoKlipper up, so a reboot is the way to apply it.
 
 It runs once and exits. No daemon, nothing watching files, nothing that starts it on its own.
+
+## Supported printers
+
+Only the Kobra 3 so far, since that's where it has been run. Other models heat, wipe and park differently (the S1 family has no `MOVE_HEAT_POS`, for example), so each needs its own sequence and a test run before it's added. On any other model the app logs why and stops without moving anything.
 
 ## Before you run it
 
@@ -26,7 +30,7 @@ Run a normal `BED_MESH_CALIBRATE` at least once on the current geometry first. T
 
 ## Running it
 
-From the Rinkhals UI, tap Start on the app card. Over SSH:
+Leave the app **disabled**. On the touchscreen, go to Settings > Rinkhals > Apps, tap the app's name and use Start (not the checkbox, which enables the app). Over SSH:
 
 ```sh
 /useremain/home/rinkhals/apps/unbiased-bed-mesh/app.sh start
@@ -35,19 +39,13 @@ From the Rinkhals UI, tap Start on the app card. Over SSH:
 Either way, `start` returns immediately: it hands the run off to `compensator.py` in the background and gets out of the way. The run itself takes longer: heating first (a few minutes from a cold printer), then probing at roughly 10 s per point (about 17 minutes for a 10x10 mesh). Watch it with:
 
 ```sh
-tail -f /tmp/unbiased-bed-mesh.log
+tail -f /tmp/rinkhals/app-unbiased-bed-mesh.log
 ```
 
-or check the app's "Last run" property in the UI once it finishes. To abort a run in progress, use `app.sh stop` (or Stop in the UI); it cools the bed and hotend down and restores the gcode state before exiting.
+or check the app's "Last run" setting in the UI once it finishes. To abort a run in progress, use `app.sh stop` (or Stop in the UI); it cools the bed and hotend down and restores the gcode state before exiting.
 
-## The `.disabled` marker
+**When it finishes, reboot the printer** to load the new mesh, and don't change any settings that get saved (a Z offset, `SAVE_CONFIG`) before you do, since GoKlipper may write its old mesh back over the new one.
 
-The app ships with a `.disabled` file next to it. In Rinkhals that marks an app as disabled, so the system never starts it on its own at boot. That is deliberate: this app moves the toolhead, and it must never start by itself.
+## Why it has to stay disabled
 
-You start it yourself, from the UI or over SSH, and `app.sh` re-creates the marker on every start so the app stays disabled and out of autostart. If the marker is gone, which is what happens once someone enables the app, `app.sh` refuses to run at all, so an accidental autostart can never send the head spiralling across the bed.
-
-If you remove the marker, put it back:
-
-```sh
-touch /useremain/home/rinkhals/apps/unbiased-bed-mesh/.disabled
-```
+This app moves the head and heats the printer, so it must never start by itself. Rinkhals starts every enabled app at boot, so if the app is enabled, `app.sh` refuses to run and says so in "Last run". Disable it again and use Start.

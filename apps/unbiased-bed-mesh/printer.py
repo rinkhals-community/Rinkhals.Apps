@@ -56,7 +56,8 @@ PROBE_MAX_ATTEMPTS: int = 2
 
 # ---------- heating profile ----------
 
-# Mirrors the wrapped BED_MESH_CALIBRATE in kobra.py. Bed and hotend are
+# Mirrors the K3 path of the wrapped BED_MESH_CALIBRATE in kobra.py
+# (build_calibrate_script). Bed and hotend are
 # brought to printing conditions, then the hotend is cooled to a lower
 # temperature for the actual probing so that nozzle thermal expansion
 # doesn't drift the trigger height between touchdowns.
@@ -65,11 +66,13 @@ HOTEND_PREHEAT_C: int = 170
 HOTEND_PROBE_C: int = 140
 HEAT_TIMEOUT_S: float = 600.0  # bed warm-up from cold can take ~5 minutes
 
-# WIPE_ENTER / WIPE_EXIT exist only on KS1 / KS1M; other models ship the
-# bare WIPE_NOZZLE and would error on enter/exit. Model code is exported by
-# tools.sh and inherited through app.sh.
+# Models this has been run on. The heating, wiping and park positions differ
+# per model (the S1 family has no MOVE_HEAT_POS and parks on WIPE_STOP, see
+# build_calibrate_script in kobra.py), and so may the probe itself, so another
+# model needs its own sequence and a test run before it goes in here. Model
+# code is exported by tools.sh and inherited through app.sh.
 KOBRA_MODEL_CODE: str = os.environ.get("KOBRA_MODEL_CODE", "")
-WIPE_POSITIONING_MODELS: tuple[str, ...] = ("KS1", "KS1M")
+SUPPORTED_MODELS: tuple[str, ...] = ("K3",)
 
 
 # ---------- motion parameters ----------
@@ -376,25 +379,19 @@ def probe_with_retry(
 
 def heat_up(ws: JsonRpcWebSocket) -> None:
     """
-    Mirror the heating / wiping sequence from the wrapped BED_MESH_CALIBRATE
-    in kobra.py: home, heat bed and hotend, wipe, cool the hotend to probing
-    temp. Re-home Z last, on the settled hot bed: the bed warps while heating
-    and the wipe nudges the head, so an earlier Z zero would drift.
-
-    WIPE_ENTER / WIPE_EXIT exist only on KS1 / KS1M; other models have the
-    bare WIPE_NOZZLE.
+    Mirror the K3 heating / wiping sequence from the wrapped
+    BED_MESH_CALIBRATE in kobra.py: home, heat bed and hotend, wipe, cool the
+    hotend to probing temp. Re-home Z last, on the settled hot bed: the bed
+    warps while heating and the wipe nudges the head, so an earlier Z zero
+    would drift.
     """
-    wipe: list[str] = ["WIPE_NOZZLE"]
-    if KOBRA_MODEL_CODE in WIPE_POSITIONING_MODELS:
-        wipe = ["WIPE_ENTER", "WIPE_NOZZLE", "WIPE_EXIT"]
-
     sequence: list[str] = [
         f"M140 S{BED_TEMP_C}",  # set bed temperature, non-blocking
         f"M104 S{HOTEND_PREHEAT_C}",  # set hotend temperature, non-blocking
         "G28",
         "MOVE_HEAT_POS",
         f"M109 S{HOTEND_PREHEAT_C}",  # set hotend and wait
-        *wipe,
+        "WIPE_NOZZLE",
         f"M109 S{HOTEND_PROBE_C}",  # cool hotend to probing temp, wait
         f"M190 S{BED_TEMP_C}",  # wait for bed
         "G28 Z",

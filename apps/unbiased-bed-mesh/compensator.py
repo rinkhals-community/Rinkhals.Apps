@@ -18,8 +18,8 @@ On invocation:
   4. Writes the probed values into printer_mutable.cfg in the same
      schema GoKlipper itself uses, preserving any other top-level keys
      in the file (e.g. input_shaper).
-  5. Logs a reminder that Klipper must be restarted manually for the
-     new mesh to take effect.
+  5. Logs a reminder that the printer must be rebooted for the new mesh
+     to take effect.
 
 Module layout:
   log.py       shared timestamped logger
@@ -47,6 +47,8 @@ from mesh import (
 )
 from printer import (
     GCODE_STATE_NAME,
+    KOBRA_MODEL_CODE,
+    SUPPORTED_MODELS,
     MOVE_TIMEOUT_S,
     PROBE_MAX_ATTEMPTS,
     ProbeCollector,
@@ -94,6 +96,17 @@ def main() -> int:
 
     step: str = "startup"
     collector: ProbeCollector = ProbeCollector()
+
+    if KOBRA_MODEL_CODE not in SUPPORTED_MODELS:
+        log(
+            f"refusing: model {KOBRA_MODEL_CODE or 'unknown'} isn't supported yet "
+            f"(supported: {', '.join(SUPPORTED_MODELS)})"
+        )
+        write_status(
+            app_json_path,
+            f"Not run: {KOBRA_MODEL_CODE or 'this model'} isn't supported yet. See {LOG_FILE_HINT}",
+        )
+        return 1
 
     try:
         with JsonRpcWebSocket() as ws:
@@ -214,15 +227,20 @@ def main() -> int:
             log_mesh_table(grid, zs_corrected)
             write_mesh_to_mutable(MUTABLE_CFG_PATH, cfg, zs_corrected)
             log(f"wrote mesh to {MUTABLE_CFG_PATH}")
+            # Rinkhals refuses RESTART / FIRMWARE_RESTART on GoKlipper, which
+            # deadlock gklib, so a reboot is the only way to load the new mesh.
+            # Until then gklib keeps the old mesh in memory, and anything that
+            # saves the config (SAVE_CONFIG, a Z offset change) may write that
+            # back over ours
             log(
-                "NOTE: restart Klipper manually (UI or restart_klipper.sh) "
-                "for the new mesh to take effect."
+                "NOTE: reboot the printer for the new mesh to take effect, and "
+                "don't save any settings before that."
             )
 
             write_status(
                 app_json_path,
                 f"ok, {len(zs)} points (mean {corrected_mean:+.4f}, "
-                f"z_offset {z_offset:+.4f}). Restart Klipper to apply.",
+                f"z_offset {z_offset:+.4f}). Reboot the printer to apply.",
             )
 
     except (WebSocketError, OSError, TimeoutError, ValueError) as e:
