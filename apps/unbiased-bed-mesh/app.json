@@ -2,7 +2,7 @@
     "$version": "1",
 
     "name": "Unbiased Bed Mesh",
-    "description": "Kobra 3 and Kobra S1. Probes a full bed mesh with a tension-relaxing spiral approach per point, eliminating directional probe bias at the source, then writes the result into printer_mutable.cfg. Reboot the printer after a run to apply the new mesh. One-shot: leave the app disabled and use Start on its page when you want a fresh mesh.",
+    "description": "Kobra 3 only. Probes a full bed mesh with a tension-relaxing spiral approach per point, eliminating directional probe bias at the source, then writes the result into printer_mutable.cfg. Reboot the printer after a run to apply the new mesh. One-shot: leave the app disabled and use Start on its page when you want a fresh mesh.",
     "version": "0.1.0",
     "url": "https://github.com/rinkhals-community/Rinkhals.Apps/tree/master/apps/unbiased-bed-mesh",
 

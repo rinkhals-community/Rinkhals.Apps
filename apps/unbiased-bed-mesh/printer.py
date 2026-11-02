@@ -99,7 +99,11 @@ HEAT_SEQUENCES: dict[str, list[str]] = {
     ],
 }
 KOBRA_MODEL_CODE: str = os.environ.get("KOBRA_MODEL_CODE", "")
-SUPPORTED_MODELS: tuple[str, ...] = tuple(HEAT_SEQUENCES)
+# The KS1 sequence is kept but not enabled: on a printer started cold, the
+# mesh read 0.16-0.19 mm lower than the stock BED_MESH_CALIBRATE, in two runs,
+# even with the stock pre-probe steps copied exactly. Warm, it matched within
+# 0.04 mm. Until that's understood the app would put the nozzle too close.
+SUPPORTED_MODELS: tuple[str, ...] = ("K3",)
 
 
 # ---------- motion parameters ----------
