@@ -3,12 +3,15 @@
 APP_ROOT="$(dirname "$(realpath "$0")")"
 
 # busybox ps cuts command lines short, which hides the supervisor's script name
-# from tools.sh kill_by_name, so match on the full /proc/<pid>/cmdline instead
+# from tools.sh kill_by_name, so match on the full /proc/<pid>/cmdline instead.
+# One grep over all of them: a fork per process made stop slow enough for start
+# to hit Rinkhals' 5s timeout at boot. Arguments are NUL separated in cmdline,
+# so a pattern can't span two of them
 kill_by_cmdline() {
-    for PROC in /proc/[0-9]*; do
-        case "$(tr '\0' ' ' < $PROC/cmdline 2>/dev/null)" in
-            *"$1"*) kill -9 ${PROC#/proc/} 2>/dev/null ;;
-        esac
+    for CMDLINE in $(grep -lF "$@" /proc/[0-9]*/cmdline 2>/dev/null); do
+        PID=${CMDLINE#/proc/}
+        PID=${PID%/cmdline}
+        [ "$PID" != "$$" ] && kill -9 $PID 2>/dev/null
     done
 }
 
@@ -37,10 +40,8 @@ stop() {
     kill_by_name mode_watchdog.py
     # Belt-and-suspenders: kill anything that survived, supervisor first so it
     # can't restart the bridge
-    kill_by_cmdline cloud2lan-supervisor.sh
-    kill_by_cmdline cloud2lan-bridge.py
-    kill_by_cmdline agora_pusher
-    kill_by_cmdline "ffmpeg -nostdin -loglevel quiet"
+    kill_by_cmdline -e cloud2lan-supervisor.sh
+    kill_by_cmdline -e cloud2lan-bridge.py -e agora_pusher -e 127.0.0.1:18088/flv
 }
 
 case "$1" in
