@@ -66,13 +66,37 @@ HOTEND_PREHEAT_C: int = 170
 HOTEND_PROBE_C: int = 140
 HEAT_TIMEOUT_S: float = 600.0  # bed warm-up from cold can take ~5 minutes
 
-# Models this has been run on. The heating, wiping and park positions differ
-# per model (the S1 family has no MOVE_HEAT_POS and parks on WIPE_STOP, see
-# build_calibrate_script in kobra.py), and so may the probe itself, so another
-# model needs its own sequence and a test run before it goes in here. Model
-# code is exported by tools.sh and inherited through app.sh.
+# Heating, wiping and parking differ per model, following build_calibrate_script
+# in kobra.py. Bed and hotend preheat together while homing, then:
+#   K3: heat at MOVE_HEAT_POS, wipe, cool for probing, re-home Z on the hot
+#       bed (the bed warps while heating and the wipe nudges the head)
+#   KS1: heat at the purge chute (there is no MOVE_HEAT_POS), wipe, then cool
+#       parked on the silicone pad (WIPE_STOP) so the nozzle can't ooze, and
+#       leave the wiper. The hot Z re-home has only been checked on the K3
+# A model is only listed once the app has been run on it. Model code is
+# exported by tools.sh and inherited through app.sh.
+HEAT_SEQUENCES: dict[str, list[str]] = {
+    "K3": [
+        "MOVE_HEAT_POS",
+        f"M109 S{HOTEND_PREHEAT_C}",
+        "WIPE_NOZZLE",
+        f"M109 S{HOTEND_PROBE_C}",
+        f"M190 S{BED_TEMP_C}",
+        "G28 Z",
+    ],
+    "KS1": [
+        "TO_THROW_POSITION",
+        f"M109 S{HOTEND_PREHEAT_C}",
+        f"M190 S{BED_TEMP_C}",
+        "WIPE_ENTER",
+        "WIPE_NOZZLE",
+        "WIPE_STOP",
+        f"M109 S{HOTEND_PROBE_C}",
+        "WIPE_EXIT",
+    ],
+}
 KOBRA_MODEL_CODE: str = os.environ.get("KOBRA_MODEL_CODE", "")
-SUPPORTED_MODELS: tuple[str, ...] = ("K3",)
+SUPPORTED_MODELS: tuple[str, ...] = tuple(HEAT_SEQUENCES)
 
 
 # ---------- motion parameters ----------
@@ -188,6 +212,50 @@ def query_probe_z_offset(ws: JsonRpcWebSocket) -> float:
         raise ValueError(f"probe.z_offset is not numeric: {probe['z_offset']!r}") from e
 
 
+def check_travel_range(ws: JsonRpcWebSocket, grid: list[Point]) -> None:
+    """
+    Raise ValueError if the spiral or the row approach would leave the
+    printer's travel range at any point of the grid, so a mesh that reaches
+    too close to the edge fails before anything heats up rather than with a
+    move error part way through.
+    """
+    q = ws.call(
+        "printer.objects.query",
+        params={"objects": {"toolhead": ["axis_minimum", "axis_maximum"]}},
+    )
+    toolhead: dict[str, Any] = (q or {}).get("status", {}).get("toolhead", {})
+    lo, hi = toolhead.get("axis_minimum"), toolhead.get("axis_maximum")
+    if not lo or not hi:
+        raise ValueError("toolhead axis limits are missing")
+    dxs = [dx for dx, _ in SPIRAL_WAYPOINTS]
+    dys = [dy for _, dy in SPIRAL_WAYPOINTS] + [-Y_NORMALIZE_OFFSET_MM]
+    for p in grid:
+        for x, y in (
+            (p.x + min(dxs), p.y + min(dys)),
+            (p.x + max(dxs), p.y + max(dys)),
+        ):
+            if not (lo[0] <= x <= hi[0] and lo[1] <= y <= hi[1]):
+                raise ValueError(
+                    f"probing around {p} reaches ({x:.1f}, {y:.1f}), outside "
+                    f"the travel range ({lo[0]}, {lo[1]}) to ({hi[0]}, {hi[1]})"
+                )
+
+
+def query_last_z_result(ws: JsonRpcWebSocket) -> float | None:
+    """
+    Read the last probe result from the probe object, as in mainline Klipper.
+    GoKlipper on the KS1 (2.7.2.7) sends no gcode responses to Moonraker at
+    all, so there is no "Result is z=" line to parse, but this holds the same
+    value. Only meaningful right after a PROBE that succeeded.
+    """
+    q = ws.call(
+        "printer.objects.query",
+        params={"objects": {"probe": ["last_z_result"]}},
+    )
+    value = (q or {}).get("status", {}).get("probe", {}).get("last_z_result")
+    return float(value) if isinstance(value, (int, float)) else None
+
+
 def preflight_ok(ws: JsonRpcWebSocket) -> bool:
     """
     Returns True if it is safe to drive the head: printer is not printing
@@ -284,7 +352,8 @@ def spiral_then_probe(
 ) -> float | None:
     """
     Run the in-spiral around `p` at SPIRAL_FEEDRATE, ending exactly on `p`,
-    then PROBE. Returns the parsed Z, or None if no Result line was seen.
+    then PROBE. Returns the Z from the "Result is z=" line, or from the probe
+    object when the printer sends no such line, or None if neither has it.
     A failed PROBE (e.g. samples_tolerance) raises WebSocketError; the
     caller handles retries via probe_with_retry.
     """
@@ -303,6 +372,8 @@ def spiral_then_probe(
         timeout=PROBE_TIMEOUT_S,
     )
     z: float | None = collector.find_result()
+    if z is None:
+        z = query_last_z_result(ws)
 
     ws.call(
         "printer.gcode.script",
@@ -379,22 +450,15 @@ def probe_with_retry(
 
 def heat_up(ws: JsonRpcWebSocket) -> None:
     """
-    Mirror the K3 heating / wiping sequence from the wrapped
-    BED_MESH_CALIBRATE in kobra.py: home, heat bed and hotend, wipe, cool the
-    hotend to probing temp. Re-home Z last, on the settled hot bed: the bed
-    warps while heating and the wipe nudges the head, so an earlier Z zero
-    would drift.
+    Mirror the heating / wiping sequence from the wrapped BED_MESH_CALIBRATE
+    in kobra.py for this model (see HEAT_SEQUENCES): home, heat bed and
+    hotend, wipe, cool the hotend to probing temp.
     """
     sequence: list[str] = [
         f"M140 S{BED_TEMP_C}",  # set bed temperature, non-blocking
         f"M104 S{HOTEND_PREHEAT_C}",  # set hotend temperature, non-blocking
         "G28",
-        "MOVE_HEAT_POS",
-        f"M109 S{HOTEND_PREHEAT_C}",  # set hotend and wait
-        "WIPE_NOZZLE",
-        f"M109 S{HOTEND_PROBE_C}",  # cool hotend to probing temp, wait
-        f"M190 S{BED_TEMP_C}",  # wait for bed
-        "G28 Z",
+        *HEAT_SEQUENCES[KOBRA_MODEL_CODE],
     ]
     for gcode in sequence:
         log(f"heat: {gcode}")

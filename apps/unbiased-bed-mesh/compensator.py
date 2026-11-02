@@ -52,6 +52,7 @@ from printer import (
     MOVE_TIMEOUT_S,
     PROBE_MAX_ATTEMPTS,
     ProbeCollector,
+    check_travel_range,
     cool_down,
     heat_up,
     identify,
@@ -149,6 +150,8 @@ def main() -> int:
             log(f"probe.z_offset = {z_offset:+.4f}")
 
             grid: list[Point] = build_grid(cfg)
+            step = "travel range check"
+            check_travel_range(ws, grid)
             install_sigterm_handler(ws)
 
             # Everything from here commands heaters and motion. Wrap it all
