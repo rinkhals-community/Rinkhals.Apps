@@ -2,6 +2,16 @@
 
 APP_ROOT="$(dirname "$(realpath "$0")")"
 
+# busybox ps cuts command lines short, which hides the supervisor's script name
+# from tools.sh kill_by_name, so match on the full /proc/<pid>/cmdline instead
+kill_by_cmdline() {
+    for PROC in /proc/[0-9]*; do
+        case "$(tr '\0' ' ' < $PROC/cmdline 2>/dev/null)" in
+            *"$1"*) kill -9 ${PROC#/proc/} 2>/dev/null ;;
+        esac
+    done
+}
+
 status() {
     PID=$(get_by_name mode_watchdog.py)
 
@@ -25,11 +35,12 @@ start() {
 stop() {
     # Kill from the top down — watchdog kills its children via process group
     kill_by_name mode_watchdog.py
-    # Belt-and-suspenders: kill anything that survived
-    kill_by_name cloud2lan-supervisor.sh
-    kill_by_name cloud2lan-bridge.py
-    kill_by_name agora_pusher
-    kill_by_name "ffmpeg -nostdin -loglevel quiet -i http://127.0.0.1:18088/flv"
+    # Belt-and-suspenders: kill anything that survived, supervisor first so it
+    # can't restart the bridge
+    kill_by_cmdline cloud2lan-supervisor.sh
+    kill_by_cmdline cloud2lan-bridge.py
+    kill_by_cmdline agora_pusher
+    kill_by_cmdline "ffmpeg -nostdin -loglevel quiet"
 }
 
 case "$1" in

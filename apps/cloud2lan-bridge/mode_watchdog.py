@@ -84,19 +84,50 @@ def wait_for_mode_change():
 _child_pgid = None
 _child_proc = None
 
+# Supervisor first, so it can't restart the bridge while we kill it
+KILL_PATTERNS = (
+    "cloud2lan-supervisor.sh",
+    "cloud2lan-bridge.py",
+    "agora_pusher",
+    "ffmpeg -nostdin -loglevel quiet",
+)
+
+def kill_by_cmdline(pattern):
+    # busybox ps cuts command lines short, which hides the supervisor's script
+    # name, so tools.sh kill_by_name misses it. Match on the full cmdline instead
+    me = os.getpid()
+    for pid in os.listdir("/proc"):
+        if not pid.isdigit() or int(pid) == me:
+            continue
+        try:
+            with open(f"/proc/{pid}/cmdline", "rb") as f:
+                cmdline = f.read().replace(b"\0", b" ").decode("utf-8", "replace")
+        except OSError:
+            continue
+        if pattern in cmdline:
+            try:
+                os.kill(int(pid), signal.SIGKILL)
+            except OSError:
+                pass
+
 def kill_children():
     global _child_pgid, _child_proc
-    log("Killing all bridge processes forcefully by name...")
-    # Emulate app.sh stop (but don't kill mode_watchdog.py itself)
-    cmd = """
-    . /useremain/rinkhals/.current/tools.sh
-    kill_by_name cloud2lan-supervisor.sh
-    kill_by_name cloud2lan-bridge.py
-    kill_by_name agora_pusher
-    kill_by_name "ffmpeg -nostdin -loglevel quiet -i http://127.0.0.1:18088/flv"
-    """
-    subprocess.call(["/bin/sh", "-c", cmd])
-    
+    log("Killing all bridge processes...")
+    if _child_pgid is not None:
+        try:
+            os.killpg(_child_pgid, signal.SIGKILL)
+        except OSError:
+            pass
+    # The agora pipeline runs in its own session, and a supervisor from an
+    # earlier run may still be around, so sweep by name as well
+    for pattern in KILL_PATTERNS:
+        kill_by_cmdline(pattern)
+    if _child_proc is not None:
+        try:
+            _child_proc.wait(timeout=2)
+        except Exception:
+            pass
+
     _child_pgid = None
     _child_proc = None
 
