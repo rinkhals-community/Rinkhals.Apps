@@ -1,0 +1,36 @@
+{
+    "$version": "1",
+
+    "name": "Static USB Ethernet MAC",
+    "description": "Assign a stable MAC address to a USB Ethernet adapter, useful for DHCP reservations",
+    "version": "1.0",
+    "url": "https://github.com/rinkhals-community/Rinkhals.Apps/tree/develop/apps/static-usb-ether-mac",
+
+    "requirements":
+    {
+        "cpu": 0,
+        "memory": 0
+    },
+
+    "properties": {
+        "mac_address": {
+            "display": "MAC address (empty = derive from printer ID)",
+            "type": "text",
+            "default": ""
+        },
+
+        "interface": {
+            "display": "Interface override (auto-detect if empty)",
+            "type": "text",
+            "default": "",
+            "advanced": true
+        },
+
+        "restart_dhcp": {
+            "display": "Restart DHCP after changing the MAC",
+            "type": "enum",
+            "options": ["True", "False"],
+            "default": "True"
+        }
+    }
+}
