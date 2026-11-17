@@ -138,6 +138,12 @@ stop() {
     stop_fallback_watch
     kill_by_name klippy
 
+    # GoKlipper may already be back (the fallback started it), and a second
+    # instance would fight the first over the MCUs
+    if [ -n "$(get_by_name gklib)" ]; then
+        return 0
+    fi
+
     #MCU reset to allow gklib MCU configuration
     reset_mcus
 
