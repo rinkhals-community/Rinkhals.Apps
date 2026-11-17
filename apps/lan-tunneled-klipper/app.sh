@@ -445,9 +445,19 @@ start() {
         log "Socat start"
         sleep 2
         stop_tunnel_listeners
-        nice -n -20 socat -ly -d -d -T 10 TCP-LISTEN:$SOCAT_MAIN_PORT,reuseaddr,fork,max-children=1,nodelay,keepalive,keepidle=5,keepintvl=1,keepcnt=3 FILE:/dev/ttyS3,rawer,b576000,echo=0,clocal,crtscts=0 &
+
+        # The tunnel gives raw, unauthenticated access to the MCUs, so with a
+        # static address configured, listen only there (the link to the SBC)
+        # instead of on every interface the printer has.
+        LISTEN_OPTS=""
+        if property_is_enabled "$(get_app_property "$APP_NAME" network_enabled)"; then
+            BIND_ADDRESS=$(get_app_property "$APP_NAME" ip_address)
+            [ -n "$BIND_ADDRESS" ] && LISTEN_OPTS=",bind=$BIND_ADDRESS"
+        fi
+        [ -n "$LISTEN_OPTS" ] || log "No static address set: the MCU tunnel listens on every interface"
+        nice -n -20 socat -ly -d -d -T 10 TCP-LISTEN:$SOCAT_MAIN_PORT$LISTEN_OPTS,reuseaddr,fork,max-children=1,nodelay,keepalive,keepidle=5,keepintvl=1,keepcnt=3 FILE:/dev/ttyS3,rawer,b576000,echo=0,clocal,crtscts=0 &
         record_socat_pid "$!" "$SOCAT_MAIN_PID_FILE"
-        nice -n -20 socat -ly -d -d -T 10 TCP-LISTEN:$SOCAT_NOZZLE_PORT,reuseaddr,fork,max-children=1,nodelay,keepalive,keepidle=5,keepintvl=1,keepcnt=3 FILE:/dev/ttyS5,rawer,b576000,echo=0,clocal,crtscts=0 &
+        nice -n -20 socat -ly -d -d -T 10 TCP-LISTEN:$SOCAT_NOZZLE_PORT$LISTEN_OPTS,reuseaddr,fork,max-children=1,nodelay,keepalive,keepidle=5,keepintvl=1,keepcnt=3 FILE:/dev/ttyS5,rawer,b576000,echo=0,clocal,crtscts=0 &
         record_socat_pid "$!" "$SOCAT_NOZZLE_PID_FILE"
 
         cd "$APP_ROOT"

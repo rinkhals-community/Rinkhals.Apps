@@ -10,7 +10,7 @@
             "display": "Set static network configuration",
             "type": "enum",
             "options": ["False", "True"],
-            "default": "True"
+            "default": "False"
         },
         "interface": {
             "display": "Ethernet interface",
