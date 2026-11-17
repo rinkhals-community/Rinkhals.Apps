@@ -147,10 +147,12 @@ stop() {
     #MCU reset to allow gklib MCU configuration
     reset_mcus
 
+    # Start GoKlipper the way Rinkhals' start.sh does: same priority
+    # (rinkhals-community/Rinkhals#128), config link and log
     cd /userdata/app/gk
-
+    ln -sf /userdata/app/gk/printer_data/config/printer.generated.cfg /userdata/app/gk/rinkhals_gklib.cfg
     LD_LIBRARY_PATH=/userdata/app/gk:$LD_LIBRARY_PATH \
-        ./gklib -a /tmp/unix_uds1 /userdata/app/gk/printer_data/config/printer.generated.cfg &> $RINKHALS_ROOT/logs/gklib.log &
+        nice -n -5 ./gklib -a /tmp/unix_uds1 rinkhals_gklib.cfg >> $RINKHALS_LOGS/gklib.log 2>&1 &
 }
 
 case "$1" in

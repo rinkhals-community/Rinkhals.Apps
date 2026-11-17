@@ -63,12 +63,21 @@ fi
 MR_CONF="$CONFIG_DIR/moonraker.custom.conf"
 if [ -f "$MR_CONF" ] && grep -q '^\[ace_status\]' "$MR_CONF"; then
     echo "   removing [ace_status] section from $MR_CONF"
+    # app_real.sh appends a blank line, a comment and the empty section, so
+    # drop all three. Comments and blank lines after the section belong to
+    # whatever follows, so they're held back and printed if a section follows.
     awk '
-        /^# ACE status dashboard API \(added by vanilla-klipper\)/ { next }
-        /^\[ace_status\][ \t]*$/ { skip=1; next }
-        skip && /^\[/ { skip=0 }
-        skip { next }
-        { print }
+        /^# ACE status dashboard API \(added by vanilla-klipper\)/ {
+            if (blanks > 0) blanks--
+            next
+        }
+        /^\[ace_status\][ \t]*$/ { skip=1; hold=""; next }
+        skip && /^\[/ { skip=0; printf "%s", hold }
+        skip && (/^[ \t]*$/ || /^[ \t]*[#;]/) { hold = hold $0 "\n"; next }
+        skip { hold=""; next }
+        /^[ \t]*$/ { blanks++; next }
+        { for (; blanks > 0; blanks--) print ""; print }
+        END { for (; blanks > 0; blanks--) print "" }
     ' "$MR_CONF" > "$MR_CONF.tmp" && mv "$MR_CONF.tmp" "$MR_CONF"
 fi
 
