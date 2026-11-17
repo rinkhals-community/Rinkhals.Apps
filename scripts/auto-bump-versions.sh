@@ -57,6 +57,114 @@ read_pinned() {
 BUILD_IMAGE="ghcr.io/rinkhals-community/rinkhals/build"
 PYTHON_IMAGE="ghcr.io/jbatonnet/armv7-uclibc:rinkhals"
 
+# bump_tracked_app <manifest>
+# For apps built from several repos, each pinned to a commit in the get script.
+# app.json lists them as
+#   "track": [ { "repo": "owner/name", "branch": "dev", "pin": "SOME_VERSION" }, ... ]
+# and each pin is a `SOME_VERSION=<full sha>` line in apps/<name>/get-*.sh. When
+# any branch has moved, move its pin, bump the patch part of app.json's version
+# (the store offers an update when it changes), rebuild the payload and open a PR.
+bump_tracked_app() {
+  local manifest=$1 app_dir app get_script n i repo branch pin pinned head
+  local moved="" rows="" short_ids=""
+  app_dir=$(dirname "$manifest")
+  app=$(basename "$app_dir")
+  get_script=$(ls "$app_dir"/get-*.sh 2>/dev/null | head -1 || true)
+  if [ -z "$get_script" ]; then
+    note "$app: no get-*.sh found; skipping"
+    skipped=$((skipped + 1))
+    return 0
+  fi
+
+  log "checking $app  (tracked repos)"
+  n=$(jq '.track | length' "$manifest")
+  for i in $(seq 0 $((n - 1))); do
+    repo=$(jq -r ".track[$i].repo" "$manifest")
+    branch=$(jq -r ".track[$i].branch // \"master\"" "$manifest")
+    pin=$(jq -r ".track[$i].pin" "$manifest")
+    pinned=$(grep -hE "^[[:space:]]*$pin=" "$get_script" | head -1 | sed -E "s/^[[:space:]]*$pin=//; s/^\"//; s/\"$//")
+    head=$(gh api "repos/$repo/commits/$branch" --jq '.sha' 2>/dev/null || true)
+    if [ -z "$head" ] || [ -z "$pinned" ]; then
+      note "$repo: could not resolve $branch or read $pin; skipping $app"
+      skipped=$((skipped + 1))
+      return 0
+    fi
+    short_ids="$short_ids-${head:0:8}"
+    if [ "$head" != "$pinned" ]; then
+      note "$repo $branch: ${pinned:0:8} -> ${head:0:8}"
+      moved="$moved $pin=$head"
+      rows="$rows
+| \`$repo\` | \`${pinned:0:8}\` | \`${head:0:8}\` | [changes](https://github.com/$repo/compare/$pinned...$head) |"
+    fi
+  done
+
+  if [ -z "$moved" ]; then
+    note "up to date"
+    return 0
+  fi
+
+  local from to branch_name existing old
+  from=$(jq -r '.version' "$manifest")
+  to=$(printf '%s' "$from" | awk -F. '{ $NF = $NF + 1; print }' OFS=.)
+  branch_name="chore/auto-bump-$app$short_ids"
+  log "$app: $from -> $to"
+
+  if [ "$DRY_RUN" -eq 1 ]; then
+    note "[dry-run] would move$moved and open PR on branch $branch_name"
+    opened=$((opened + 1))
+    return 0
+  fi
+
+  existing=$(gh pr list --state open --head "$branch_name" --json number --jq '.[0].number' 2>/dev/null || true)
+  if [ -n "$existing" ]; then
+    note "PR #$existing already open for this bump; skipping"
+    return 0
+  fi
+
+  git checkout --quiet master
+  git reset --quiet --hard origin/master
+  git checkout --quiet -B "$branch_name"
+
+  for assignment in $moved; do
+    sed -i.bak -E "s|^([[:space:]]*${assignment%%=*}=).*|\1${assignment#*=}|" "$get_script"
+  done
+  rm -f "$get_script.bak"
+  sed -i.bak "s/\"version\": *\"[^\"]*\"/\"version\": \"$to\"/" "$manifest"
+  rm -f "$manifest.bak"
+
+  docker run --rm -v "$PWD/apps:/apps" "$BUILD_IMAGE" sh "/apps/$app/$(basename "$get_script")"
+  if [ -f "$app_dir/get-packages.sh" ]; then
+    docker run --rm --platform linux/arm/v7 -v "$PWD/apps:/apps" "$PYTHON_IMAGE" sh "/apps/$app/get-packages.sh"
+  fi
+  docker run --rm -v "$PWD/apps:/apps" "$BUILD_IMAGE" chown -R "$(id -u):$(id -g)" "/apps/$app"
+
+  git add -A "$app_dir"
+  git commit --quiet -m "chore($app): auto-bump $from -> $to
+
+Moved:$moved"
+  git push --quiet -u origin "$branch_name"
+
+  gh pr create --base master --head "$branch_name" \
+    --title "chore($app): auto-bump $from -> $to" \
+    --body "Auto-bump from the upstream-tracking bot. These repos moved:
+
+| repo | from | to | |
+|---|---|---|---|$rows
+
+The payload was rebuilt from the new commits. Test on a printer before merging. If you don't want this bump, close this PR; the bot opens a new one when the repos move again." >&2
+  opened=$((opened + 1))
+
+  for old in $(gh pr list --state open --limit 100 --json headRefName --jq '.[].headRefName'); do
+    case "$old" in
+      "$branch_name") ;;
+      "chore/auto-bump-$app-"*)
+        note "closing superseded $old"
+        gh pr close "$old" --delete-branch --comment "Superseded by the bump to $to." >&2 || true
+        ;;
+    esac
+  done
+}
+
 # Discover apps to consider.
 APPS_DIR="apps"
 found=0
@@ -67,6 +175,13 @@ for manifest in "$APPS_DIR"/*/app.json; do
   app_dir=$(dirname "$manifest")
   app=$(basename "$app_dir")
   [ "$app" = "example" ] && continue
+
+  # Apps built from several pinned repos use a "track" block instead
+  if jq -e '.track | length > 0' "$manifest" >/dev/null 2>&1; then
+    found=$((found + 1))
+    bump_tracked_app "$manifest"
+    continue
+  fi
 
   # Bail if no upstream block.
   type=$(jq -r '.upstream.type // empty' "$manifest")

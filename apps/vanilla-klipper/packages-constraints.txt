@@ -1,0 +1,6 @@
+# Versions of Klippy's indirect dependencies that this app was tested with on
+# the printer. klippy-requirements.txt only pins Klippy's direct dependencies,
+# so without these a rebuild picks up whatever is newest.
+aenum==3.1.15
+pycparser==2.22
+wrapt==1.17.2

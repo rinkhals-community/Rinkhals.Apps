@@ -1,0 +1,12 @@
+{
+    "$version": "1",
+
+    "name": "Klipper (vanilla)",
+    "description": "Mainline Klipper in place of Anycubic's GoKlipper, with ACE Pro and ACE 2 Pro support and the ACE dashboard. By Kobra-S1.",
+    "version": "1.2.0",
+
+    "track": [
+        { "repo": "Kobra-S1/klipper-kobra-s1", "branch": "Kobra-S1-Dev", "pin": "KLIPPER_VERSION" },
+        { "repo": "Kobra-S1/ACEPRO", "branch": "dev", "pin": "ACEPRO_VERSION" }
+    ]
+}
