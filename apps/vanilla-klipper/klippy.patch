@@ -11,3 +11,15 @@ index fa1261be97ee58f778b65d67b08d47429cc34416..626b7a10d84ed58ef3e90cccd2d28b9c
                  " -o %s %s")
  SSE_FLAGS = "-mfpmath=sse -msse2"
  SOURCE_FILES = [
+diff --git klippy/queuelogger.py klippy/queuelogger.py
+--- klippy/queuelogger.py
++++ klippy/queuelogger.py
+@@ -24,7 +24,7 @@
+ class QueueListener(logging.handlers.TimedRotatingFileHandler):
+     def __init__(self, filename):
+         logging.handlers.TimedRotatingFileHandler.__init__(
+-            self, filename, when='midnight', backupCount=5)
++            self, filename, when='midnight', backupCount=1)
+         self.bg_queue = queue.Queue()
+         self.bg_thread = threading.Thread(target=self._bg_thread)
+         self.bg_thread.start()

@@ -105,6 +105,18 @@ start() {
     cd $APP_ROOT
     chmod +x klippy.sh
     ./klippy.sh &
+
+    # Bring GoKlipper back if Klippy doesn't come up. Detached, with no
+    # inherited stdout, so a caller capturing our output isn't held open.
+    stop_fallback_watch
+    setsid sh "$APP_ROOT/fallback-watch.sh" </dev/null >/dev/null 2>&1 &
+}
+
+stop_fallback_watch() {
+    if [ -f /tmp/vanilla-klipper-fallback.pid ]; then
+        kill $(cat /tmp/vanilla-klipper-fallback.pid) 2>/dev/null || true
+        rm -f /tmp/vanilla-klipper-fallback.pid
+    fi
 }
 
 debug() {
@@ -123,8 +135,9 @@ debug() {
 }
 
 stop() {
+    stop_fallback_watch
     kill_by_name klippy
-    
+
     #MCU reset to allow gklib MCU configuration
     reset_mcus
 

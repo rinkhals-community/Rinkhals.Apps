@@ -69,6 +69,24 @@ it a minute or so and it will come up.
 
 ---
 
+## If Klipper doesn't come up
+
+Klipper logs to `klippy.log` in the printer's logs folder, so **KLIPPY.LOG** in
+Mainsail and Fluidd shows why it stopped. If Klipper isn't ready within three
+minutes of starting (ten on the very first start, while the helper compiles), the
+app starts the stock GoKlipper again, so a broken config never leaves the printer
+without a controller. Fix the config and restart the app.
+
+## Where it comes from
+
+Klipper is [Kobra-S1/klipper-kobra-s1](https://github.com/Kobra-S1/klipper-kobra-s1)
+(mainline Klipper plus the Kobra modules), and the ACE Pro driver, dashboard and
+reference configs are [Kobra-S1/ACEPRO](https://github.com/Kobra-S1/ACEPRO). Both
+are pinned in `get-klipper.sh`, and the Rinkhals.Apps auto-bump opens a pull request
+whenever either one moves.
+
+---
+
 ## Configuration — use a *different* file than go-klipper
 
 vanilla-klipper is configured through **its own, separate config file**, not the

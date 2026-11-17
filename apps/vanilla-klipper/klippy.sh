@@ -45,9 +45,10 @@ fi
 # Start Klippy
 cd klippy
 
-#Use this klippy start line to enable logging for debugging
-#nice -n -20 python -m klippy -a /tmp/unix_uds1 $CONFIG_DESTINATION >> /tmp/klippy.log 2>&1 &
-
-#Silent start to avoid filling up log with normal output, as it consumes space in /tmp folder RAMDisk
-nice -n -20 python -m klippy -a /tmp/unix_uds1 "$CONFIG_DESTINATION" >/dev/null 2>&1 &
+# Log where Moonraker serves logs from, so KLIPPY.LOG in Mainsail and Fluidd
+# works (rinkhals-community/Rinkhals#151). That's flash, not the /tmp RAM disk,
+# and klippy.patch keeps only one rotated copy so it can't grow unbounded.
+KLIPPY_LOG=/userdata/app/gk/printer_data/logs/klippy.log
+mkdir -p "$(dirname "$KLIPPY_LOG")"
+nice -n -20 python -m klippy -a /tmp/unix_uds1 -l "$KLIPPY_LOG" "$CONFIG_DESTINATION" >/dev/null 2>&1 &
 assert_by_name klippy
