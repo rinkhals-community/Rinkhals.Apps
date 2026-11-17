@@ -2,7 +2,8 @@ import socket
 import threading
 import json
 
-HOST = '0.0.0.0'
+# The real gkapi listens only on localhost
+HOST = '127.0.0.1'
 PORT = 18086
 
 class FakeGkapiServer:
