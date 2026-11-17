@@ -1,6 +1,11 @@
 . /useremain/rinkhals/.current/tools.sh
 APP_ROOT=$(dirname $(realpath $0))
 
+# The configs use ~/printer_data/... paths. Apps started at boot get
+# HOME=$RINKHALS_HOME, where printer_data is bound to the printer's config
+# folder, but a start from an SSH shell has HOME=/root, so set it here.
+export HOME=$RINKHALS_HOME
+
 # Activate Python venv
 python -m venv --without-pip $APP_ROOT
 . bin/activate
