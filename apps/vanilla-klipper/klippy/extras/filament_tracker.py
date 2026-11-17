@@ -52,7 +52,7 @@ class FilamentTrackerStatus:
 
     Attributes:
         filament_distance: Cumulative filament travel in mm as measured
-            by the encoder (encoder_pulse × length_per_pulse).  Stays
+            by the encoder (encoder_pulse / edges_per_pulse × length_per_pulse).  Stays
             0.0 when length_per_pulse is not configured.
         filament_present: 1 when filament is detected, 0 when absent.
         encoder_pulse: Total rising/falling edge count from the
@@ -124,6 +124,12 @@ class FilamentTracker:
 
         self.safe_unwind_len = config.getfloat("safe_unwind_len", 100., above=0.)
         self.length_per_pulse = config.getfloat("length_per_pulse", 0., above=0.)
+        # encoder_pulse counts edges (rising and falling). length_per_pulse is
+        # the length of one full pulse when edges_per_pulse is 2 (measured on a
+        # Kobra S1 RDM encoder over ADC: the distance came out at 2.04x the
+        # extruded length with 1). Default 1 keeps the previous behaviour.
+        self.edges_per_pulse = config.getint("edges_per_pulse", 1,
+                                             minval=1, maxval=2)
         self.signal_type = config.get("signal_type", "gpio")
         self._detect_pin_is_switch = config.getboolean(
             "detect_pin_is_switch", False)
@@ -178,12 +184,14 @@ class FilamentTracker:
         if self.signal_type == "adc":
             ppins = self.printer.lookup_object("pins")
             self._detect_adc_pin = ppins.setup_pin("adc", self.detect_pin)
-            self._detect_adc_pin.setup_adc_sample(ADC_SAMPLE_TIME, ADC_SAMPLE_COUNT)
-            self._detect_adc_pin.setup_adc_callback(ADC_REPORT_TIME, self._detect_adc_handler)
+            self._detect_adc_pin.setup_adc_sample(
+                ADC_REPORT_TIME, ADC_SAMPLE_TIME, ADC_SAMPLE_COUNT)
+            self._detect_adc_pin.setup_adc_callback(self._detect_adc_samples)
 
             self._encoder_adc_pin = ppins.setup_pin("adc", self.encoder_pin)
-            self._encoder_adc_pin.setup_adc_sample(ADC_SAMPLE_TIME, ADC_SAMPLE_COUNT)
-            self._encoder_adc_pin.setup_adc_callback(ADC_REPORT_TIME, self._encoder_adc_handler)
+            self._encoder_adc_pin.setup_adc_sample(
+                ADC_REPORT_TIME, ADC_SAMPLE_TIME, ADC_SAMPLE_COUNT)
+            self._encoder_adc_pin.setup_adc_callback(self._encoder_adc_samples)
         else:
             buttons = self.printer.load_object(config, "buttons")
             buttons.register_buttons([self.detect_pin, self.encoder_pin],
@@ -344,7 +352,8 @@ class FilamentTracker:
         present (encoder activity = filament is moving).
         """
         self.tracker_status.filament_distance = (
-            self.tracker_status.encoder_pulse * self.length_per_pulse)
+            self.tracker_status.encoder_pulse * self.length_per_pulse
+            / self.edges_per_pulse)
         if self._motion_detection_enabled and self._extruder is not None:
             self._update_filament_runout_pos(eventtime)
             self.runout_helper.note_filament_present(eventtime, True)
@@ -362,6 +371,16 @@ class FilamentTracker:
         )
 
     # ADC path
+    def _detect_adc_samples(self, samples):
+        """ADC callback (list of (time, value) per report) for the detect pin."""
+        for read_time, read_value in samples:
+            self._detect_adc_handler(read_time, read_value)
+
+    def _encoder_adc_samples(self, samples):
+        """ADC callback (list of (time, value) per report) for the encoder pin."""
+        for read_time, read_value in samples:
+            self._encoder_adc_handler(read_time, read_value)
+
     def _detect_adc_handler(self, read_time, read_value):
         """ADC callback for the detect (presence) pin."""
         self._detect_adc_val = read_value

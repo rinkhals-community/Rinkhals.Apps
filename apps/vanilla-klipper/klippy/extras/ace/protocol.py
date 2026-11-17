@@ -12,6 +12,26 @@ from typing import Any, Dict, Iterable, List, Mapping, Tuple
 
 
 # ---------------------------------------------------------------------------
+# Shared checksum
+# ---------------------------------------------------------------------------
+
+def crc16_mcrf4xx(data: bytes) -> int:
+    """CRC-16/MCRF4XX (poly 0x8408 reflected, init 0xFFFF, no final XOR).
+
+    The one checksum of the ACE wire protocol: it covers every frame of both
+    generations and, on ACE2, the whole firmware image announced in
+    IAP_UPGRADE (stock uses one function for both). Check value for
+    b"123456789" is 0x6F91.
+    """
+    crc = 0xFFFF
+    for byte in data:
+        mixed = (byte ^ crc) & 0xFF
+        mixed ^= (mixed & 0x0F) << 4
+        crc = ((mixed << 8) | (crc >> 8)) ^ (mixed >> 4) ^ (mixed << 3)
+    return crc & 0xFFFF
+
+
+# ---------------------------------------------------------------------------
 # Shared data types
 # ---------------------------------------------------------------------------
 
@@ -186,13 +206,17 @@ def sort_ace_candidate_ports(
 
         location = get_port_usb_location(portinfo)
         location_key = parse_usb_location(location)
-        # Sort by hop-count (depth) first, then lexicographically within the
-        # same depth. Hop-count is what guarantees daisy-chain order: a unit
-        # chained through another unit's internal hub is *always* exactly one
-        # hop deeper than its upstream neighbor, regardless of which physical
-        # port number that unit's hub happens to wire its own MCU to. Sorting
-        # on the raw tuple alone can misorder units whose "own MCU" port
-        # number is numerically higher than their "chain-out" port number.
+        # Sort by hop-count (depth) first, then numerically within the same
+        # depth. Hub-bearing units (ACE1 has a built-in hub) nest each chained
+        # hub-bearing neighbor one hop deeper, so depth orders those chains
+        # correctly even when a unit wires its own MCU to a higher port number
+        # than its chain-out port (raw tuple order would misorder that case).
+        # Hubless devices (the ACE2 RS485 USB adapter) do NOT appear deeper:
+        # they attach as a *sibling* of the upstream unit's MCU on the same
+        # hub - verified on hardware: ACE1 MCU at 3-1.3, chained ACE2 adapter
+        # at 3-1.4. Equal-depth entries fall back to numeric port order; for
+        # dedicated-vs-shared candidates the ACE1-first normalization in
+        # _resolve_daisy_chain_topology decides the final order anyway.
         sort_key = (len(location_key), location_key)
         matches.append((sort_key, location, portinfo.device, matched[0], matched[1]))
 
@@ -307,6 +331,10 @@ class AceProtocolAdapter:
         """Build a protocol-specific debug request."""
         raise NotImplementedError()
 
+    def supports_firmware_update(self) -> bool:
+        """Whether ``build_iap_*_request`` exist for this protocol."""
+        return False
+
     def get_command_catalog(self) -> Tuple[AceCommandSpec, ...]:
         """Return the command catalog exposed by this protocol."""
         raise NotImplementedError()
@@ -330,6 +358,19 @@ class AceProtocolAdapter:
     def build_stop_feed_assist_request(self, slot_index: int) -> Dict[str, Any]:
         """Build a request to disable feed assist for a slot."""
         raise NotImplementedError()
+
+    def build_start_rollback_assist_request(self, slot_index: int) -> Dict[str, Any] | None:
+        """Build a request that makes the unit follow while the extruder pulls
+        the slot's filament back, or None for a unit that lets the filament
+        go by itself while idle and needs none. Stopped with
+        build_stop_unwind_filament_request."""
+        return None
+
+    def slow_first_unwind(self) -> Tuple[float, float] | None:
+        """(length mm, speed mm/s) of a slow pull out of the toolhead's
+        inlet that an unload makes before the full-speed pull back, or None
+        for none."""
+        return None
 
     def feed_assist_causes_busy(self) -> bool:
         """Return True if activating feed assist transitions the device to a non-ready status.

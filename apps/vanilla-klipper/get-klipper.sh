@@ -1,43 +1,59 @@
 #!/bin/sh
 set -eu
-# Run from Docker:
-#   docker run --rm -it -v .\apps:/apps ghcr.io/jbatonnet/rinkhals/build /apps/vanilla-klipper/get-klipper.sh
+# Run from Docker, at the repo root:
+#   docker run --rm -v ./apps:/apps ghcr.io/rinkhals-community/rinkhals/build sh /apps/vanilla-klipper/get-klipper.sh
+#
+# Klipper comes from Kobra-S1's fork (mainline Klipper plus the Kobra modules),
+# the ACE Pro driver, its dashboard and the reference configs from
+# Kobra-S1/ACEPRO. Both are pinned below, and scripts/auto-bump-versions.sh
+# moves the pins through the "track" block in app.json.
 
-mkdir /work
+KLIPPER_VERSION=880188ba35600c57e60865192a494dd5af88f809
+ACEPRO_VERSION=200583b525c3340dc9d0e3d39268590af2348334
+
+APP=/apps/vanilla-klipper
+
+rm -rf /work
+mkdir -p /work
 cd /work
 
-# Klipper
-echo "Downloading Klipper..."
+echo "Downloading Klipper (Kobra-S1/klipper-kobra-s1 $KLIPPER_VERSION)..."
+wget -q -O klipper.zip "https://github.com/Kobra-S1/klipper-kobra-s1/archive/$KLIPPER_VERSION.zip"
+unzip -q -d klipper klipper.zip
+KLIPPER=$(echo /work/klipper/*)
 
-# Klipper base commit is auto-detected from the Kobra-S1 fork by
-# generate_klipper_patch.sh and stored in klipper-base.txt.
-KLIPPER_REF=$(cat /apps/vanilla-klipper/klipper-base.txt)
-echo "Using klipper base: $KLIPPER_REF"
+echo "Downloading the ACE Pro driver (Kobra-S1/ACEPRO $ACEPRO_VERSION)..."
+wget -q -O acepro.zip "https://github.com/Kobra-S1/ACEPRO/archive/$ACEPRO_VERSION.zip"
+unzip -q -d acepro acepro.zip
+ACEPRO=$(echo /work/acepro/*)
 
-wget -O klipper.zip https://github.com/Klipper3d/klipper/archive/$KLIPPER_REF.zip
-unzip -d klipper klipper.zip
-
-mkdir -p /apps/vanilla-klipper/klippy
-rm -rf /apps/vanilla-klipper/klippy/*
-
-cp -pr /work/klipper/*/klippy/* /apps/vanilla-klipper/klippy/
-cp -p /work/klipper/*/scripts/klippy-requirements.txt /apps/vanilla-klipper/
-
-cd /apps/vanilla-klipper
+# Klippy
+rm -rf "$APP/klippy"
+cp -pr "$KLIPPER/klippy" "$APP/klippy"
+cp -p "$KLIPPER/scripts/klippy-requirements.txt" "$APP/"
+cd "$APP"
 patch -p0 < klippy.patch
 
-#Add driver for ACE Pro and virtual_pins module
-# ACE Pro klippy extras + config, auto-generated from the Kobra-S1/ACEPRO fork
-grep '^diff --git' acepro.patch | sed 's|.* b/||' | while read -r f; do rm -f "$f"; done
-patch -p1 < acepro.patch
+# ACE Pro driver
+rm -rf "$APP/klippy/extras/ace"
+cp -pr "$ACEPRO/extras/ace" "$APP/klippy/extras/ace"
+cp -p "$ACEPRO/extras/temperature_ace.py" "$ACEPRO/extras/virtual_pins.py" "$APP/klippy/extras/"
 
-# ACE status dashboard (ace_status_integration: moonraker component + web UI),
-# auto-generated from the Kobra-S1/ACEPRO fork by generate_ace_dashboard_patch.sh.
-# Deployed to Moonraker/Mainsail at runtime by app.sh (self-healing).
-grep '^diff --git' ace_dashboard.patch | sed 's|.* b/||' | while read -r f; do rm -f "$f"; done
-patch -p1 < ace_dashboard.patch
+# ACE status dashboard, deployed to Moonraker and Mainsail at runtime by app_real.sh
+rm -rf "$APP/ace_status_integration"
+cp -pr "$ACEPRO/ace_status_integration" "$APP/ace_status_integration"
 
-# Apply our Kobra-S1 klippy changes (extra modules + config)
-patch -p1 < kobra_klippy.patch
+# Reference configs. ACEPRO ships them set up for tunneled-klipper; this app
+# runs Klipper on the printer, so vanilla-cfg.awk enables the on-printer serial
+# ports and SD path, comments out the tunneled ones, and leaves the ACE off
+# until the user turns it on, as in the configs this app has always shipped.
+for f in ace_macros_generic.cfg printer_generic_macros.cfg spoolman_logic.cfg; do
+    cp -p "$ACEPRO/config/$f" "$APP/$f"
+done
+for model in K3 K3M KS1; do
+    awk -f "$APP/vanilla-cfg.awk" "$ACEPRO/config/printer_$model.cfg" > "$APP/printer_$model.cfg"
+    awk -f "$APP/vanilla-cfg.awk" "$ACEPRO/config/ace_$model.cfg" > "$APP/ace_$model.cfg"
+done
 
-
+rm -rf /work
+echo "Done."

@@ -9,6 +9,7 @@ Responsibilities:
 - Port detection and enumeration
 """
 
+import select
 import serial
 import json
 import threading
@@ -16,10 +17,11 @@ import queue
 import logging
 import traceback
 import re
+from types import SimpleNamespace
 from serial import SerialException
 import serial.tools.list_ports
 
-from .protocol import transport_description_matches, parse_usb_location
+from .protocol import crc16_mcrf4xx, transport_description_matches, parse_usb_location
 from .protocol_ace1 import AceJsonProtocolAdapter
 
 # Process-global registry of physical serial ports currently claimed by a
@@ -40,6 +42,8 @@ class AceSerialManager:
     QUEUE_MAXSIZE = 1024
     WINDOW_SIZE = 4
     DEFAULT_TIMEOUT_S = 5.0
+    # A connected port that takes no output for this long is reconnected.
+    TX_STALL_LIMIT_S = 2.0
 
     def __init__(
             self,
@@ -103,6 +107,9 @@ class AceSerialManager:
         self._queue = queue.Queue(maxsize=self.QUEUE_MAXSIZE)
 
         self.read_buffer = bytearray()
+        # Frames not yet taken by the port, and since when it takes nothing.
+        self._tx_buffer = bytearray()
+        self._tx_stalled_since = None
         self.send_time = None
 
         self.writer_timer = None
@@ -128,6 +135,13 @@ class AceSerialManager:
         self.last_temp = None
         self.last_feed_assist_count = None
         self.last_cont_assist_time = None
+        self.last_raw_fields = None
+        # Shared-bus responses are tagged with a device_id; their debug
+        # change-detection state lives here per device so the interleaved
+        # status streams of multiple units don't false-flip against one
+        # flat last-state. Untagged (ACE1) responses keep the flat
+        # attributes above.
+        self._device_debug_states = {}
 
         self._ace_pro_enabled = ace_enabled
         self._status_debug_logging = bool(status_debug_logging)
@@ -140,7 +154,10 @@ class AceSerialManager:
         # Connection stability tracking
         # Rate-based detection: unstable if too many reconnects in short window
         self.INSTABILITY_WINDOW = 180.0      # Look at reconnects in last 3 minutes
-        self.INSTABILITY_THRESHOLD = 6       # 6+ reconnects in window = unstable
+        # 4+ reconnects in window = unstable. A link that dies every ~45s
+        # (observed field failure) accumulates only 3-5 events per window,
+        # so the previous threshold of 6 never flagged sustained flapping.
+        self.INSTABILITY_THRESHOLD = 4
         self.STABILITY_GRACE_PERIOD = 30.0   # Must stay connected 30s to be "stable"
         self.COUNTER_RESET_PERIOD = 180.0    # Reset counter after 3 min of stability
 
@@ -169,8 +186,19 @@ class AceSerialManager:
         self._last_supervision_check = 0.0      # Last time we checked health
         self.SUPERVISION_CHECK_INTERVAL = 5.0   # Check every 5 seconds
 
-    def enable_ace_pro(self):
-        """Enable ACE Pro and reconnect if not connected."""
+        # Duplicate-response detection: a reply for a request id that was
+        # already answered can only come from a second device answering on
+        # the same bus identity (ACE2 device_id collision) or a firmware
+        # retransmit. Such replies must never reach runtime state - which of
+        # the two devices they came from is unknowable.
+        self.RECENT_DISPATCH_WINDOW = 30.0      # Remember answered ids this long
+        self.DUPLICATE_WARN_INTERVAL = 60.0     # Rate limit for collision warning
+        self._recently_dispatched_ids = {}      # rid -> monotonic dispatch time
+        self._comm_duplicate_timestamps = []    # Duplicate reply times (health stats)
+        self._last_duplicate_warn_time = None
+
+    def enable_ace_pro(self, baud):
+        """Enable ACE Pro and reconnect at baud if it was disabled."""
         was_disabled = not self._ace_pro_enabled
         self._ace_pro_enabled = True
 
@@ -179,11 +207,10 @@ class AceSerialManager:
             self.gcode.respond_info(
                 f"ACE[{self.instance_num}]: ACE Pro enabled - reconnecting"
             )
-            baud = self._baud if self._baud else 115200
             self.gcode.respond_info(
                 f"ACE[{self.instance_num}]: Using baud rate: {baud}"
             )
-            self.connect_to_ace(baud, delay=0.5)
+            self.connect_to_ace(baud)
 
     def disable_ace_pro(self):
         """Disable ACE Pro and disconnect immediately."""
@@ -256,11 +283,19 @@ class AceSerialManager:
                     if owner != self.instance_num
                 }
 
+        # Ports claimed by other instances are excluded from selection but
+        # still occupy a position in the physical chain: without counting
+        # them, instance 1 would look for matches[1] after instance 0's
+        # port was dropped from the list and never bind even though its
+        # device is visible.
+        claimed_count = 0
+
         for portinfo in ports:
             if not transport_description_matches(device_name, portinfo.description):
                 continue
 
             if portinfo.device in claimed_elsewhere:
+                claimed_count += 1
                 logging.info(
                     f"ACE[{self.instance_num}] Skipping {portinfo.device} - "
                     f"already claimed by another instance"
@@ -292,13 +327,15 @@ class AceSerialManager:
         # Sort by physical daisy-chain position (depth-first, then location)
         matches.sort(key=lambda x: x[0])
 
+        effective_instance = max(0, instance - claimed_count)
+
         logging.info(f"ACE[{self.instance_num}] USB enumeration order:")
         for idx, (sort_key, loc, dev) in enumerate(matches):
-            marker = " <- SELECTED" if idx == instance else ""
+            marker = " <- SELECTED" if idx == effective_instance else ""
             logging.info(f"  [{idx}] {dev} at {loc}{marker}")
 
-        if len(matches) > instance:
-            return matches[instance][2]
+        if len(matches) > effective_instance:
+            return matches[effective_instance][2]
         return None
 
     def find_port_by_location(self, device_name, target_location, ports=None):
@@ -422,8 +459,12 @@ class AceSerialManager:
 
     # ========== Serial Connection Management ==========
 
-    def connect_to_ace(self, baud, delay=2):
-        """Start connection attempts (only if ACE enabled)."""
+    def connect_to_ace(self, baud):
+        """Start a fresh run of connection attempts (only if ACE enabled).
+
+        The first attempt comes after the backoff floor: a backoff grown by
+        an earlier run (e.g. before ACE was switched off and on) is dropped.
+        """
         if not self._ace_pro_enabled:
             self.gcode.respond_info(
                 f'ACE[{self.instance_num}]: ACE Pro disabled - '
@@ -470,6 +511,7 @@ class AceSerialManager:
                 )
                 return eventtime + current_backoff
 
+        self._reconnect_backoff = self._reconnect_backoff_floor()
         initial_delay = self._reconnect_backoff
         logging.info(
             f'ACE[{self.instance_num}]: Starting connection (first attempt in {initial_delay:.0f}s)'
@@ -487,8 +529,13 @@ class AceSerialManager:
             )
             return
 
-        # Get current reconnect count for logging (don't add timestamp here - callback does it on failure)
+        # Record this connection loss for instability detection. Counting
+        # only failed connect attempts (as the callbacks below do) misses the
+        # dominant storm pattern: the device re-enumerates and every attempt
+        # succeeds on the first try, so the counter would stay at 0 through
+        # 90 reconnects/hour and instability detection would never trigger.
         now = self.reactor.monotonic()
+        self._reconnect_timestamps.append(now)
         cutoff = now - self.INSTABILITY_WINDOW
         self._reconnect_timestamps = [t for t in self._reconnect_timestamps if t > cutoff]
 
@@ -687,7 +734,8 @@ class AceSerialManager:
                 port=port,
                 baudrate=baud,
                 timeout=0,
-                write_timeout=0.1
+                # Non-blocking: see _drain_tx.
+                write_timeout=0
             )
             if self._serial.is_open:
                 self._connected = True
@@ -732,6 +780,8 @@ class AceSerialManager:
                 # Clear supervision counters on successful connection
                 self._comm_timeout_timestamps = []
                 self._comm_unsolicited_timestamps = []
+                self._comm_duplicate_timestamps = []
+                self._recently_dispatched_ids = {}
 
                 # Call on_connect callback if registered
                 callbacks = []
@@ -752,7 +802,9 @@ class AceSerialManager:
                         )
 
                 return True
-        except SerialException as e:
+        except (SerialException, OSError) as e:
+            # OSError: the device left between the port scan and the open
+            # (pyserial's DTR ioctl does not wrap it).
             self.gcode.respond_info(f"ACE[{self.instance_num}]: Connection failed: {e}")
             self._serial = None
         return False
@@ -785,11 +837,15 @@ class AceSerialManager:
 
         self._connected = False
         self.read_buffer = bytearray()
+        self._tx_buffer = bytearray()
+        self._tx_stalled_since = None
         self.clear_queues()
 
         # Clear supervision counters on disconnect
         self._comm_timeout_timestamps = []
         self._comm_unsolicited_timestamps = []
+        self._comm_duplicate_timestamps = []
+        self._recently_dispatched_ids = {}
 
         # Stop writer timer
         if self.writer_timer:
@@ -865,8 +921,8 @@ class AceSerialManager:
 
         Stable means:
         - Currently connected
-        - Connected for at least STABILITY_GRACE_PERIOD (30s)
-        - Less than INSTABILITY_THRESHOLD (3) reconnects in INSTABILITY_WINDOW (60s)
+        - Connected for at least STABILITY_GRACE_PERIOD
+        - Fewer than INSTABILITY_THRESHOLD reconnects in INSTABILITY_WINDOW
 
         Returns:
             bool: True if connected and stable
@@ -998,6 +1054,8 @@ class AceSerialManager:
 
         timeout_count = len(self._comm_timeout_timestamps)
         unsolicited_count = len(self._comm_unsolicited_timestamps)
+        self._comm_duplicate_timestamps = [t for t in self._comm_duplicate_timestamps if t > cutoff]
+        duplicate_count = len(self._comm_duplicate_timestamps)
         time_since_check = now - self._last_supervision_check
 
         return {
@@ -1015,6 +1073,7 @@ class AceSerialManager:
                 "timeout_threshold": self.COMM_TIMEOUT_THRESHOLD,
                 "unsolicited_count": unsolicited_count,
                 "unsolicited_threshold": self.COMM_UNSOLICITED_THRESHOLD,
+                "duplicate_count": duplicate_count,
                 "window_seconds": self.COMM_SUPERVISION_WINDOW,
                 "check_interval": self.SUPERVISION_CHECK_INTERVAL,
                 "time_since_check": time_since_check,
@@ -1025,13 +1084,7 @@ class AceSerialManager:
 
     def _calc_crc(self, buffer):
         """Calculate CRC-16 for payload."""
-        _crc = 0xffff
-        for byte in buffer:
-            data = byte
-            data ^= _crc & 0xff
-            data ^= (data & 0x0f) << 4
-            _crc = ((data << 8) | (_crc >> 8)) ^ (data >> 4) ^ (data << 3)
-        return _crc
+        return crc16_mcrf4xx(buffer)
 
     # ========== Request/Response Queuing ==========
 
@@ -1109,39 +1162,70 @@ class AceSerialManager:
 
         data = self.protocol.serialize_request_frame(request, self._calc_crc)
 
+        self._tx_buffer += data
+        self._drain_tx()
+
+    def _fail_inflight(self):
+        """Answer every in-flight request with None and forget it."""
+        with self._lock:
+            for rid in list(self.inflight):
+                self.inflight.pop(rid, None)
+                cb = self._callback_map.pop(rid, None)
+                if cb:
+                    try:
+                        cb(response=None)
+                    except Exception as cb_e:
+                        self.gcode.respond_info(
+                            f"ACE[{self.instance_num}]: Error callback error: {cb_e}"
+                        )
+
+    def _tx_writable(self):
+        """Whether the port takes output right now, without waiting."""
+        return bool(select.select([], [self._serial], [], 0)[1])
+
+    def _drain_tx(self):
+        """Write what the port takes of the pending output, without waiting.
+
+        This runs in the reactor, where a wait stalls all of Klipper: step
+        generation for a homing move runs only about 0.1 s ahead. So the
+        port is written only when it is writable (pyserial's own
+        non-blocking write spins on EAGAIN), the rest stays buffered for
+        the next writer tick, and a port that takes nothing for
+        TX_STALL_LIMIT_S is reconnected. A failed write drops the output
+        and fails every in-flight request.
+        """
+        if not self._tx_buffer:
+            self._tx_stalled_since = None
+            return
         try:
             with self._serial_lock:
-                self._serial.write(data)
-        except serial.SerialTimeoutException as e:
-            self.gcode.respond_info(
-                f"ACE[{self.instance_num}]: Serial write timeout: {e} (clearing inflight)"
-            )
-            with self._lock:
-                rid = request.get('id')
-                if rid in self.inflight:
-                    self.inflight.pop(rid, None)
-                    cb = self._callback_map.pop(rid, None)
-                    if cb:
-                        try:
-                            cb(response=None)
-                        except Exception as cb_e:
-                            self.gcode.respond_info(
-                                f"ACE[{self.instance_num}]: Timeout callback error: {cb_e}"
-                            )
+                writable = self._tx_writable()
+                if writable:
+                    sent = self._serial.write(bytes(self._tx_buffer))
+                    del self._tx_buffer[:sent]
         except Exception as e:
             self.gcode.respond_info(f"ACE[{self.instance_num}]: Serial write error: {e}")
-            with self._lock:
-                rid = request.get('id')
-                if rid in self.inflight:
-                    self.inflight.pop(rid, None)
-                    cb = self._callback_map.pop(rid, None)
-                    if cb:
-                        try:
-                            cb(response=None)
-                        except Exception as cb_e:
-                            self.gcode.respond_info(
-                                f"ACE[{self.instance_num}]: Error callback error: {cb_e}"
-                            )
+            self._tx_buffer = bytearray()
+            self._tx_stalled_since = None
+            # The dropped bytes may hold any in-flight request; which ones
+            # is unknown, so none of them can be answered any more.
+            self._fail_inflight()
+            return
+        if writable:
+            self._tx_stalled_since = None
+            return
+
+        now = self.reactor.monotonic()
+        if self._tx_stalled_since is None:
+            self._tx_stalled_since = now
+        elif now - self._tx_stalled_since > self.TX_STALL_LIMIT_S:
+            self.gcode.respond_info(
+                f"ACE[{self.instance_num}]: Serial port took no data for "
+                f"{now - self._tx_stalled_since:.1f}s - reconnecting"
+            )
+            self._tx_buffer = bytearray()
+            self._tx_stalled_since = None
+            self.reconnect()
 
     # ========== Frame Reading and Parsing ==========
 
@@ -1192,7 +1276,70 @@ class AceSerialManager:
                 if cb:
                     self.inflight.pop(rid, None)
 
+        if cb is not None:
+            now = self.reactor.monotonic()
+            cutoff = now - self.RECENT_DISPATCH_WINDOW
+            self._recently_dispatched_ids = {
+                r: t for r, t in self._recently_dispatched_ids.items() if t > cutoff
+            }
+            self._recently_dispatched_ids[rid] = now
+
         return cb, cb is not None
+
+    def _handle_duplicate_response(self, response):
+        """Detect and absorb a second reply to an already-answered request.
+
+        Returns True if the response duplicates a recently dispatched request
+        id. On an ACE2 shared bus this is the signature of two units holding
+        the same device_id (bus identity collision): both answer every
+        targeted request, the first reply consumes the callback and the
+        second lands here. The duplicate is dropped - its payload may come
+        from either unit, so routing it into runtime state would corrupt
+        status/inventory with the ghost unit's data.
+        """
+        rid = response.get('id')
+        if rid is None:
+            return False
+
+        # DISCOVER_DEVICE is a broadcast: every unit on the bus answers the
+        # SAME request id, so a second reply is expected discovery data (the
+        # race loser), not an identity collision. It must flow on to the
+        # unsolicited demultiplexer, which records it as a present unit -
+        # dropping it here would blind discovery to all but the race winner.
+        if response.get('command') == 'DISCOVER_DEVICE':
+            return False
+
+        now = self.reactor.monotonic()
+        cutoff = now - self.RECENT_DISPATCH_WINDOW
+        self._recently_dispatched_ids = {
+            r: t for r, t in self._recently_dispatched_ids.items() if t > cutoff
+        }
+        if rid not in self._recently_dispatched_ids:
+            return False
+
+        self._comm_duplicate_timestamps.append(now)
+        comm_cutoff = now - self.COMM_SUPERVISION_WINDOW
+        self._comm_duplicate_timestamps = [
+            t for t in self._comm_duplicate_timestamps if t > comm_cutoff
+        ]
+        # A duplicate is also an out-of-sync signal for Layer-1 supervision
+        self._track_comm_unsolicited()
+
+        self.gcode.respond_info(
+            f"ACE[{self.instance_num}]: DUPLICATE response "
+            f"(ID={rid}, command={response.get('command', 'n/a')}): "
+            f"request was already answered - dropping"
+        )
+        if (self._last_duplicate_warn_time is None
+                or now - self._last_duplicate_warn_time >= self.DUPLICATE_WARN_INTERVAL):
+            self._last_duplicate_warn_time = now
+            self.gcode.respond_info(
+                f"ACE[{self.instance_num}]: WARNING: duplicate responses mean "
+                f"two ACE units are answering on the same bus device_id "
+                f"(identity collision) - check that 'ace_count' matches the "
+                f"number of connected ACE units"
+            )
+        return True
 
     def set_heartbeat_callback(self, callback):
         """
@@ -1225,8 +1372,13 @@ class AceSerialManager:
         First request sent immediately, then repeated at heartbeat_interval.
         """
         if self.protocol.get_transport_spec().shared_bus:
+            # Not a missing capability: responses ARE demultiplexed here, by
+            # request id in dispatch_response().  A shared bus just has no
+            # single unit to poll, so each logical instance runs its own
+            # addressed heartbeat via AceInstance.start_shared_bus_heartbeat().
             logging.info(
-                "ACE[%s]: Heartbeat deferred for shared-bus transport until response demultiplexing exists",
+                "ACE[%s]: Transport-level heartbeat not used on a shared bus - "
+                "each instance heartbeats its own device id",
                 self.instance_num,
             )
             return
@@ -1290,6 +1442,7 @@ class AceSerialManager:
         """Timer callback: send requests from queue, handle timeouts, fill window."""
         try:
             now = self.reactor.monotonic()
+            self._drain_tx()
 
             with self._lock:
                 for rid, t0 in list(self.inflight.items()):
@@ -1385,27 +1538,73 @@ class AceSerialManager:
             self.gcode.respond_info(f"ACE[{self.instance_num}]: {notice}")
 
         for ret in responses:
-            if self._status_debug_logging:
-                self._status_update_callback(ret)
-
-            cb, _ = self.dispatch_response(ret)
-            if cb:
-                try:
-                    cb(response=ret)
-                except Exception as e:
-                    self.gcode.respond_info(f"ACE[{self.instance_num}]: Callback error: {e}")
-            else:
-                # Try unsolicited callback first
-                if self.unsolicited_response_callback and self.unsolicited_response_callback(ret):
-                    continue
-                # Log unsolicited messages (no matching callback found)
-                response_id = ret.get('id', 'no-id')
-                response_str = json.dumps(ret)
-                self.gcode.respond_info(f"ACE[{self.instance_num}]: UNSOLICITED (ID={response_id}, current_id={self._request_id}): {response_str}")
-                # Track unsolicited message for communication health supervision
-                self._track_comm_unsolicited()
+            try:
+                self._handle_response(ret)
+            except Exception as e:
+                # Device bytes are external input: an exception out of this
+                # reactor timer would shut Klipper down.
+                logging.exception("ACE[%d]: reply handling failed", self.instance_num)
+                self.gcode.respond_info(
+                    f"ACE[{self.instance_num}]: dropped a reply that could not "
+                    f"be handled ({type(e).__name__}: {e})")
 
         return eventtime + 0.05
+
+    def _handle_response(self, ret):
+        """Route one decoded reply: its request's callback, else the
+        unsolicited handlers, else the UNSOLICITED log."""
+        if self._status_debug_logging:
+            self._status_update_callback(ret)
+
+        cb, _ = self.dispatch_response(ret)
+        if cb:
+            try:
+                cb(response=ret)
+            except Exception as e:
+                self.gcode.respond_info(f"ACE[{self.instance_num}]: Callback error: {e}")
+            return
+        # A second reply to an already-answered request must never be
+        # routed anywhere (device_id collision - sender unknowable)
+        if self._handle_duplicate_response(ret):
+            return
+        # Try unsolicited callback first
+        if self.unsolicited_response_callback and self.unsolicited_response_callback(ret):
+            return
+        # Log unsolicited messages (no matching callback found); ACE2
+        # replies carry raw protobuf fields as bytes.
+        response_id = ret.get('id', 'no-id')
+        response_str = json.dumps(ret, default=str)
+        self.gcode.respond_info(f"ACE[{self.instance_num}]: UNSOLICITED (ID={response_id}, current_id={self._request_id}): {response_str}")
+        # Track unsolicited message for communication health supervision
+        self._track_comm_unsolicited()
+
+    def _get_status_debug_state(self, device_id):
+        """Return the change-detection state holder for one status stream.
+
+        Shared-bus responses are tagged with a device_id: each device gets
+        its own state so the interleaved streams of multiple units don't
+        false-flip against one flat last-state (two healthy units with
+        different slot occupancy would otherwise log a slot change on every
+        heartbeat). Untagged (ACE1) responses keep using the flat attributes
+        on self.
+        """
+        if device_id is None:
+            return self
+        state = self._device_debug_states.get(device_id)
+        if state is None:
+            state = SimpleNamespace(
+                last_status=None,
+                last_action=None,
+                last_slot_states={},
+                last_slot_payloads={},
+                last_dryer_status=None,
+                last_temp=None,
+                last_feed_assist_count=None,
+                last_cont_assist_time=None,
+                last_raw_fields=None,
+            )
+            self._device_debug_states[device_id] = state
+        return state
 
     def _status_update_callback(self, response):
         """
@@ -1417,6 +1616,9 @@ class AceSerialManager:
         - Individual slot status
         - Dryer status
         - Temperature changes
+
+        Change detection is tracked per shared-bus device_id (see
+        _get_status_debug_state).
         """
         if not response or "result" not in response:
             return
@@ -1424,6 +1626,12 @@ class AceSerialManager:
         result = response.get("result")
         if not result:
             return
+
+        device_id = response.get("device_id")
+        state = self._get_status_debug_state(device_id)
+        label = f"ACE[{self.instance_num}]"
+        if device_id is not None:
+            label = f"ACE[{self.instance_num}][dev {device_id}]"
 
         # Extract current state
         current_status = result.get("status")
@@ -1438,38 +1646,42 @@ class AceSerialManager:
         if current_status is None:
             return
 
-        if raw_fields is not None:
+        # Change-gated: at heartbeat rate an unconditional dump floods the
+        # gcode response pipe (field-observed BlockingIOError in _respond_raw
+        # with two ACE2 units at 1 Hz each)
+        if raw_fields is not None and raw_fields != state.last_raw_fields:
             self.gcode.respond_info(
-                f"ACE[{self.instance_num}]: GET_STATUS raw_fields: {raw_fields}"
+                f"{label}: GET_STATUS raw_fields: {raw_fields}"
             )
+            state.last_raw_fields = raw_fields
 
         # Detect overall status/action change
-        status_changed = (current_status != self.last_status or
-                          current_action != self.last_action)
+        status_changed = (current_status != state.last_status or
+                          current_action != state.last_action)
 
         if status_changed:
-            last_display = f"{self.last_status}/{self.last_action}" if self.last_status else 'unknown'
+            last_display = f"{state.last_status}/{state.last_action}" if state.last_status else 'unknown'
             self.gcode.respond_info(
-                f"ACE[{self.instance_num}]: STATUS CHANGE: "
+                f"{label}: STATUS CHANGE: "
                 f"'{last_display}' -> '{current_status}/{current_action}'"
             )
-            self.last_status = current_status
-            self.last_action = current_action
+            state.last_status = current_status
+            state.last_action = current_action
 
         # Detect feed assist counters
-        if feed_assist_count is not None and feed_assist_count != self.last_feed_assist_count:
+        if feed_assist_count is not None and feed_assist_count != state.last_feed_assist_count:
             self.gcode.respond_info(
-                f"ACE[{self.instance_num}]: FEED ASSIST COUNT: "
-                f"'{self.last_feed_assist_count}' -> '{feed_assist_count}'"
+                f"{label}: FEED ASSIST COUNT: "
+                f"'{state.last_feed_assist_count}' -> '{feed_assist_count}'"
             )
-            self.last_feed_assist_count = feed_assist_count
+            state.last_feed_assist_count = feed_assist_count
 
-        if cont_assist_time is not None and cont_assist_time != self.last_cont_assist_time:
+        if cont_assist_time is not None and cont_assist_time != state.last_cont_assist_time:
             self.gcode.respond_info(
-                f"ACE[{self.instance_num}]: CONT ASSIST TIME: "
-                f"'{self.last_cont_assist_time}' -> '{cont_assist_time}'"
+                f"{label}: CONT ASSIST TIME: "
+                f"'{state.last_cont_assist_time}' -> '{cont_assist_time}'"
             )
-            self.last_cont_assist_time = cont_assist_time
+            state.last_cont_assist_time = cont_assist_time
 
         # Detect slot status changes
         for slot in slots:
@@ -1477,50 +1689,50 @@ class AceSerialManager:
             slot_status = slot.get("status", "unknown")
 
             if slot_idx is not None:
-                last_slot_status = self.last_slot_states.get(slot_idx)
+                last_slot_status = state.last_slot_states.get(slot_idx)
 
                 if slot_status != last_slot_status:
                     last_display = last_slot_status if last_slot_status else 'unknown'
                     self.gcode.respond_info(
-                        f"ACE[{self.instance_num}]: SLOT[{slot_idx}] CHANGE: "
+                        f"{label}: SLOT[{slot_idx}] CHANGE: "
                         f"'{last_display}' -> '{slot_status}'"
                     )
-                    self.last_slot_states[slot_idx] = slot_status
+                    state.last_slot_states[slot_idx] = slot_status
 
             # Detect any slot field change and dump full slot payload
             if slot_idx is not None:
-                last_payload = self.last_slot_payloads.get(slot_idx)
+                last_payload = state.last_slot_payloads.get(slot_idx)
                 if last_payload != slot:
                     slot_dump = json.dumps(slot, sort_keys=True)
                     self.gcode.respond_info(
-                        f"ACE[{self.instance_num}]: SLOT[{slot_idx}] DATA: {slot_dump}"
+                        f"{label}: SLOT[{slot_idx}] DATA: {slot_dump}"
                     )
-                    self.last_slot_payloads[slot_idx] = slot
+                    state.last_slot_payloads[slot_idx] = slot
 
         # Detect dryer status changes
         dryer_state = dryer_status.get("status", "stop")
-        if dryer_state != self.last_dryer_status:
+        if dryer_state != state.last_dryer_status:
             if dryer_state != "stop":
                 target_temp = dryer_status.get("target_temp", 0)
                 remain_time = dryer_status.get("remain_time", 0)
                 self.gcode.respond_info(
-                    f"ACE[{self.instance_num}]: DRYER: "
-                    f"'{self.last_dryer_status or 'stop'}' -> '{dryer_state}' "
+                    f"{label}: DRYER: "
+                    f"'{state.last_dryer_status or 'stop'}' -> '{dryer_state}' "
                     f"(target={target_temp}°C, remaining={remain_time}s)"
                 )
             else:
                 self.gcode.respond_info(
-                    f"ACE[{self.instance_num}]: DRYER: stopped"
+                    f"{label}: DRYER: stopped"
                 )
-            self.last_dryer_status = dryer_state
+            state.last_dryer_status = dryer_state
 
         # Detect significant temperature changes (>5°C)
-        if self.last_temp is not None:
-            temp_delta = abs(current_temp - self.last_temp)
+        if state.last_temp is not None:
+            temp_delta = abs(current_temp - state.last_temp)
             if temp_delta >= 5:
                 self.gcode.respond_info(
-                    f"ACE[{self.instance_num}]: TEMP CHANGE: "
-                    f"{self.last_temp}°C -> {current_temp}°C "
+                    f"{label}: TEMP CHANGE: "
+                    f"{state.last_temp}°C -> {current_temp}°C "
                     f"(Δ{temp_delta:+.1f}°C)"
                 )
-        self.last_temp = current_temp
+        state.last_temp = current_temp

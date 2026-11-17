@@ -18,6 +18,12 @@ def _build_ace2_command_catalog() -> Tuple[AceCommandSpec, ...]:
     return (
         AceCommandSpec("DISCOVER_DEVICE", 0, "diagnostic", response_type="DiscoverDeviceResponse"),
         AceCommandSpec("ASSIGN_DEVICE_ID", 1, "diagnostic", "AssignDeviceIdRequest", "GenericResponse"),
+        # The IAP sequence (see ace2_ota.py). Tier "firmware" is refused by
+        # build_debug_request: a stray IAP frame starts overwriting the box's
+        # staging flash.
+        AceCommandSpec("IAP_UPGRADE", 2, "firmware", "UpgradeRequest", "GenericResponse"),
+        AceCommandSpec("IAP_FIRMWARE", 3, "firmware", "FirmwareRequest", "GenericResponse"),
+        AceCommandSpec("IAP_UPGRADE_FINISH", 4, "firmware", response_type="GenericResponse"),
         AceCommandSpec("GET_STATUS", 6, "operational", response_type="StatusResponse"),
         AceCommandSpec("GET_INFO", 7, "operational", response_type="InfoResponse"),
         AceCommandSpec("FEED_OR_ROLLBACK", 8, "operational", "FeedOrRollbackRequest", "GenericResponse"),
@@ -287,6 +293,16 @@ class AceProtoProtocolAdapter(AceProtocolAdapter):
             "GET_FEED_INFO",
         }:
             return b""
+        if command_name == "IAP_UPGRADE_FINISH":
+            return b""
+        if command_name == "IAP_UPGRADE":
+            return (
+                _pb_uint32(1, int(params["size"]))
+                + _pb_uint32(2, int(params["crc"]))
+                + _pb_string(3, str(params["version"]))
+            )
+        if command_name == "IAP_FIRMWARE":
+            return _pb_uint32(1, int(params["address"])) + _pb_bytes(2, bytes(params["data"]))
         if command_name == "ASSIGN_DEVICE_ID":
             return (
                 _pb_uint32(1, int(params["uid1"]))
@@ -406,18 +422,29 @@ class AceProtoProtocolAdapter(AceProtocolAdapter):
                         "rfid": ACE2_FILAMENT_TO_RFID_STATE.get(filament_state, 0),
                     }
                 )
+            # ACE1 reports a device-level action; ACE2 only reports per-slot
+            # states, so derive it from the slot that is moving filament.
+            # An assist hold ("shifting") is not a move.
+            action = next(
+                (slot["status"] for slot in slots if slot["status"] in ("feeding", "unwinding")),
+                "none",
+            )
             return {
                 "code": 0,
                 "msg": ACE2_RESPONSE_CODE_NAMES[0],
                 "result": {
                     "status": ACE2_WORK_STATUS_BY_CODE.get(work_state_code, "unknown"),
                     "status_code": work_state_code,
+                    "action": action,
                     "dryer_status": {
                         "status": ACE2_DRY_STATUS_BY_CODE.get(dry_state_code, "unknown"),
                         "state_detail": ACE2_DRY_STATE_DETAIL_BY_CODE.get(dry_state_code, "unknown"),
                         "state_code": dry_state_code,
                         "target_temp": _pb_first(dry_status_fields, 2, 0),
-                        "duration": _pb_first(dry_status_fields, 3, 0),
+                        # ACE2 takes the duration in minutes but reports it
+                        # in seconds; ACE1 reports minutes.  Normalized to
+                        # ACE1's unit, as cont_assist_time below is.
+                        "duration": round(_pb_first(dry_status_fields, 3, 0) / 60),
                         "remain_time": _pb_first(dry_status_fields, 4, 0),
                     },
                     "temp": _pb_first(fields, 3, 0),
@@ -430,6 +457,32 @@ class AceProtoProtocolAdapter(AceProtocolAdapter):
                     "raw_fields": fields,
                     "slots": slots,
                 },
+            }
+        if command_name == "GET_FEED_INFO":
+            # One sub-message per slot, in slot order. Values are measured by the ACE,
+            # not echoes of the command (a 723mm retract has been observed reporting
+            # 733mm delivered). This is a last-operation register, not an odometer:
+            # field 1 does not accumulate across operations.
+            slots = []
+            for _, slot_payload in fields.get(1, []):
+                slot_fields = _pb_decode(slot_payload) if slot_payload else {}
+                counts = int(_pb_first(slot_fields, 1, 0))
+                magnitude_mm = int(_pb_first(slot_fields, 2, 0))
+                moved = int(_pb_first(slot_fields, 3, 0))
+                # field 3 is two's-complement int64: negative means a retract.
+                if moved >= (1 << 63):
+                    moved -= 1 << 64
+                slots.append(
+                    {
+                        "motor_counts": counts,
+                        "magnitude_mm": magnitude_mm,
+                        "moved_mm": moved,
+                    }
+                )
+            return {
+                "code": 0,
+                "msg": ACE2_RESPONSE_CODE_NAMES[0],
+                "result": {"slots": slots},
             }
         if command_name == "GET_FILAMENT_INFO":
             extruder_payload = _pb_first(fields, 6, b"")
@@ -447,14 +500,23 @@ class AceProtoProtocolAdapter(AceProtocolAdapter):
                     rgba & 0xFF,
                 ])
             code = _pb_first(fields, 12, 0)
+            sku = _pb_first(fields, 3, b"").decode(errors="ignore")
+            material = _pb_first(fields, 4, b"").decode(errors="ignore")
+            # The ACE2 answers for a tagless spool with success and every
+            # field empty; only a reply that names the filament or its
+            # temperature is a read tag (rfid 2 as ACE1 reports it), the
+            # rest is "no information".
+            tag_present = bool(sku or material
+                               or _pb_first(extruder_fields, 1, 0)
+                               or _pb_first(extruder_fields, 2, 0))
             return {
                 "code": code,
                 "msg": ACE2_RESPONSE_CODE_NAMES.get(code, str(code)),
                 "result": {
                     "index": _pb_first(fields, 1, 0),
                     "version": _pb_first(fields, 2, 0),
-                    "sku": _pb_first(fields, 3, b"").decode(errors="ignore"),
-                    "type": _pb_first(fields, 4, b"").decode(errors="ignore"),
+                    "sku": sku,
+                    "type": material,
                     "colors": colors,
                     "extruder_temp": {
                         "min": _pb_first(extruder_fields, 1, 0),
@@ -470,7 +532,10 @@ class AceProtoProtocolAdapter(AceProtocolAdapter):
                     "total": _pb_first(fields, 9, 0),
                     "icon_type": _pb_first(fields, 10, 0),
                     "current": _pb_first(fields, 11, 0),
-                    "rfid": 2 if code == 0 else 0,
+                    "rfid": 2 if code == 0 and tag_present else 0,
+                    # Every field as decoded, for ACE_DEBUG: what a box
+                    # puts in numbers the mapping above does not know.
+                    "raw_fields": fields,
                 },
             }
         return {"raw_fields": fields}
@@ -503,7 +568,33 @@ class AceProtoProtocolAdapter(AceProtocolAdapter):
         params: Mapping[str, Any] | None = None,
     ) -> Dict[str, Any]:
         """Build an ACE2 debug request using command names from the proto catalog."""
+        spec = ACE2_COMMANDS_BY_NAME.get(command_name.strip().upper())
+        if spec is not None and spec.tier == "firmware":
+            raise ValueError(
+                f"ACE2 command '{spec.name}' is a firmware-update command; "
+                "use ACE_FIRMWARE_UPDATE"
+            )
         return self._build_command_request(command_name, params)
+
+    def supports_firmware_update(self) -> bool:
+        """ACE2 boxes take firmware over the IAP commands 2-4."""
+        return True
+
+    def build_iap_upgrade_request(self, size: int, crc: int, version: str) -> Dict[str, Any]:
+        """Announce an image: byte size, CRC-16/MCRF4XX over it, version ("V1.1.34")."""
+        return self._build_command_request(
+            "IAP_UPGRADE", {"size": size, "crc": crc, "version": version}
+        )
+
+    def build_iap_firmware_request(self, address: int, data: bytes) -> Dict[str, Any]:
+        """One image chunk and the absolute flash address it belongs at."""
+        return self._build_command_request(
+            "IAP_FIRMWARE", {"address": address, "data": bytes(data)}
+        )
+
+    def build_iap_finish_request(self) -> Dict[str, Any]:
+        """Commit the transferred image; the box reboots into it."""
+        return self._build_command_request("IAP_UPGRADE_FINISH")
 
     def _build_frame_flags(self, request: Mapping[str, Any]) -> int:
         """Encode ACE2 bus targeting into frame flags for addressed commands."""
@@ -533,6 +624,22 @@ class AceProtoProtocolAdapter(AceProtocolAdapter):
         crc = struct.pack("<H", crc_calculator(bytes(inner)))
         return b"\xFF\xAA" + bytes(inner) + crc + b"\xFE"
 
+    @staticmethod
+    def _keep_split_header(working: bytearray) -> tuple[bytearray, int]:
+        """Discard unusable bytes but retain a header split across reads.
+
+        A read() returns whatever has arrived, so the 0xFF 0xAA header
+        regularly straddles two reads.  Clearing the whole buffer on resync
+        eats that leading 0xFF, and the next - perfectly valid - frame then
+        starts with 0xAA and is itself discarded as junk.  One corruption
+        event would cost two replies.
+
+        Returns the surviving buffer and how many bytes were dropped.
+        """
+        if working and working[-1] == 0xFF:
+            return bytearray(b"\xFF"), len(working) - 1
+        return bytearray(), len(working)
+
     def extract_responses(
         self,
         buffer: bytearray,
@@ -550,8 +657,8 @@ class AceProtoProtocolAdapter(AceProtocolAdapter):
             if not (working[0] == 0xFF and working[1] == 0xAA):
                 header_idx = working.find(bytes([0xFF, 0xAA]))
                 if header_idx == -1:
-                    notices.append(f"Resync: dropped junk ({len(working)} bytes)")
-                    working = bytearray()
+                    working, dropped = self._keep_split_header(working)
+                    notices.append(f"Resync: dropped junk ({dropped} bytes)")
                     break
                 notices.append(f"Resync: skipping {header_idx} bytes")
                 working = working[header_idx:]
@@ -566,8 +673,14 @@ class AceProtoProtocolAdapter(AceProtocolAdapter):
             terminator_idx = 2 + 1 + 2 + 1 + 1 + payload_len + 2
             if working[terminator_idx] != 0xFE:
                 next_header = working.find(bytes([0xFF, 0xAA]), 1)
-                working = bytearray() if next_header == -1 else working[next_header:]
-                notices.append("Invalid frame tail, resyncing")
+                if next_header == -1:
+                    working, dropped = self._keep_split_header(working)
+                else:
+                    dropped = next_header
+                    working = working[next_header:]
+                notices.append(
+                    f"Invalid frame tail, resyncing (dropped {dropped} bytes)"
+                )
                 continue
 
             frame = bytes(working[:frame_len])
@@ -585,7 +698,15 @@ class AceProtoProtocolAdapter(AceProtocolAdapter):
 
             command_spec = ACE2_COMMANDS_BY_CODE.get(command_code)
             command_name = command_spec.name if command_spec else f"CMD_{command_code}"
-            decoded = self._decode_response_payload(command_name, payload)
+            try:
+                decoded = self._decode_response_payload(command_name, payload)
+            except (AttributeError, TypeError, ValueError, IndexError) as exc:
+                # A field of another wire type than the decoder expects
+                # (a firmware revision changing a field) costs this frame,
+                # not the reader.
+                notices.append(f"{command_name}: cannot decode the reply, "
+                               f"dropped ({type(exc).__name__}: {exc})")
+                continue
             response = {"id": request_id, "command": command_name, "flags": flags}
             device_id = flags & ACE2_FLAG_DEVICE_ID_MASK
             if device_id:
@@ -632,6 +753,28 @@ class AceProtoProtocolAdapter(AceProtocolAdapter):
             "STOP_FEED_OR_ROLLBACK",
             {"index": slot_index},
         )
+
+    def build_start_rollback_assist_request(self, slot_index: int) -> Dict[str, Any]:
+        """An ACE2 clamps the filament while idle: an extruder retract
+        slips against it. Anycubic's firmware wraps the unload's extruder
+        retract in this mode (avata_main 2.0.2.2: FEED_OR_ROLLBACK mode 3,
+        "rollback_assist", length and speed 0)."""
+        return self._build_command_request(
+            "FEED_OR_ROLLBACK",
+            {
+                "index": slot_index,
+                "speed": 0,
+                "length": 0,
+                "mode": 3,
+            },
+        )
+
+    def slow_first_unwind(self) -> Tuple[float, float]:
+        """Anycubic's firmware pulls an ACE2's filament out of the inlet
+        at 4 mm/s first ("low speed unwind", 40 mm, until the inlet switch
+        clears) and only then at full speed (avata_main 2.0.2.2,
+        0x0125d6a8 and 0x0125f5fc)."""
+        return (40.0, 4.0)
 
     def build_feed_filament_request(
         self,

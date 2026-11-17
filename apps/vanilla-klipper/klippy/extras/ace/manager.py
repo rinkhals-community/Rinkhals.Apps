@@ -4,14 +4,22 @@ from .config import (
     SLOTS_PER_ACE,
     SENSOR_TOOLHEAD,
     SENSOR_RDM,
+    SENSOR_RUNOUT,
+    FEEDER_ACE,
+    FEEDER_EXTRUDER,
+    STARTUP_SENSOR_SETTLE_TIME,
+    STARTUP_SENSOR_POLL_INTERVAL,
     FILAMENT_STATE_SPLITTER,
     FILAMENT_STATE_BOWDEN,
     FILAMENT_STATE_NOZZLE,
     FILAMENT_STATE_TOOLHEAD,
+    SLOT_PARK_STATE_PARKED,
+    SLOT_PARK_STATE_UNKNOWN,
     OVERRIDABLE_PARAMS,
     CHOICE_OVERRIDABLE_PARAMS,
     get_instance_from_tool,
     get_local_slot,
+    get_tool_base,
     get_tool_offset,
     get_ace_instance_and_slot_for_tool,
     parse_instance_config,
@@ -20,13 +28,25 @@ from .config import (
     create_inventory,
 )
 from .persistent_state import PersistentState
+from .tool_base import apply_tool_base, rdm_in_ace_path
+from .intake_gated import (
+    PATHS,
+    PATHS_PER_TOOL,
+    PATHS_SHARED,
+    STRATEGIES,
+    STRATEGY_INTAKE_GATED,
+    STRATEGY_SENSOR_PUSH,
+    IntakeGatedTransfer,
+    resolve_intake_sensor,
+)
 
 from .instance import AceInstance
 from .ace2_bus import Ace2BusSession
 from .endless_spool import EndlessSpool
 from .runout_monitor import RunoutMonitor
+from .idle_assist import IdleFeedAssist
 from .moonraker_lane_sync import MoonrakerLaneSyncAdapter
-from . import commands
+from . import commands, connection_pause
 from .config import read_ace_config
 from .protocol import (
     create_protocol_adapter,
@@ -37,9 +57,22 @@ from .protocol import (
     transport_description_matches,
 )
 from .serial_manager import AceSerialManager
+from .version import get_driver_version
 import logging
+import re
 import serial
 import time
+
+# Optional printer macro, see AceManager.route_to_tool.
+ROUTE_TOOL_MACRO = "_ACE_ROUTE_TOOL"
+
+# ACE-owned save_variables namespaces whose key names encode instance
+# numbers or a bus grouping. Only exact numeric forms are considered
+# ACE's - anything else in saved_variables.cfg (foreign macros,
+# hand-made backups like "ace_inventory_backup") is never touched by
+# any cleanup path.
+_INVENTORY_KEY_RE = re.compile(r"^ace_inventory_(\d+)$")
+_BUS_BINDINGS_KEY_RE = re.compile(r"^ace2_bus_bindings_\d+(_\d+)*$")
 
 
 class FilamentTrackerAdapter:
@@ -147,11 +180,23 @@ class AceManager:
         self.toolchange_purge_speed = self.default_color_change_purge_speed
         self.purge_max_chunk_length = float(self.ace_config["purge_max_chunk_length"])
         self.pre_cut_retract_length = float(self.ace_config["pre_cut_retract_length"])
+        self.toolchange_homing_axes = self.ace_config.get("toolchange_homing_axes", "xyz")
+        # A printer-side tool changer owns T<n> and recovers a failed change
+        # itself: ACE_CHANGE_TOOL then reports the failure instead.
+        self.tool_changer_owns_tools = not self.ace_config.get(
+            "register_tool_macros", True)
         self.ace_count = self.ace_config["ace_count"]
         self.purge_multiplier = float(self.ace_config.get("purge_multiplier", 1.0))
 
         if self.ace_count < 1:
             raise config.error(f"ace_count must be >= 1, got {self.ace_count}")
+
+        # Identify the driver checkout in klippy.log — klippy only reports
+        # its own repo's version, so support logs carried no clue which
+        # ACEPRO commit produced them.
+        version_line = f"ACE: ACEPRO driver {get_driver_version()}"
+        logging.info(version_line)
+        self.gcode.respond_info(version_line)
 
         self.gcode.respond_info(f"ACE: Creating {self.ace_count} instance(s) with single AceManager")
 
@@ -227,8 +272,8 @@ class AceManager:
             ACE_INSTANCES[instance_num] = instance
             INSTANCE_MANAGERS[instance_num] = self
 
-            # Register tool macros for this instance
-            self.register_tool_macros(instance_num)
+            if self.ace_config["register_tool_macros"]:
+                self.register_tool_macros(instance_num)
 
             self.gcode.respond_info(
                 f"ACE[{instance_num}]: Loaded instance (T{instance.tool_offset}-T{instance.tool_offset + 3})"
@@ -253,6 +298,18 @@ class AceManager:
         self.ace_pin = self.printer.lookup_object("output_pin ACE_Pro")
 
         self.sensors = {}
+        # instance_num -> IntakeGatedTransfer (toolhead_strategy:
+        # intake_gated); each instance holds the same object for its loads.
+        self.transfers = {}
+        # intake_gated: the intake's presence, read for the runout edge.
+        self._runout_presence = None
+        # The tool whose cut old piece a runout left at the toolhead sensor
+        # (park_after_runout), until a load through its path pulls through.
+        self._runout_piece = None
+        self.runout_reload_length = float(
+            self.ace_config["runout_reload_length"])
+        # toolhead_paths, read with the strategy in _setup_toolhead_strategy.
+        self.toolhead_paths = PATHS_SHARED
         self._prev_sensors_enabled_state = {}
 
         # Create endless spool handler (passing self for sensor access)
@@ -274,6 +331,11 @@ class AceManager:
         )
 
         self.toolchange_in_progress = False
+        if self.ace_config.get("feed_assist_off_when_idle", True):
+            IdleFeedAssist(self.printer, self)
+        # True from klippy:ready until startup validation has confirmed or
+        # reset the persisted tool; feed-assist restores wait for it.
+        self.startup_validation_in_progress = False
 
         # Expose manager state for Moonraker/KlipperScreen JSON-RPC queries
         # (distinct from per-instance printer objects).
@@ -288,6 +350,8 @@ class AceManager:
             "ace_connection_supervision", True
         )
         self._connection_issue_shown = False  # Track if dialog is currently shown
+        # The issue a queued connection pause shows (connection_pause).
+        self._pending_connection_issue = None
         self._last_connection_status = {}     # Track per-instance connection state
         # Instance num of the outage already paused for (one pause per outage)
         self._fast_disconnect_pause_fired = None
@@ -319,6 +383,7 @@ class AceManager:
 
         # Register event handlers
         handler = self.printer.register_event_handler
+        handler("klippy:connect", self._handle_connect)
         handler("klippy:ready", self._handle_ready)
         handler("klippy:disconnect", self._handle_disconnect)
         handler("klippy:shutdown", self._handle_shutdown)
@@ -355,11 +420,25 @@ class AceManager:
 
     # ========== Lifecycle ==========
 
+    def _handle_connect(self):
+        # Before any klippy:ready handler reads a tool number - the printer's
+        # tool changer reads ace_current_index at ready.
+        moved_from = apply_tool_base(self._tool_changer(), self.state)
+        if moved_from is not None:
+            self.gcode.respond_info(
+                f"ACE: Tools now start at T{get_tool_base()} "
+                f"(saved tool numbers moved from T{moved_from})"
+            )
+
     def _handle_ready(self):
         """
         Called when Klipper is ready.
         Sets up toolhead reference, connects ACE instances, initializes sensors, starts monitoring.
         """
+
+        # Drop persisted keys from earlier configs before any shared-bus
+        # connect can read a stale binding key.
+        self._cleanup_stale_persistent_keys()
 
         # Set toolhead on all instances
         toolhead = self.printer.lookup_object("toolhead")
@@ -374,7 +453,7 @@ class AceManager:
 
         if self._ace_pro_enabled:
             for instance in self._iter_unique_transport_instances():
-                instance.serial_mgr.connect_to_ace(instance.baud, 2)
+                instance.serial_mgr.connect_to_ace(instance.baud)
                 if instance.bus_session is not None and instance.serial_mgr._port:
                     instance.bus_session.port = instance.serial_mgr._port
             self._setup_sensors()
@@ -388,20 +467,149 @@ class AceManager:
         # _validate_startup_tool_state() must not run inline here or it
         # would stall every other module's klippy:ready handler. Running it
         # in its own greenlet keeps the wait but only blocks this task.
-        self.reactor.register_callback(lambda et: self._validate_startup_tool_state())
+        # The ACE can connect and restore feed assist inside that wait, so
+        # restores are held until validation ends (startup_validation_in_progress).
+        self.startup_validation_in_progress = True
+        self.reactor.register_callback(lambda et: self._run_startup_validation())
 
         # Publish initial lane_data snapshot for Orca pull-mode sync.
         self._sync_moonraker_lane_data(force=True, reason="klippy_ready")
 
         self._start_monitoring()
 
+    def _find_stale_binding_keys(self):
+        """Return persisted ``ace2_bus_bindings_*`` keys no current bus group uses.
+
+        Every change in shared-bus grouping (e.g. after a mis-typed startup
+        or an ace_count change) persists bindings under a new
+        ``ace2_bus_bindings_<ids>`` name while the old one lingers with an
+        identical payload.
+
+        Returns ``[]`` when no shared bus was resolved this boot: with
+        protocol=auto and the ACE units powered off / not yet enumerated,
+        "config abandoned ACE2" is indistinguishable from "units are just
+        off right now", so no binding key can be called stale.
+        """
+        valid_keys = set()
+        has_shared_bus = False
+        for instance in self.instances:
+            bus_session = getattr(instance, "bus_session", None)
+            if bus_session is None:
+                continue
+            has_shared_bus = True
+            valid_keys.add(self._get_shared_bus_bindings_varname(
+                self._get_instances_for_bus_session(bus_session)
+            ))
+        if not has_shared_bus:
+            return []
+        return sorted(
+            key for key in self.state.get_all()
+            if _BUS_BINDINGS_KEY_RE.match(key) and key not in valid_keys
+        )
+
+    def _find_stale_inventory_keys(self):
+        """Return persisted ``ace_inventory_N`` keys with ``N >= ace_count``.
+
+        These hold user-entered spool data that cannot be rebuilt, so they
+        are never removed automatically - a temporarily lowered ace_count
+        (unit disconnected for a while) must not destroy the parked unit's
+        inventory. Removal happens only via ACE_CLEANUP_STALE_VARS.
+        """
+        stale_keys = []
+        for key in self.state.get_all():
+            match = _INVENTORY_KEY_RE.match(key)
+            if match and int(match.group(1)) >= self.ace_count:
+                stale_keys.append(key)
+        return sorted(stale_keys)
+
+    def _cleanup_stale_persistent_keys(self):
+        """Remove obsolete shared-bus binding keys at startup.
+
+        Only provably rebuildable state is auto-removed: stale binding keys
+        cache UID bindings that discovery rebuilds and re-persists, so
+        deleting them is safe even if the config-time grouping later changes
+        via ACE_REDETECT. Stale ``ace_inventory_N`` keys are deliberately
+        left alone (see ``_find_stale_inventory_keys``); the user removes
+        them explicitly with ACE_CLEANUP_STALE_VARS. Every removal is
+        reported to the console and log.
+        """
+        stale_keys = self._find_stale_binding_keys()
+        if not stale_keys:
+            return
+
+        removed = self.state.remove_keys(stale_keys)
+        for key in removed:
+            self.gcode.respond_info(
+                f"ACE: Removed stale persisted variable '{key}'"
+            )
+        logging.info(
+            "ACE: Removed %d stale persisted variable(s): %s",
+            len(removed), ", ".join(removed),
+        )
+
+    def cleanup_stale_persistent_vars(self, gcmd):
+        """Handle ACE_CLEANUP_STALE_VARS: list or delete all stale ACE keys.
+
+        Dry run by default - lists every stale key (binding keys plus
+        out-of-ace_count inventory keys) without touching anything.
+        ``CONFIRM=1`` deletes them; that explicit step is required because
+        stale inventory keys hold user-entered spool data.
+        """
+        confirm = bool(gcmd.get_int("CONFIRM", 0, minval=0, maxval=1))
+        stale_keys = (
+            self._find_stale_binding_keys() + self._find_stale_inventory_keys()
+        )
+        if not stale_keys:
+            gcmd.respond_info("ACE: No stale persisted variables found")
+            return
+
+        if not confirm:
+            for key in stale_keys:
+                gcmd.respond_info(
+                    f"ACE: Would remove stale persisted variable '{key}'"
+                )
+            gcmd.respond_info(
+                f"ACE: Dry run - {len(stale_keys)} stale variable(s) found. "
+                "Run ACE_CLEANUP_STALE_VARS CONFIRM=1 to delete them"
+            )
+            return
+
+        removed = self.state.remove_keys(stale_keys)
+        for key in removed:
+            gcmd.respond_info(
+                f"ACE: Removed stale persisted variable '{key}'"
+            )
+        logging.info(
+            "ACE: ACE_CLEANUP_STALE_VARS removed %d variable(s): %s",
+            len(removed), ", ".join(removed),
+        )
+
     def _handle_shutdown(self):
         """Called on Klipper emergency stop or fatal shutdown.
 
-        Uses ``flush_direct()`` to write directly to ``saved_variables.cfg``
+        First asks every connected ACE to stop what it is doing (feed assist,
+        running feed/retract, optionally the dryer - see
+        ``AceInstance.stop_activity_on_shutdown``), since a Klipper shutdown
+        does not reach the ACE.
+
+        Then uses ``flush_direct()`` to write directly to ``saved_variables.cfg``
         without going through the GCode queue, which is unavailable (or
         rejected with "Printer is shutdown") at this point.
         """
+        for instance in self.instances:
+            try:
+                stopped = instance.stop_activity_on_shutdown()
+                if stopped:
+                    self.gcode.respond_info(
+                        f"ACE[{instance.instance_num}]: Shutdown - stopping "
+                        f"{', '.join(stopped)}"
+                    )
+            except Exception:
+                logging.exception(
+                    "ACE: Failed to stop ACE[%s] activity on shutdown",
+                    getattr(instance, "instance_num", "?"),
+                )
+
         pending = list(self.state._dirty)
         logging.info(
             "ACE: klippy:shutdown received — flushing %d dirty variable(s) directly: %s",
@@ -430,7 +638,10 @@ class AceManager:
             logging.exception("ACE: Failed to flush state on disconnect")
 
         for instance in self._iter_unique_transport_instances():
-            instance.serial_mgr.disconnect()
+            try:
+                instance.serial_mgr.disconnect()
+            except Exception:
+                logging.exception("ACE[%s]: Failed to disconnect", instance.instance_num)
 
         self._stop_monitoring()
         self._restore_sensors()
@@ -440,6 +651,12 @@ class AceManager:
                 adapter.shutdown()
             except Exception as e:
                 logging.warning("ACE: Moonraker lane sync shutdown failed: %s", e)
+
+    def _run_startup_validation(self):
+        try:
+            self._validate_startup_tool_state()
+        finally:
+            self.startup_validation_in_progress = False
 
     def _validate_startup_tool_state(self):
         """Validate persisted tool state against live sensor readings at startup.
@@ -454,15 +671,16 @@ class AceManager:
         physically loaded.
 
         .. note:: Klipper's ``RunoutHelper`` initialises ``filament_present``
-            to ``False`` and only updates it once the MCU button-state
-            callbacks have completed — two asynchronous reactor hops after
-            the MCU reports the initial pin state.  Reading the sensors
-            *without* first yielding to the reactor can therefore produce a
-            false "all-clear" result even when filament is physically present.
-            ``reactor.pause()`` is called below specifically to drain those
-            pending callbacks before the sensor values are read. This method
-            runs from its own deferred greenlet (see ``_handle_ready``), so
-            the pause only blocks this task, not other klippy:ready handlers.
+            to ``False``. The MCU only starts scanning the switch pin at the
+            ``buttons_query`` slot (up to ~1.5 s + oid * 10 ms after MCU
+            config, i.e. often *after* klippy:ready) and only reports a pin
+            that differs from its "not triggered" default. "Present" therefore
+            arrives as a late event, while "clear" is never reported at all.
+            The sensors are polled for up to ``STARTUP_SENSOR_SETTLE_TIME``
+            and the state is only reset if they stay clear for the whole
+            window. This method runs from its own deferred greenlet (see
+            ``_handle_ready``), so the wait only blocks this task, not other
+            klippy:ready handlers.
 
         .. note:: ``ace_target_index`` (unlike ``print_stats``/``pause_resume``)
             survives a klippy restart. A non-`-1` value here means a print-time
@@ -516,28 +734,39 @@ class AceManager:
         if SENSOR_TOOLHEAD not in self.sensors:
             return
 
-        # Klipper's RunoutHelper initialises filament_present=False and updates
-        # it through two layers of reactor async callbacks:
+        # Klipper's RunoutHelper initialises filament_present=False. The MCU
+        # scans the pin for the first time at the buttons_query slot
+        #   int(estimated_print_time + 1.5) + oid * 10 ms
+        # after MCU config (klippy/mcu.py get_query_slot), then reports it
+        # through two reactor hops:
         #   MCU → register_async_callback → DebounceButton.button_handler
         #       → register_callback(_debounce_event) → note_filament_present
-        # Both hops must complete before we read the sensors.  At klippy:ready
-        # time those callbacks may still be queued.  reactor.pause() yields
-        # back to the reactor loop for 0.5 s, which is more than enough for
-        # any pending MCU button-state callbacks to drain and update
-        # filament_present before we read it.
-        self.reactor.pause(self.reactor.monotonic() + 0.5)
-
-        # A toolchange may have started while we were paused above (e.g. a
-        # PLR recovery macro run concurrently) — don't race with it.
-        if self.toolchange_in_progress:
-            return
-
-        toolhead_has_filament = self.get_switch_state(SENSOR_TOOLHEAD)
-        rdm_has_filament = (
-            self.get_switch_state(SENSOR_RDM)
-            if self.has_rdm_sensor()
-            else False
+        # A present sensor can therefore still read False well after
+        # klippy:ready. Poll until one confirms filament, and only accept
+        # "all clear" once the whole settle window has passed.
+        poll_count = max(
+            1, int(round(STARTUP_SENSOR_SETTLE_TIME / STARTUP_SENSOR_POLL_INTERVAL))
         )
+        toolhead_has_filament = False
+        rdm_has_filament = False
+        for _ in range(poll_count):
+            self.reactor.pause(
+                self.reactor.monotonic() + STARTUP_SENSOR_POLL_INTERVAL
+            )
+
+            # A toolchange may have started while we were paused (e.g. a PLR
+            # recovery macro run concurrently) — don't race with it.
+            if self.toolchange_in_progress:
+                return
+
+            toolhead_has_filament = self.get_switch_state(SENSOR_TOOLHEAD)
+            rdm_has_filament = (
+                self.get_switch_state(SENSOR_RDM)
+                if self.has_rdm_sensor()
+                else False
+            )
+            if toolhead_has_filament or rdm_has_filament:
+                break
 
         if toolhead_has_filament or rdm_has_filament:
             # At least one sensor confirms filament — state looks plausible.
@@ -549,11 +778,22 @@ class AceManager:
             )
             return
 
-        # All sensors are clear while state claims a tool is loaded.
+        # The persisted state may have changed while we waited (e.g. a
+        # toolchange started and finished inside the window) — only reset
+        # the exact state that was found stale.
+        if (
+            self.state.get("ace_current_index", -1) != current_index
+            or self.state.get("ace_filament_pos", FILAMENT_STATE_BOWDEN) != filament_pos
+        ):
+            return
+
+        # All sensors stayed clear for the whole settle window while state
+        # claims a tool is loaded.
         self.gcode.respond_info(
             f"ACE: \u26a0 STARTUP VALIDATION — Saved state indicated "
             f"T{current_index} was loaded (filament_pos='{filament_pos}'), "
-            f"but ALL filament sensors report CLEAR and printer is idle. "
+            f"but ALL filament sensors stayed CLEAR for "
+            f"{STARTUP_SENSOR_SETTLE_TIME:.1f}s and printer is idle. "
             f"Resetting ace_current_index to -1 and ace_filament_pos to "
             f"'bowden'. (Likely cause: filament was manually removed "
             f"while printer was off)"
@@ -676,8 +916,16 @@ class AceManager:
                 f"[filament_tracker {toolhead_sensor_name}].")
 
         # --- RDM sensor (optional) ---
-        if instance.filament_runout_sensor_name_rdm is not None:
-            rms_sensor_name = instance.filament_runout_sensor_name_rdm
+        rdm_name = instance.filament_runout_sensor_name_rdm
+        if rdm_name is not None and not rdm_in_ace_path(self._tool_changer()):
+            # The printer's tool changer routes the ACE past no RDM (Kobra X
+            # combo mode): the sensor may exist, nothing ACE-fed passes it.
+            self.gcode.respond_info(
+                f"ACE: RDM sensor '{rdm_name}' not used - the tool changer's"
+                f" layout has no RDM in the ACE path")
+            rdm_name = None
+        if rdm_name is not None:
+            rms_sensor_name = rdm_name
             rdm_resolved = False
 
             # Try standard filament_switch_sensor <name>
@@ -718,8 +966,88 @@ class AceManager:
                     f"{rms_sensor_name}]). "
                     f"No RDM consistency check will be performed.")
 
+        self._setup_toolhead_strategy()
+
         # Disable standard runout detection
         self._disable_all_sensor_detection()
+
+    def _setup_toolhead_strategy(self):
+        """With toolhead_strategy: intake_gated, give every instance its
+        transfer, bound to the printer's intake sensor."""
+        self.toolhead_paths = self._resolve_toolhead_paths()
+        for instance in self.instances:
+            instance.apply_toolhead_paths(self.toolhead_paths)
+        strategy = self.ace_config.get("toolhead_strategy", STRATEGY_SENSOR_PUSH)
+        if strategy not in STRATEGIES:
+            raise self.config.error(
+                f"toolhead_strategy '{strategy}' is not one of "
+                f"{', '.join(STRATEGIES)}")
+        if strategy != STRATEGY_INTAKE_GATED:
+            return
+        name = self.ace_config.get("filament_intake_sensor_name")
+        if not name:
+            raise self.config.error(
+                f"toolhead_strategy: {STRATEGY_INTAKE_GATED} needs "
+                f"filament_intake_sensor_name")
+        try:
+            intake = resolve_intake_sensor(self.printer, name)
+        except ValueError as e:
+            raise self.config.error(str(e))
+        for instance in self.instances:
+            instance.transfer = IntakeGatedTransfer(instance, intake)
+            self.transfers[instance.instance_num] = instance.transfer
+        # The intake sits in front of the gear: a spool's end passes it,
+        # while the toolhead sensor behind the gear stays covered by the
+        # rest of the filament. Runouts are read there when it can tell.
+        presence = getattr(intake, "intake_present", None)
+        if callable(presence):
+            self._runout_presence = presence
+        self.gcode.respond_info(
+            f"ACE: Intake-gated toolhead transfer, intake sensor '{name}'")
+
+    def _tool_changer(self):
+        """The printer object [ace] tool_changer names, or None without
+        the option; a name no object answers to is a config error."""
+        name = self.ace_config.get("tool_changer")
+        if not name:
+            return None
+        tool_changer = self.printer.lookup_object(name, None)
+        if tool_changer is None:
+            raise self.config.error(
+                f"tool_changer '{name}' is not a printer object")
+        return tool_changer
+
+    def _resolve_toolhead_paths(self):
+        """toolhead_paths: one of PATHS, or the name of a printer object
+        whose tools_share_path() says - the printer's tool changer, which
+        owns how the tubes are arranged."""
+        value = str(self.ace_config.get("toolhead_paths", PATHS_SHARED))
+        self._toolhead_owner = None
+        if value.lower() in PATHS:
+            return value.lower()
+        owner = self.printer.lookup_object(value, None)
+        if owner is None:
+            raise self.config.error(
+                f"toolhead_paths '{value}' is not one of {', '.join(PATHS)} "
+                f"and not a printer object")
+        if not callable(getattr(owner, "tools_share_path", None)):
+            raise self.config.error(
+                f"toolhead_paths: printer object '{value}' has no "
+                f"tools_share_path()")
+        paths = PATHS_SHARED if owner.tools_share_path() else PATHS_PER_TOOL
+        self.gcode.respond_info(f"ACE: toolhead_paths is {paths} (says '{value}')")
+        self._toolhead_owner = owner
+        return paths
+
+    def tool_at_toolhead(self):
+        """The tool whose filament the toolhead holds right now, as the
+        printer object named in toolhead_paths knows it (optional
+        ace_tool_at_toolhead()); -1 when there is nobody to ask or it
+        cannot say. For when the record of the loaded tool is lost."""
+        ask = getattr(getattr(self, "_toolhead_owner", None),
+                      "ace_tool_at_toolhead", None)
+        tool = ask() if callable(ask) else None
+        return -1 if tool is None else tool
 
     def _disable_all_sensor_detection(self):
         """Disable automatic pause for all sensors."""
@@ -754,6 +1082,12 @@ class AceManager:
         if hasattr(self, '_sensor_override') and self._sensor_override:
             if sensor_name in self._sensor_override:
                 return self._sensor_override[sensor_name]
+
+        if sensor_name == SENSOR_RUNOUT:
+            presence = getattr(self, "_runout_presence", None)
+            if presence is not None:
+                return bool(presence())
+            sensor_name = SENSOR_TOOLHEAD
 
         if sensor_name not in self.sensors:
             return False
@@ -832,13 +1166,20 @@ class AceManager:
             # RDM not available - check only toolhead
             return not toolhead_blocked
 
-    def _turn_off_heater_if_idle(self):
-        """
-        Turn off extruder heater if the printer is not currently printing.
+    def _extruder_target(self):
+        """The extruder heater's target (°C), 0 when it is off or unknown."""
+        try:
+            extruder = self.printer.lookup_object("extruder", None)
+            return float(extruder.get_heater().get_temp(self.reactor.monotonic())[1])
+        except Exception:
+            return 0.
 
-        Called after successful unload operations to avoid leaving the
-        heater on indefinitely when unloading outside of a print job.
-        During printing, the heater must stay on for the next toolchange.
+    def _restore_heater_if_idle(self):
+        """
+        Outside a print, put the extruder heater's target back to what it
+        was before the unload or park heated for its cut: a target the user
+        had set stays, and only a heater that was off goes off again.
+        During printing the heater is left alone for the next toolchange.
         """
         try:
             print_stats = self.printer.lookup_object("print_stats", None)
@@ -850,8 +1191,13 @@ class AceManager:
                         "ACE: Printer is printing/paused — keeping heater on"
                     )
                     return
-            self.gcode.respond_info("ACE: Not printing — turning off extruder heater")
-            self.gcode.run_script_from_command("M104 S0")
+            target = getattr(self, "_heater_target_before", 0.)
+            if target > 0:
+                self.gcode.respond_info(
+                    f"ACE: Not printing — extruder heater back to {target:.0f}°C")
+            else:
+                self.gcode.respond_info("ACE: Not printing — turning off extruder heater")
+            self.gcode.run_script_from_command(f"M104 S{target:.0f}")
         except Exception as e:
             self.gcode.respond_info(f"ACE: Warning — could not turn off heater: {e}")
 
@@ -866,8 +1212,13 @@ class AceManager:
             tool_index: Tool to prepare for retraction (-1 = unknown tool)
 
         Returns:
-            bool: True if filament was present and handling succeeded,
-                  False if no filament present or operation completed
+            bool: True if filament was present and was prepared,
+                  False if no filament is present.
+
+        Raises:
+            Exception: the macro failed (cutter not reachable, heater
+                fault). The filament is then still whole and in the nozzle,
+                so the caller must not retract it.
         """
         if not self.get_switch_state(SENSOR_TOOLHEAD):
             self.gcode.respond_info("ACE: No filament at toolhead, skipping prep")
@@ -897,8 +1248,10 @@ class AceManager:
             return True
 
         except Exception as e:
-            self.gcode.respond_info(f"ACE: Error preparing toolhead for retraction: {e}")
-            return False
+            raise Exception(
+                f"ACE: Preparing the toolhead for retraction failed, "
+                f"filament left in place: {e}"
+            ) from e
 
     def _ensure_hot_for_recovery_unload(self, current_tool, target_temp):
         """Heat the extruder before a plausibility-mismatch recovery unload.
@@ -918,15 +1271,27 @@ class AceManager:
             current_tool: Tool currently recorded as loaded (-1 if unknown).
             target_temp:  Target tool temperature already resolved by the caller
                           (0 when unavailable, e.g. unload-only changes).
+
+        Returns:
+            The heater target from *before* the recovery heat-up when this
+            method raised it (so the caller can restore it), otherwise None.
+            Without restoring, the PRE macro would read the recovery
+            temperature as "slicer temp (printing)" and POST would keep the
+            nozzle hot after a manual toolchange.
         """
         extruder = self.printer.lookup_object("extruder", None)
         if extruder is None:
-            return
+            return None
         heater = extruder.get_heater()
-        cur_temp = heater.get_temp(self.reactor.monotonic())[0]
+        now = self.reactor.monotonic()
+        cur_temp = heater.get_temp(now)[0]
         min_temp = heater.min_extrude_temp
         if cur_temp >= min_temp:
-            return  # already hot enough to move the extruder
+            return None  # already hot enough to move the extruder
+        try:
+            prev_target = float(heater.get_status(now)["target"])
+        except (TypeError, ValueError, KeyError, AttributeError):
+            prev_target = None
 
         # The filament physically stuck in the path belongs to the current
         # tool, so prefer its material temperature.
@@ -947,6 +1312,7 @@ class AceManager:
             f"recovery unload — heating to {heat_temp:.0f}°C before clearing path"
         )
         self.gcode.run_script_from_command(f"M109 S{heat_temp:.0f}")
+        return prev_target
 
     def execute_coordinated_retraction(self, retract_length, retract_speed, retract_speed_mmmin, current_tool):
         """
@@ -1031,6 +1397,12 @@ class AceManager:
         toolhead = self.printer.lookup_object('toolhead')
         toolhead.wait_moves()
 
+    def _start_queued_toolhead_moves(self):
+        """Hand every queued move to the steppers now. Klipper otherwise
+        holds the newest ones back for its look-ahead, up to a second's
+        worth after an idle toolhead."""
+        self.printer.lookup_object('toolhead').get_last_move_time()
+
     def _extruder_move(self, length, speed, wait_for_move_end=False):
         """Move extruder (relative) via motion planner, synchronously."""
         if length == 0:
@@ -1046,12 +1418,208 @@ class AceManager:
         new_pos[3] += length
 
         toolhead.move(new_pos, speed)
+        # This move bypasses G-code: without the reset the next G1 drives
+        # the extruder back to the E position G-code still remembers.
+        self.printer.lookup_object('gcode_move').reset_last_position()
         if wait_for_move_end:
             toolhead.wait_moves()
+
+    def route_to_tool(self, tool_index, feeder=FEEDER_EXTRUDER):
+        """Announce which tool's filament is about to move in the toolhead.
+
+        A toolhead with more than one filament path (a selector in front of
+        the extruder) defines ``[gcode_macro _ACE_ROUTE_TOOL]`` and brings
+        the path of ``TOOL=<global tool>`` in front of the extruder and the
+        toolhead sensor. With ``FEEDER_ACE`` the macro also gets
+        ``FEEDER=ACE``: the ACE alone pushes or pulls up to the toolhead
+        sensor, so the path must be open while the extruder stands still.
+        Without that macro, or for an unknown tool (-1), nothing is sent.
+        An error raised by the macro propagates: the caller must not move
+        filament the toolhead is not set up for.
+        """
+        if tool_index < 0:
+            return
+        if self.printer.lookup_object(f"gcode_macro {ROUTE_TOOL_MACRO}", None) is None:
+            return
+        script = f"{ROUTE_TOOL_MACRO} TOOL={tool_index}"
+        if feeder == FEEDER_ACE:
+            script += f" FEEDER={FEEDER_ACE}"
+        self.gcode.run_script_from_command(script)
+
+    # --- filaments parked at the toolhead's intake ------------------------
+    def parked_tools(self):
+        """Tools whose filament park_tool() left at the intake."""
+        return list(self.state.get("ace_parked_tools", None) or [])
+
+    def is_parked(self, tool_index):
+        return tool_index in self.parked_tools()
+
+    def _set_parked(self, tool_index, parked):
+        tools = [t for t in self.parked_tools() if t != tool_index]
+        if parked:
+            tools.append(tool_index)
+        if tools != self.parked_tools():
+            self.state.set("ace_parked_tools", tools)
+
+    @toolchange_in_progress_guard
+    def park_tool(self, tool_index):
+        """Take the loaded tool out of the hotend and leave it parked at
+        the intake: cut, then the extruder retracts until the toolhead
+        sensor clears. Its next load is a short pull. Without an intake to
+        park at (toolhead_strategy: sensor_push) this is a full unload."""
+        instance_num = get_instance_from_tool(tool_index)
+        if instance_num < 0:
+            raise Exception(f"Tool {tool_index} not managed by any ACE instance")
+        if self.transfers.get(instance_num) is None:
+            return self.smart_unload(tool_index)
+        self.gcode.respond_info(f"ACE: Parking tool {tool_index} at the toolhead")
+        self._cut_and_park(tool_index)
+        self._set_parked(tool_index, True)
+        self.gcode.respond_info(f"ACE: Tool {tool_index} parked")
+        self._restore_heater_if_idle()
+        return True
+
+    @toolchange_in_progress_guard
+    def park_after_runout(self, tool_index):
+        """After a runout seen at the intake: the cut old piece out of the
+        hotend and back until the toolhead sensor clears, as park_tool, but
+        the tool is not parked - a parked tool's next load is a short pull
+        of what sits at the gear, here the old piece and not the refilled
+        spool. The next load through its path pulls through instead
+        (runout_reload_length_for). Raises as park_tool does."""
+        self.gcode.respond_info(
+            f"ACE: Runout on T{tool_index} - cutting and pulling the old"
+            f" filament back off the toolhead sensor")
+        self._cut_and_park(tool_index)
+        self._runout_piece = tool_index
+
+    def _cut_and_park(self, tool_index):
+        """Cut the tool's filament and retract it until the toolhead
+        sensor clears (intake transfer only). Leaves it bowden-side."""
+        instance_num = get_instance_from_tool(tool_index)
+        transfer = self.transfers[instance_num]
+        instance = self.instances[instance_num]
+        local_slot = get_local_slot(tool_index, instance_num)
+        self._heater_target_before = self._extruder_target()
+        self.route_to_tool(tool_index)
+        if self.get_switch_state(SENSOR_TOOLHEAD):
+            # The ACE takes a second or more to stop assisting; the cut
+            # takes longer, so the two run together.
+            assist_stopping = instance._feed_assist_index == local_slot
+            if assist_stopping:
+                instance._send_feed_assist_stop(local_slot)
+            try:
+                self.prepare_toolhead_for_filament_retraction(tool_index=tool_index)
+            except Exception:
+                # Uncut, the filament stays the loaded one.
+                if assist_stopping:
+                    instance._enable_feed_assist(local_slot)
+                raise
+            if assist_stopping:
+                instance._await_feed_assist_stopped()
+            try:
+                transfer.park(local_slot,
+                              extruder_limit=self.toolhead_retraction_length,
+                              extruder_speed=self.toolhead_retraction_speed)
+            finally:
+                self.gcode.run_script_from_command("G92 E0")
+                self.gcode.run_script_from_command("G90")
+        self.state.set("ace_filament_pos", FILAMENT_STATE_BOWDEN)
+        # Parked at the intake: neither loaded nor at the ACE park position.
+        instance.set_slot_park_state(local_slot, SLOT_PARK_STATE_UNKNOWN)
+
+    def has_intake_transfer(self, tool_index):
+        """Whether the tool's ACE loads through an intake transfer."""
+        return get_instance_from_tool(tool_index) in self.transfers
+
+    def slot_reads_empty(self, tool_index):
+        """Whether the tool's ACE slot reports no filament now."""
+        instance, local_slot = get_ace_instance_and_slot_for_tool(tool_index)
+        return instance is not None and instance._is_slot_empty(local_slot) is True
+
+    def runout_reload_length_for(self, tool_index):
+        """How far a load of `tool_index` pulls past the toolhead sensor:
+        runout_reload_length while a runout's old piece sits in its path
+        (any tool's in a shared tube, its own with a tube per tool), else 0."""
+        piece = self._runout_piece
+        if piece is None:
+            return 0.
+        if self.toolhead_paths == PATHS_SHARED or piece == tool_index:
+            return self.runout_reload_length
+        return 0.
+
+    def note_loaded_after_runout(self, tool_index):
+        """A load of `tool_index` succeeded: it pulled any old piece in its
+        path through."""
+        if self.runout_reload_length_for(tool_index):
+            self._runout_piece = None
+
+    def _clear_parked_for(self, target_tool):
+        """Before a load. In a shared tube a parked filament of another
+        tool is in the way and is pulled back out; with a tube per tool it
+        stays. The target's own park is its resume."""
+        if self.toolhead_paths != PATHS_SHARED:
+            return
+        for tool in self.parked_tools():
+            if tool == target_tool:
+                continue
+            instance, local_slot = get_ace_instance_and_slot_for_tool(tool)
+            if instance is None or instance.inventory[local_slot].get("status") == "empty":
+                # Taken out by hand, or run out: nothing to pull.
+                self._set_parked(tool, False)
+                continue
+            self.gcode.respond_info(
+                f"ACE: T{tool} is parked in the tube T{target_tool} needs - "
+                f"unloading it first"
+            )
+            if not self.smart_unload(tool, keep_heater=True):
+                raise Exception(f"Failed to unload parked T{tool}")
 
     @toolchange_in_progress_guard
     def smart_unload(self, tool_index=-1, prepare_toolhead=True, keep_heater=False,
                      cycle_on_blocked=False):
+        """_smart_unload, and the unloaded filament is no longer parked."""
+        if tool_index < 0 and self.state.get("ace_current_index", -1) < 0:
+            tool_index = self._identify_unrecorded_tool()
+        self._heater_target_before = self._extruder_target()
+        unloaded = self._smart_unload(tool_index, prepare_toolhead, keep_heater,
+                                      cycle_on_blocked)
+        if unloaded:
+            if tool_index >= 0:
+                self._set_parked(tool_index, False)
+            elif self.toolhead_paths == PATHS_SHARED and self.parked_tools():
+                # Whichever filament was in the shared tube is out of it.
+                self.state.set("ace_parked_tools", [])
+        return unloaded
+
+    def _identify_unrecorded_tool(self):
+        """The tool to unload when none is on record: the printer's answer,
+        else -1 for _smart_unload to find by test retracts. Behind an
+        intake-gated toolhead that test is refused: the extruder clears the
+        toolhead sensor whichever slot is tried, so it would name the first
+        slot and drag that slot's own filament back."""
+        tool = self.tool_at_toolhead()
+        if tool >= 0:
+            self.gcode.respond_info(
+                f"ACE: No tool on record - the toolhead holds T{tool}")
+            return tool
+        # On a shared tube the toolhead cannot name the slot, but a tool
+        # park_tool() left there is on record here.
+        parked = self.parked_tools()
+        if self.toolhead_paths == PATHS_SHARED and len(parked) == 1:
+            self.gcode.respond_info(
+                f"ACE: No tool on record - T{parked[0]} is parked at the toolhead")
+            return parked[0]
+        if self.transfers and self.get_switch_state(SENSOR_TOOLHEAD):
+            raise Exception(
+                "ACE: Filament at the toolhead, but no tool on record and "
+                "the printer cannot tell which it is. Unload it by hand "
+                "(ACE_SMART_UNLOAD TOOL=<n> for the slot it belongs to)."
+            )
+        return -1
+
+    def _smart_unload(self, tool_index=-1, prepare_toolhead=True, keep_heater=False,
+                      cycle_on_blocked=False):
         """
         Unload with slot cycling when tool is unknown.
 
@@ -1070,6 +1638,8 @@ class AceManager:
         current_tool_index = self.state.get("ace_current_index", -1)
 
         self.gcode.respond_info(f"ACE: Smart unload tool {tool_index} (current: {current_tool_index})")
+
+        self.route_to_tool(tool_index)
 
         tool_for_temp = tool_index if tool_index >= 0 else current_tool_index
         if prepare_toolhead:
@@ -1097,6 +1667,11 @@ class AceManager:
 
             # Sensor already clear - choose retract distance based on path state
             if not self.get_instant_switch_state(SENSOR_TOOLHEAD):
+                if instance.instance_num in self.transfers:
+                    # The sensor is behind the gear: the filament can still
+                    # be in it, and the extruder may be cold. The ACE pulls
+                    # alone below, so the route has to free the filament.
+                    self.route_to_tool(tool_index, FEEDER_ACE)
                 if self.is_filament_path_free_instant():
                     # All sensors clear: filament was likely manually removed.
                     # A short safety retract is enough to pull back any tip sitting
@@ -1104,6 +1679,12 @@ class AceManager:
                     param = "parkposition_to_rdm_length" if self.has_rdm_sensor() \
                         else "parkposition_to_toolhead_length"
                     retract_dist = self._get_config_for_tool(tool_index, param)
+                    if (instance.instance_num in self.transfers
+                            and not self.has_rdm_sensor()):
+                        # The extruder has not driven the tip out of the
+                        # gear here: the ACE pulls that stretch as well
+                        # (extruder_feeding_length bounds intake to sensor).
+                        retract_dist += instance.extruder_feeding_length
                     self.gcode.respond_info(
                         f"ACE: Filament path fully free for T{tool_index} "
                         f"(filament may have been manually removed) - "
@@ -1146,7 +1727,7 @@ class AceManager:
                     self.state.set("ace_filament_pos", FILAMENT_STATE_BOWDEN)
                     self.gcode.respond_info(f"ACE: Tool {tool_index} unloaded successfully")
                     if not keep_heater:
-                        self._turn_off_heater_if_idle()
+                        self._restore_heater_if_idle()
                     return True
                 else:
                     # The known tool's slot has been retracted (it may even
@@ -1191,30 +1772,55 @@ class AceManager:
                     f"({retract_length:.3f}mm at {retract_speed:.3f}mm/s)"
                 )
 
-                # Start extruder retraction (10% faster for slack)
-                self._extruder_move(-abs(retract_length), retract_speed * 1.10, wait_for_move_end=False)
-
-                # Start ACE retraction — use RDM sensor for early stop if available
-                if self.has_rdm_sensor():
-                    unload_ok = instance.rmd_triggered_unload_slot(
-                        self, local_slot,
-                        length=parkposition_to_toolhead_length + retract_length,
-                        overshoot_length=instance.rdm_overshoot_length
+                transfer = self.transfers.get(instance.instance_num)
+                if transfer is not None:
+                    def park_at_rdm():
+                        return instance.rmd_triggered_unload_slot(
+                            self, local_slot,
+                            length=parkposition_to_toolhead_length,
+                            overshoot_length=instance.rdm_overshoot_length
+                        )
+                    rdm_sees_filament = (self.has_rdm_sensor()
+                                         and self.get_instant_switch_state(SENSOR_RDM))
+                    park = park_at_rdm if rdm_sees_filament else None
+                    unload_ok = transfer.unload(
+                        local_slot, extruder_limit=retract_length,
+                        extruder_speed=retract_speed, park=park
                     )
                 else:
-                    unload_ok = instance._smart_unload_slot(
-                        local_slot,
-                        length=parkposition_to_toolhead_length + retract_length,
-                    )
+                    # Start extruder retraction (10% faster for slack). Started
+                    # at once: left in the look-ahead it would only run after
+                    # the ACE retract below, which pulls against the gears.
+                    self._extruder_move(-abs(retract_length), retract_speed * 1.10, wait_for_move_end=False)
+                    self._start_queued_toolhead_moves()
 
-                # Wait for extruder to finish
-                self._wait_toolhead_move_finished()
+                    # Start ACE retraction — use the RDM early stop only when the
+                    # RDM actually sees filament right now.  Its callback stops the
+                    # retract on the first CLEAR sample, so an RDM that is already
+                    # clear here would truncate the pull to nothing but the
+                    # overshoot and report success with the bowden still loaded.
+                    # Same precondition the toolhead-clear call site and Case 3 of
+                    # _identify_and_unload_by_cycling apply.
+                    if self.has_rdm_sensor() and self.get_instant_switch_state(SENSOR_RDM):
+                        unload_ok = instance.rmd_triggered_unload_slot(
+                            self, local_slot,
+                            length=parkposition_to_toolhead_length + retract_length,
+                            overshoot_length=instance.rdm_overshoot_length
+                        )
+                    else:
+                        unload_ok = instance._smart_unload_slot(
+                            local_slot,
+                            length=parkposition_to_toolhead_length + retract_length,
+                        )
+
+                    # Wait for extruder to finish
+                    self._wait_toolhead_move_finished()
 
                 if unload_ok and self.is_filament_path_free_instant():
                     self.state.set("ace_filament_pos", FILAMENT_STATE_BOWDEN)
                     self.gcode.respond_info(f"ACE: Tool {tool_index} unloaded successfully")
                     if not keep_heater:
-                        self._turn_off_heater_if_idle()
+                        self._restore_heater_if_idle()
                     return True
                 else:
                     # Same escalation as the toolhead-clear branch above: the
@@ -1297,11 +1903,13 @@ class AceManager:
         rdm_triggered = self.get_switch_state(SENSOR_RDM) if self.has_rdm_sensor() else False
 
         # Distances for completing unload after identification
-        park_to_toolhead_len = self._get_config_for_tool(
-            0, "parkposition_to_toolhead_length"
+        park_to_toolhead_len = self._cycling_config(
+            current_tool_index, attempted_tool_index,
+            "parkposition_to_toolhead_length"
         )
         park_to_rdm_len = (
-            self._get_config_for_tool(0, "parkposition_to_rdm_length")
+            self._cycling_config(current_tool_index, attempted_tool_index,
+                                 "parkposition_to_rdm_length")
             if self.has_rdm_sensor() else park_to_toolhead_len
         )
 
@@ -1320,6 +1928,17 @@ class AceManager:
             retract_speed * 60,
             full_unload_length
         )
+
+    def _cycling_config(self, current_tool_index, attempted_tool_index,
+                        param_name):
+        """Config for cycling, which starts without knowing the loaded tool:
+        the attempted tool's ACE, else the current tool's, else the first
+        ACE (tool numbers may start past 0, after a tool changer's own)."""
+        tool = (attempted_tool_index if attempted_tool_index >= 0
+                else current_tool_index)
+        if tool < 0:
+            return getattr(self.instances[0], param_name)
+        return self._get_config_for_tool(tool, param_name)
 
     def _identify_and_unload_by_cycling(
         self,
@@ -1356,8 +1975,7 @@ class AceManager:
                 f"({retract_length}mm at {retract_speed}mm/s) to identify loaded tool"
             )
 
-            # Use existing cycling logic
-            return self._cycle_slots_with_sensor_check(
+            if self._cycle_slots_with_sensor_check(
                 current_tool_index,
                 attempted_tool_index,
                 retract_length,
@@ -1366,32 +1984,44 @@ class AceManager:
                 full_unload_length,
                 sensor_name=SENSOR_TOOLHEAD,
                 use_extruder=True
+            ):
+                return True
+
+            # Toolhead-based identification failed.  When the RDM also sees
+            # filament, escalate to RDM-monitored cycling (CASE 3 below)
+            # instead of giving up: it needs no toolhead-sensor movement at
+            # all and pulls with the ACE only, so it recovers cases the
+            # toolhead test cannot (field log: cycling failed on all slots
+            # and cancelled the print, while an RDM-monitored unload of the
+            # same slot succeeded seconds later).
+            if not (rdm_triggered and self.has_rdm_sensor()):
+                return False
+            self.gcode.respond_info(
+                "ACE: Toolhead-sensor cycling failed - escalating to "
+                "RDM-monitored cycling"
             )
 
-        # CASE 3: RDM triggered but toolhead clear - monitor RDM during ACE-only retraction
+        # CASE 3: RDM triggered (toolhead clear, or toolhead cycling failed) -
+        # monitor RDM during ACE-only retraction
         if rdm_triggered and self.has_rdm_sensor():
             # Get RDM-specific config
-            tool_for_config = attempted_tool_index if attempted_tool_index >= 0 else current_tool_index
-            if tool_for_config < 0:
-                parkposition_to_rdm_length = self.instances[0].parkposition_to_rdm_length
-                parkposition_to_toolhead_length = self.instances[0].parkposition_to_toolhead_length
-                rdm_retract_speed = self.instances[0].feed_speed  # Use faster feed_speed for long RDM retraction
-            else:
-                parkposition_to_rdm_length = self._get_config_for_tool(
-                    tool_for_config, "parkposition_to_rdm_length"
-                )
-                parkposition_to_toolhead_length = self._get_config_for_tool(
-                    tool_for_config, "parkposition_to_toolhead_length"
-                )
-
-                rdm_retract_speed = self._get_config_for_tool(
-                    tool_for_config, "feed_speed"
-                )
+            parkposition_to_rdm_length = self._cycling_config(
+                current_tool_index, attempted_tool_index,
+                "parkposition_to_rdm_length"
+            )
+            parkposition_to_toolhead_length = self._cycling_config(
+                current_tool_index, attempted_tool_index,
+                "parkposition_to_toolhead_length"
+            )
+            # The faster feed_speed for the long RDM retraction
+            rdm_retract_speed = self._cycling_config(
+                current_tool_index, attempted_tool_index, "feed_speed"
+            )
             # Filament could be just before toolhead - ensure full unload length covers toolhead to rdm sensor
             full_unload_length = parkposition_to_toolhead_length
 
             self.gcode.respond_info(
-                "ACE: RDM sensor triggered but toolhead sensor not - "
+                "ACE: RDM sensor triggered - "
                 f"Retracting and monitoring RDM sensor during ACE-only retraction "
                 f"({full_unload_length}mm at {rdm_retract_speed}mm/s)"
             )
@@ -1476,6 +2106,39 @@ class AceManager:
         # Cycle and test each slot
         identified_tool = None
 
+        def make_sensor_callback(inst_num, sname, overshoot_len, overshoot_spd, mstate):
+            """Early-stop callback polling `sname` during an ACE retraction."""
+            def sensor_early_stop_check():
+                elapsed = time.time() - mstate["start_time"]
+
+                sensor_has_filament = self.get_instant_switch_state(sname)
+
+                # Log every 2 seconds
+                if elapsed - mstate["last_log"] >= 2.0:
+                    state_str = "TRIGGERED" if sensor_has_filament else "CLEAR"
+                    self.gcode.respond_info(
+                        f"ACE[{inst_num}]: [{elapsed:.1f}s] {sname}={state_str}"
+                    )
+                    mstate["last_log"] = elapsed
+
+                if not sensor_has_filament and not mstate["cleared"]:
+                    mstate["cleared"] = True
+
+                    self.gcode.respond_info(
+                        f"ACE[{inst_num}]: {sname} cleared after {elapsed:.1f}s — "
+                        f"applying {overshoot_len}mm overshoot"
+                    )
+
+                    overshoot_time = overshoot_len / overshoot_spd
+                    if overshoot_time > 0:
+                        self.reactor.pause(
+                            self.reactor.monotonic() + overshoot_time
+                        )
+                    return f"{sname} clear at {elapsed:.1f}s"
+
+                return None
+            return sensor_early_stop_check
+
         for instance_num, slot, tool_num in slots_to_try:
             self.gcode.respond_info(
                 f"ACE[{instance_num}]: Testing slot {slot} (T{tool_num}) via {sensor_name}"
@@ -1514,6 +2177,61 @@ class AceManager:
                         identified_tool = (instance_num, slot, tool_num)
                         break
 
+                    # The coordinated retract only moves the tip from the
+                    # cutter to just past the extruder gears (that is what
+                    # toolhead_retraction_length is dimensioned for) — the
+                    # toolhead sensor sits above the release point, so even
+                    # the CORRECT slot still reads TRIGGERED here.  Once the
+                    # extruder has released the filament, only the loaded
+                    # slot's ACE can move it: continue with an ACE-only
+                    # retraction polling the sensor live.  Cap: the sensor is
+                    # extruder_feeding_length + toolhead_full_purge_length of
+                    # filament path above the primed tip; subtract what the
+                    # coordinated retract already pulled.  A wrong slot only
+                    # drags its own parked filament back by this bounded
+                    # length.
+                    continuation_max = max(
+                        0.0,
+                        instance.extruder_feeding_length
+                        + instance.toolhead_full_purge_length
+                        - retract_length,
+                    )
+                    if continuation_max > 0:
+                        monitor_state = {
+                            "cleared": False,
+                            "start_time": time.time(),
+                            "last_log": 0,
+                        }
+                        early_stop_cb = make_sensor_callback(
+                            instance_num, sensor_name,
+                            instance.rdm_overshoot_length,
+                            retract_speed, monitor_state,
+                        )
+                        self.gcode.respond_info(
+                            f"ACE[{instance_num}]: Sensor still triggered — "
+                            f"continuing with ACE-only retraction on slot {slot} "
+                            f"(max {continuation_max:.0f}mm @ {retract_speed}mm/s)"
+                        )
+                        instance.wait_ready()
+                        try:
+                            instance._retract(
+                                slot, length=continuation_max, speed=retract_speed,
+                                early_stop_callback=early_stop_cb,
+                            )
+                        except Exception as e:
+                            instance._stop_retract(slot)
+                            self.gcode.respond_info(
+                                f"ACE[{instance_num}]: Retract error on slot {slot}: {e}"
+                            )
+
+                        if monitor_state["cleared"]:
+                            self.gcode.respond_info(
+                                f"ACE[{instance_num}]: ✓ Sensor cleared during "
+                                f"continuation! T{tool_num} identified"
+                            )
+                            identified_tool = (instance_num, slot, tool_num)
+                            break
+
                 else:
                     # CASE 3: ACE-only retraction with sensor monitoring
                     # Uses early_stop_callback inside _retract() so the sensor
@@ -1551,39 +2269,6 @@ class AceManager:
                         "start_time": time.time(),
                         "last_log": 0,
                     }
-
-                    def make_sensor_callback(inst_num, sname, overshoot_len, overshoot_spd, mstate):
-                        """Factory to capture loop variables in closure."""
-                        def sensor_early_stop_check():
-                            elapsed = time.time() - mstate["start_time"]
-
-                            sensor_has_filament = self.get_instant_switch_state(sname)
-
-                            # Log every 2 seconds
-                            if elapsed - mstate["last_log"] >= 2.0:
-                                state_str = "TRIGGERED" if sensor_has_filament else "CLEAR"
-                                self.gcode.respond_info(
-                                    f"ACE[{inst_num}]: [{elapsed:.1f}s] {sname}={state_str}"
-                                )
-                                mstate["last_log"] = elapsed
-
-                            if not sensor_has_filament and not mstate["cleared"]:
-                                mstate["cleared"] = True
-
-                                self.gcode.respond_info(
-                                    f"ACE[{inst_num}]: {sname} cleared after {elapsed:.1f}s — "
-                                    f"applying {overshoot_len}mm overshoot"
-                                )
-
-                                overshoot_time = overshoot_len / overshoot_spd
-                                if overshoot_time > 0:
-                                    self.reactor.pause(
-                                        self.reactor.monotonic() + overshoot_time
-                                    )
-                                return f"{sname} clear at {elapsed:.1f}s"
-
-                            return None
-                        return sensor_early_stop_check
 
                     early_stop_cb = make_sensor_callback(
                         instance_num, sensor_name, overshoot_length,
@@ -1638,7 +2323,9 @@ class AceManager:
         # Complete unload if using extruder mode (CASE 2)
         if use_extruder:
             instance_num, slot, tool_num = identified_tool
-            remaining_length = full_unload_length - retract_length
+            # The test retract may already have pulled further than a full
+            # unload is long.
+            remaining_length = max(0.0, full_unload_length - retract_length)
             instance = self.instances[instance_num]
 
             try:
@@ -1715,6 +2402,8 @@ class AceManager:
                 self.gcode.respond_info(f"ACE[{instance.instance_num}]: " f"Loading slot {slot} (T{tool_num})")
 
                 try:
+                    if not use_rdm:
+                        self.route_to_tool(tool_num, FEEDER_ACE)
                     # Step 1: Feed to verification sensor
                     self.gcode.respond_info(f"ACE: Feeding slot {slot} to {sensor_name} sensor")
                     instance._feed_filament_to_verification_sensor(
@@ -1775,6 +2464,9 @@ class AceManager:
                         continue
 
                     self.gcode.respond_info(f"ACE[{instance.instance_num}]: " f"Slot {slot} loaded successfully")
+                    # A retract the slot's empty report cut short did not park anything
+                    if not instance._last_retract_early_stopped:
+                        instance.set_slot_park_state(slot, SLOT_PARK_STATE_PARKED)
                     success_count += 1
 
                 except Exception as e:
@@ -1788,6 +2480,43 @@ class AceManager:
         else:
             self.gcode.respond_info("ACE: Smart load - no slots loaded")
             return False
+
+    def check_tool(self, tool_index):
+        """One spool's path, cold, as smart_load does for every slot but
+        always to the toolhead sensor: the ACE alone feeds the filament
+        there and pulls it back to its park position. Raises, naming the
+        tool, when its slot is empty, filament already sits at the sensor,
+        the filament does not arrive, or it does not clear again."""
+        instance, slot = get_ace_instance_and_slot_for_tool(tool_index)
+        if instance is None:
+            raise Exception(f"T{tool_index} is not an ACE tool")
+        if instance.inventory[slot].get("status", "empty") == "empty":
+            raise Exception(f"T{tool_index}: slot empty")
+        self.route_to_tool(tool_index, FEEDER_ACE)
+        if self.get_switch_state(SENSOR_TOOLHEAD):
+            # Whose filament that is nobody knows: this slot's pull back
+            # would move something else's.
+            raise Exception(f"T{tool_index}: the toolhead sensor already sees filament")
+        try:
+            instance._feed_filament_to_verification_sensor(
+                slot, SENSOR_TOOLHEAD, instance.toolchange_load_length)
+            reached = self.get_switch_state(SENSOR_TOOLHEAD)
+        except Exception as e:
+            logging.info(f"ACE: check of T{tool_index} aborted the feed: {e}")
+            reached = False
+        if not reached:
+            instance._stop_feed(slot)
+        # How far it got is unknown when it did not arrive: the whole park
+        # length back, as smart_load's safety retract.
+        instance._retract(slot, length=instance.parkposition_to_toolhead_length,
+                          speed=instance.retract_speed)
+        self.state.set("ace_filament_pos", FILAMENT_STATE_BOWDEN)
+        if not reached:
+            raise Exception(f"T{tool_index} did not reach the toolhead (tangled?)")
+        if self.get_switch_state(SENSOR_TOOLHEAD):
+            raise Exception(f"T{tool_index} stuck at the toolhead")
+        if not instance._last_retract_early_stopped:
+            instance.set_slot_park_state(slot, SLOT_PARK_STATE_PARKED)
 
     # ========== Inventory Management (Manager owns persistence) ==========
 
@@ -1847,7 +2576,13 @@ class AceManager:
                 self._sync_inventory_to_persistent(inst.instance_num, flush=flush)
 
     def _sync_moonraker_lane_data(self, force=False, reason="manual"):
-        """Push ACE slot metadata to Moonraker DB lane_data for Orca sync."""
+        """Push ACE slot metadata to Moonraker DB lane_data for Orca sync.
+
+        Also sends "ace:lanes_changed", even with this sync disabled: a
+        printer-side lane writer (Kobra X [kx_filament]) then rereads the
+        "lanes" of the ace_state status.
+        """
+        self.printer.send_event("ace:lanes_changed")
         adapter = getattr(self, "_moonraker_lane_sync", None)
         if not adapter:
             return False
@@ -1858,8 +2593,12 @@ class AceManager:
             return False
 
     def _start_monitoring(self):
-        """Start runout detection monitor loop."""
-        self.runout_monitor.start_monitoring()
+        """Start the ACE support state monitor, which watches the ACE_Pro
+        switch, and the runout monitor while the ACE is enabled; switching
+        the ACE on or off starts or stops the runout monitor
+        (update_ace_support_active_state)."""
+        if self._ace_pro_enabled:
+            self.runout_monitor.start_monitoring()
 
         self.gcode.respond_info("ACE: Starting ACE support state monitor")
         self._ace_state_timer = self.reactor.register_timer(self._monitor_ace_state, self.reactor.NOW)
@@ -1994,17 +2733,30 @@ class AceManager:
         # candidate; with the old tool's assist also restored, two ACEs
         # push filament into one toolhead).  "Loaded" means filament_pos at
         # toolhead/nozzle, or the toolhead sensor seeing filament (covers a
-        # stale pos).  An unconfirmed in-flight toolchange
-        # (ace_target_index != -1) is retried by the RESUME macro, which
-        # arms assist itself.  Fail-open: unreadable state keeps the safety
-        # net's protective re-enable.
+        # stale pos).  An unconfirmed in-flight toolchange to a DIFFERENT
+        # tool (ace_target_index != tool_index) is retried by the RESUME
+        # macro, which arms assist itself.  Fail-open: unreadable state keeps
+        # the safety net's protective re-enable.
+        #
+        # A pending target equal to tool_index is deliberately NOT skipped.
+        # ace_target_index is left set when a toolchange raises, so a retry
+        # that has already failed latches it forever — and
+        # _validate_startup_tool_state() also skips while it is set, so not
+        # even a klippy restart clears it.  Every later paused→printing
+        # transition would decline assist and the print extrudes nothing.
+        # There is no ambiguity to protect against: the outstanding target
+        # and the tool being verified are the same, and the loaded guard
+        # below still has to prove filament is in the path, so this cannot
+        # arm a second spool into one toolhead.
         try:
             if self.toolchange_in_progress is True:
                 return False
-            if int(self.state.get("ace_target_index", -1)) != -1:
+            pending_target = int(self.state.get("ace_target_index", -1))
+            if pending_target != -1 and pending_target != tool_index:
                 self.gcode.respond_info(
                     f"ACE: Resume feed assist check skipped for T{tool_index} "
-                    f"- unconfirmed toolchange pending (its retry owns assist)"
+                    f"- unconfirmed toolchange to T{pending_target} pending "
+                    f"(its retry owns assist)"
                 )
                 return False
             pos = self.state.get("ace_filament_pos", None)
@@ -2102,6 +2854,7 @@ class AceManager:
             # Disable reconnection attempts in all serial managers
             for instance in self.instances:
                 instance.serial_mgr.disable_ace_pro()
+            self.runout_monitor.stop_monitoring()
 
             self.gcode.respond_info(
                 "ACE: ACE Pro disabled - Standard Klipper sensors restored"
@@ -2115,7 +2868,8 @@ class AceManager:
 
             # Enable reconnection attempts in all serial managers
             for instance in self.instances:
-                instance.serial_mgr.enable_ace_pro()
+                instance.serial_mgr.enable_ace_pro(instance.baud)
+            self.runout_monitor.start_monitoring()
 
             self.gcode.respond_info(
                 "ACE: ACE Pro enabled - ACE runout monitoring active"
@@ -2233,6 +2987,7 @@ class AceManager:
                     "connected": status["connected"],
                     "recent_reconnects": status["recent_reconnects"],
                     "time_connected": status["time_connected"],
+                    "window_seconds": int(instance.serial_mgr.INSTABILITY_WINDOW),
                 })
 
             # Log when connection becomes stable again
@@ -2350,16 +3105,19 @@ class AceManager:
             unstable_instances: List of dicts with instance connection info
             eventtime: Current event time
         """
-        # Check if we're printing
         print_stats = self.printer.lookup_object("print_stats", None)
-        is_printing = False
+        state = ""
         if print_stats:
             try:
                 stats = print_stats.get_status(eventtime)
                 state = (stats.get("state") or "").lower()
-                is_printing = state in ["printing", "paused"]
             except Exception:
                 pass
+        # Only the unit feeding the loaded tool stops the print; a tool
+        # changer's own tool, or another unit's, prints on.
+        feeding = connection_pause.active_instance(self)
+        affects_print = any(info["instance"] == feeding
+                            for info in unstable_instances)
 
         # Build message
         instance_details = []
@@ -2367,19 +3125,26 @@ class AceManager:
             if not info["connected"]:
                 status = "disconnected"
             elif info["recent_reconnects"] >= 3:
-                status = f"unstable ({info['recent_reconnects']} reconnects in 60s)"
+                status = (
+                    f"unstable ({info['recent_reconnects']} reconnects "
+                    f"in {info.get('window_seconds', 180)}s)"
+                )
             else:
                 status = f"stabilizing ({info['time_connected']:.0f}s connected)"
             instance_details.append(f"ACE {info['instance']}: {status}")
 
         details_str = ", ".join(instance_details)
 
-        if is_printing:
-            # Pause print and show dialog with resume/cancel
+        if state == "printing" and affects_print:
             self.gcode.respond_info(
                 f"ACE: Connection issue detected during print - {details_str}"
             )
             self._pause_for_connection_issue(unstable_instances)
+        elif state == "paused":
+            self.gcode.respond_info(
+                f"ACE: Connection issue detected - {details_str}"
+            )
+            self._show_connection_issue_dialog(unstable_instances, is_printing=True)
         else:
             # Just show informational dialog
             self.gcode.respond_info(
@@ -2390,14 +3155,9 @@ class AceManager:
         self._connection_issue_shown = True
 
     def _pause_for_connection_issue(self, unstable_instances):
-        """Pause print due to ACE connection issue."""
-        try:
-            self.gcode.respond_info("ACE: Pausing print due to connection issue")
-            self.gcode.run_script_from_command("PAUSE")
-        except Exception as e:
-            self.gcode.respond_info(f"ACE: Error pausing print: {e}")
-
-        self._show_connection_issue_dialog(unstable_instances, is_printing=True)
+        """Pause print due to ACE connection issue. Called from the monitor
+        timer: queued behind the running G-code command (connection_pause)."""
+        connection_pause.queue(self, unstable_instances)
 
     def _show_connection_issue_dialog(self, unstable_instances, is_printing):
         """
@@ -2484,6 +3244,14 @@ class AceManager:
         # failure handling: pause+prompt mid-print, abort at startup.
         self.ensure_tool_slot_loaded(target_tool)
 
+        self._clear_parked_for(target_tool)
+        # A parked target in a shared tube lies across the RDM: expected.
+        resuming = target_tool >= 0 and self.is_parked(target_tool)
+
+        # The sensor readings below are those of the routed path: the loaded
+        # tool's, or with nothing loaded the one about to be fed.
+        self.route_to_tool(current_tool if current_tool >= 0 else target_tool)
+
         toolhead_sensor = self.get_switch_state(SENSOR_TOOLHEAD)
         rdm_sensor = self.get_switch_state(SENSOR_RDM) if self.has_rdm_sensor() else False
         filament_pos = self.state.get("ace_filament_pos", FILAMENT_STATE_BOWDEN)
@@ -2508,7 +3276,7 @@ class AceManager:
                         f"ACE: Target tool T{target_tool} inventory temp: {target_temp}°C"
                     )
 
-        if (toolhead_sensor or rdm_sensor) and (filament_pos == FILAMENT_STATE_BOWDEN):
+        if (toolhead_sensor or (rdm_sensor and not resuming)) and (filament_pos == FILAMENT_STATE_BOWDEN):
             self.gcode.respond_info(
                 f"ACE: PLAUSIBILITY MISMATCH - Sensors show filament present "
                 f"but state='{filament_pos}'. Performing smart_unload to clear path. May help or not..."
@@ -2520,11 +3288,15 @@ class AceManager:
             # nozzle first regardless of the current sensor read.  This runs
             # before the PRE macro; the guard returns immediately when the
             # nozzle is already above min_extrude_temp.
-            self._ensure_hot_for_recovery_unload(current_tool, target_temp)
+            recovery_prev_target = self._ensure_hot_for_recovery_unload(current_tool, target_temp)
 
             success = self.smart_unload(tool_index=current_tool if current_tool >= 0 else -1, keep_heater=True)
             if not success:
                 raise Exception("Failed to clear filament path - plausibility check failed")
+            # Hand the nozzle target back as it was before the recovery heat-up:
+            # the PRE macro decides "printing vs. manual" from the current target.
+            if recovery_prev_target is not None:
+                self.gcode.run_script_from_command(f"M104 S{recovery_prev_target:.0f}")
             # Reset extruder state after emergency unload — the cycling path
             # (Case 2/3) has no G92 E0 cleanup unlike the normal unload path.
             # Stale E position or queued moves can cause "Extrude below
@@ -2562,16 +3334,25 @@ class AceManager:
                         f"  State: filament_pos='nozzle'\n"
                         f"  Toolhead sensor: {'TRIGGERED' if sensor_has_filament else 'clear'}\n"
                         f"  RDM sensor: {'TRIGGERED' if rdm_has_filament else 'CLEAR'}\n"
-                        f"  PROBLEM: Filament stuck at nozzle but path is broken (no filament in RDM)\n"
-                        f"  This indicates incomplete unload or broken filament in path.\n"
-                        f"  SOLUTION: Manually unload/retract stuck filament, then retry toolchange."
+                        f"  PROBLEM: filament_pos='nozzle' means the strand should\n"
+                        f"    span the RDM as well, so persisted state and sensors\n"
+                        f"    disagree.  Nothing has been fed or retracted - this is\n"
+                        f"    a consistency check, NOT a failed load.\n"
+                        f"  CAUSE: an incomplete unload or broken path, OR an RDM\n"
+                        f"    sensor that is not reporting filament it can see.\n"
+                        f"  SOLUTION: confirm the RDM reading first with\n"
+                        f"    QUERY_FILAMENT_SENSOR SENSOR=<rdm sensor name>.  If the\n"
+                        f"    path really is broken, clear it manually or use\n"
+                        f"    ACE_CHANGE_TOOL TOOL=-1 to force unload."
                     )
 
                     raise Exception(
-                        f"Invalid filament state for T{target_tool}: "
-                        f"Filament stuck at nozzle but RDM sensor is empty. "
-                        f"Cannot proceed - manual intervention required. "
-                        f"Use ACE_CHANGE_TOOL TOOL=-1 to force unload, or manually clear the path."
+                        f"Invalid filament state for T{target_tool}: state says "
+                        f"'nozzle' but the RDM sensor is empty, so persisted state "
+                        f"and sensors disagree. No filament was moved. Verify the "
+                        f"RDM sensor reports filament; if the path really is broken, "
+                        f"manual intervention is required - use ACE_CHANGE_TOOL "
+                        f"TOOL=-1 to force unload, or clear the path manually."
                     )
 
             if filament_pos == FILAMENT_STATE_NOZZLE:
@@ -2690,10 +3471,10 @@ class AceManager:
                         self.state.set("ace_filament_pos", FILAMENT_STATE_NOZZLE)
 
                     self.gcode.respond_info(f"ACE: Tool {current_tool} marked as loaded, performing unload")
+                    # smart_unload reports its own success.
                     success = self.smart_unload(tool_index=current_tool, keep_heater=True)
                     if not success:
                         raise Exception(f"Failed to unload tool {current_tool}")
-                    self.gcode.respond_info(f"ACE: Tool {current_tool} unloaded successfully")
 
             elif filament_pos == FILAMENT_STATE_BOWDEN:
                 self.gcode.respond_info(
@@ -2763,10 +3544,16 @@ class AceManager:
 
             self.gcode.respond_info(f"ACE[{target_ace.instance_num}]: Loading tool {target_tool}...")
 
+            self.route_to_tool(
+                target_tool,
+                FEEDER_EXTRUDER if target_ace.instance_num in self.transfers else FEEDER_ACE,
+            )
+
             # Capture the amount purged during loading
             purged_amount = target_ace._feed_filament_into_toolhead(target_tool, check_pre_condition=False)
 
             self.state.set("ace_current_index", target_tool)
+            self._set_parked(target_tool, False)
             # Load confirmed -- the attempted toolchange is no longer in flight.
             self.state.set("ace_target_index", -1)
             self.gcode.run_script_from_command(
@@ -2781,7 +3568,8 @@ class AceManager:
             # (_feed_to_toolhead_with_extruder_assist always ends with _enable_feed_assist).
             # Calling it again here is redundant
             # Re-initialize runout detection baseline after successful load
-            self.runout_monitor.prev_toolhead_sensor_state = self.get_switch_state(SENSOR_TOOLHEAD)
+            self.note_loaded_after_runout(target_tool)
+            self.runout_monitor.prev_toolhead_sensor_state = self.get_switch_state(SENSOR_RUNOUT)
             logging.info(
                 f"ACE: Runout detection baseline reset after load - "
                 f"sensor: {'present' if self.runout_monitor.prev_toolhead_sensor_state else 'absent'}, "
@@ -2822,15 +3610,21 @@ class AceManager:
         gcode_move.reset_last_position()
 
         if target_tool == -1:
-            self.state.set("ace_current_index", -1)
             # Unload-only change confirmed complete -- nothing left in flight.
-            self.state.set("ace_target_index", -1)
-            self.gcode.run_script_from_command(
-                "SET_GCODE_VARIABLE MACRO=_ACE_STATE VARIABLE=active VALUE=-1"
-            )
+            self.record_no_tool()
             self.gcode.respond_info("ACE: State updated - no tool currently loaded")
 
         return status
+
+    def record_no_tool(self):
+        """Record that no tool is loaded and none is in flight: the current
+        and target index and the _ACE_STATE macro's `active`, which the
+        printer macros read. Runs G-code: call it from a command."""
+        self.state.set("ace_current_index", -1)
+        self.state.set("ace_target_index", -1)
+        self.gcode.run_script_from_command(
+            "SET_GCODE_VARIABLE MACRO=_ACE_STATE VARIABLE=active VALUE=-1"
+        )
 
     def register_tool_macros(self, instance_num):
         """
@@ -2866,6 +3660,13 @@ class AceManager:
     # ========== Status and Reporting ==========
 
     def get_status(self, eventtime=None):
+        # For the panel and the macros, which number the tools and ask the
+        # tool changer by this name; in the fallback too, as the panel
+        # refuses slot taps until it has the base.
+        tool_numbering = {
+            "tool_changer": self.ace_config.get("tool_changer") or "",
+            "tool_base": get_tool_base(),
+        }
         try:
             # Sensor states: True/False when sensor is registered, None when unavailable.
             toolhead_sensor = (
@@ -2891,6 +3692,11 @@ class AceManager:
                 "ace_pro_enabled": bool(self._ace_pro_enabled),
                 "toolhead_sensor": toolhead_sensor,
                 "rdm_sensor": rdm_sensor,
+                "lanes": self._moonraker_lane_sync.lane_entries(),
+                "lane_sync_enabled": bool(self._moonraker_lane_sync.enabled),
+                "toolchange_in_progress": bool(self.toolchange_in_progress),
+                "box_tag_tools": self._box_tag_tools(),
+                **tool_numbering,
             }
         except Exception:
             return {
@@ -2902,7 +3708,25 @@ class AceManager:
                 "ace_pro_enabled": False,
                 "toolhead_sensor": None,
                 "rdm_sensor": None,
+                "lanes": [],
+                "lane_sync_enabled": False,
+                "toolchange_in_progress": bool(
+                    getattr(self, "toolchange_in_progress", False)),
+                "box_tag_tools": [],
+                **tool_numbering,
             }
+
+    def _box_tag_tools(self):
+        """Tools whose loaded spool the box identified by its own tag: a
+        manual slot setting would clear the flag, and the box's next
+        identify overwrites it again."""
+        tools = []
+        for instance in self.instances:
+            for slot, inv in enumerate(instance.inventory):
+                inv = inv or {}
+                if inv.get("rfid") and inv.get("status") == "ready":
+                    tools.append(instance.tool_offset + slot)
+        return tools
 
     def _resolve_instance_config(self, instance_num):
         """
@@ -3411,6 +4235,29 @@ class AceManager:
 
     def _handle_shared_bus_unsolicited(self, bus_session, response):
         """Route unmatched ACE2 shared-bus responses to their logical instance."""
+        # DISCOVER_DEVICE is a broadcast: with multiple units on one bus, all
+        # of them answer, but only the first reply reaches the discovery
+        # callback - the others land here (they carry no device_id, so the
+        # routing below can never claim them). Record them as present so
+        # discovery sees every unit that really answered this cycle instead
+        # of leaving the race loser invisible - an invisible unit keeps its
+        # stale device_id and answers as a ghost on another unit's identity.
+        if response.get("command") == "DISCOVER_DEVICE":
+            result = response.get("result")
+            if not isinstance(result, dict):
+                return False
+            device = bus_session.note_present_device(
+                result.get("uid1", 0),
+                result.get("uid2", 0),
+                result.get("uid3", 0),
+            )
+            logging.info(
+                "ACE: shared-bus DISCOVER_DEVICE reply (broadcast race loser) "
+                "recorded as present unit UID=%s",
+                device.identity.uid_tuple,
+            )
+            return True
+
         device_id = response.get("device_id")
         if not device_id:
             return False
@@ -3473,7 +4320,6 @@ class AceManager:
         # supposed to be here; anything less than that is incomplete and
         # must be retried by the caller, never silently accepted.
         expected_count = len(shared_instances)
-        discovered_devices = []
         misses = 0
         for _ in range(expected_count):
             response = self._send_shared_bus_request(
@@ -3485,33 +4331,56 @@ class AceManager:
                 continue
 
             result = response["result"]
-            device = bus_session.note_present_device(
+            bus_session.note_present_device(
                 result.get("uid1", 0),
                 result.get("uid2", 0),
                 result.get("uid3", 0),
             )
-            discovered_devices.append(device)
+
+        # All units that provably answered this cycle. This includes replies
+        # that missed their solicited callback (broadcast race losers, late
+        # frames) and were captured by _handle_shared_bus_unsolicited - on a
+        # multi-unit bus every DISCOVER broadcast is answered by every unit,
+        # so callback-delivered replies alone systematically undercount.
+        present_devices = list(bus_session.iter_present_devices())
 
         # Record how many distinct ACE2 units actually answered this cycle -
         # the ground truth used by over-subscription self-heal (Direction B):
         # if more logical instances are bound to this bus than units exist, the
         # surplus were mis-assigned (e.g. a missing ACE1 absorbed by the shared
         # bus at startup) and get handed back to a dedicated transport.
-        self._last_discovered_unit_count[id(bus_session)] = len(
-            list(bus_session.iter_present_devices())
-        )
+        self._last_discovered_unit_count[id(bus_session)] = len(present_devices)
 
-        if not discovered_devices:
+        if not present_devices:
             self.gcode.respond_info(
                 f"ACE[{instance.instance_num}]: ACE2 discovery returned no devices on shared bus"
             )
             return 0
 
-        if misses:
+        if len(present_devices) < expected_count:
             self.gcode.respond_info(
                 f"ACE[{instance.instance_num}]: ACE2 discovery found "
-                f"{len(discovered_devices)}/{expected_count} expected units "
+                f"{len(present_devices)}/{expected_count} expected units "
                 f"({misses} unanswered) - will retry until all are found"
+            )
+        elif len(present_devices) > expected_count:
+            # More physical units than the config declares. Left alone, the
+            # surplus unit would keep whatever device_id it had before - in
+            # the field that was another unit's id, so both answered every
+            # targeted request: contradictory status/inventory, RS-485 frame
+            # collisions, endless reconnects. The assignment plan below hands
+            # every present unit a distinct id, which stops the collision,
+            # but the surplus unit stays unused until ace_count matches.
+            uid_list = ", ".join(
+                str(device.identity.uid_tuple) for device in present_devices
+            )
+            self.gcode.respond_info(
+                f"ACE[{instance.instance_num}]: WARNING: "
+                f"{len(present_devices)} ACE2 units answered discovery but "
+                f"'ace_count' expects only {expected_count} (UIDs: {uid_list}). "
+                f"The surplus unit(s) get a spare device id so they stop "
+                f"colliding on the bus, but they stay unused - update "
+                f"'ace_count' in the [ace] config if all units should be active."
             )
 
         # Fill only still-unbound logical instances, using only units that
@@ -3923,7 +4792,7 @@ class AceManager:
         if old_serial_mgr is not instance.serial_mgr:
             self._teardown_orphaned_serial_mgr(old_serial_mgr)
         try:
-            instance.serial_mgr.connect_to_ace(instance.baud, 2)
+            instance.serial_mgr.connect_to_ace(instance.baud)
         except Exception as exc:
             logging.warning(
                 "ACE[%s]: connect after ace1 demote failed: %s", instance.instance_num, exc
@@ -4222,6 +5091,7 @@ class AceManager:
             )
 
             try:
+                self.route_to_tool(tool_index)
                 self.prepare_toolhead_for_filament_retraction(tool_index=tool_index)
 
                 # Extruder retract to clear the toolhead

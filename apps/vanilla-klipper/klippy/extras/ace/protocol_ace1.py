@@ -9,6 +9,11 @@ from typing import Any, Dict, Mapping, Tuple
 
 from .protocol import AceCommandSpec, AceProtocolAdapter, AceTransportSpec
 
+# The ACE cannot take frames over 1024 bytes (PROTOCOL.md) and its largest
+# real reply, a 4-slot status, stays well below that. A longer length field
+# is corruption: waiting for its payload would stall every reply behind it.
+MAX_PAYLOAD_LEN = 2048
+
 
 class AceJsonProtocolAdapter(AceProtocolAdapter):
     """ACE Gen1 adapter using the current JSON method/params format."""
@@ -43,6 +48,34 @@ class AceJsonProtocolAdapter(AceProtocolAdapter):
         data += b"\xFE"
         return bytes(data)
 
+    @staticmethod
+    def _keep_split_header(working: bytearray) -> tuple[bytearray, int]:
+        """Discard unusable bytes but retain a header split across reads.
+
+        A read() returns whatever has arrived, so the 0xFF 0xAA header
+        regularly straddles two reads.  Clearing the whole buffer on resync
+        eats that leading 0xFF, and the next - perfectly valid - frame then
+        starts with 0xAA and is itself discarded as junk.  One corruption
+        event would cost two replies.
+
+        Returns the surviving buffer and how many bytes were dropped.
+        """
+        if working and working[-1] == 0xFF:
+            return bytearray(b"\xFF"), len(working) - 1
+        return bytearray(), len(working)
+
+    @classmethod
+    def _skip_to_next_header(cls, working: bytearray) -> tuple[bytearray, int]:
+        """Drop a frame that starts at offset 0 but cannot be parsed.
+
+        Returns the buffer from the next header on and how many bytes were
+        dropped.
+        """
+        next_header = working.find(bytes([0xFF, 0xAA]), 1)
+        if next_header == -1:
+            return cls._keep_split_header(working)
+        return working[next_header:], next_header
+
     def extract_responses(
         self,
         buffer: bytearray,
@@ -60,8 +93,8 @@ class AceJsonProtocolAdapter(AceProtocolAdapter):
             if not (working[0] == 0xFF and working[1] == 0xAA):
                 header_idx = working.find(bytes([0xFF, 0xAA]))
                 if header_idx == -1:
-                    notices.append(f"Resync: dropped junk ({len(working)} bytes)")
-                    working = bytearray()
+                    working, dropped = self._keep_split_header(working)
+                    notices.append(f"Resync: dropped junk ({dropped} bytes)")
                     break
                 notices.append(f"Resync: skipping {header_idx} bytes")
                 working = working[header_idx:]
@@ -69,15 +102,24 @@ class AceJsonProtocolAdapter(AceProtocolAdapter):
                     break
 
             payload_len = struct.unpack("<H", working[2:4])[0]
+            if payload_len > MAX_PAYLOAD_LEN:
+                working, dropped = self._skip_to_next_header(working)
+                notices.append(
+                    f"Implausible payload length {payload_len}, resyncing "
+                    f"(dropped {dropped} bytes)"
+                )
+                continue
+
             frame_len = 2 + 2 + payload_len + 2 + 1
             if len(working) < frame_len:
                 break
 
             terminator_idx = 4 + payload_len + 2
             if working[terminator_idx] != 0xFE:
-                next_header = working.find(bytes([0xFF, 0xAA]), 1)
-                working = bytearray() if next_header == -1 else working[next_header:]
-                notices.append("Invalid frame tail, resyncing")
+                working, dropped = self._skip_to_next_header(working)
+                notices.append(
+                    f"Invalid frame tail, resyncing (dropped {dropped} bytes)"
+                )
                 continue
 
             frame = bytes(working[:frame_len])
@@ -90,9 +132,14 @@ class AceJsonProtocolAdapter(AceProtocolAdapter):
                 continue
 
             try:
-                responses.append(json.loads(payload.decode("utf-8")))
+                response = json.loads(payload.decode("utf-8"))
             except (UnicodeDecodeError, ValueError) as exc:
                 notices.append(f"JSON decode error: {exc}")
+                continue
+            if isinstance(response, dict):
+                responses.append(response)
+            else:
+                notices.append(f"Reply is not a JSON object, dropped: {response!r}")
 
         return responses, working, notices
 

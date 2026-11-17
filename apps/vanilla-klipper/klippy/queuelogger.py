@@ -24,7 +24,7 @@ class QueueHandler(logging.Handler):
 class QueueListener(logging.handlers.TimedRotatingFileHandler):
     def __init__(self, filename):
         logging.handlers.TimedRotatingFileHandler.__init__(
-            self, filename, when='midnight', backupCount=5)
+            self, filename, when='midnight', backupCount=1)
         self.bg_queue = queue.Queue()
         self.bg_thread = threading.Thread(target=self._bg_thread)
         self.bg_thread.start()
@@ -59,6 +59,12 @@ MainQueueHandler = None
 
 def setup_bg_logging(filename, debuglevel):
     global MainQueueHandler
+    logging._srcfile = None             # filename, funcName, lineno, module
+    logging.logThreads = False          # thread, threadName
+    logging.logProcesses = False        # process
+    logging.logMultiprocessing = False  # processName
+    if hasattr(logging, "logAsyncioTasks"):
+        logging.logAsyncioTasks = False # taskName, python 3.12+
     ql = QueueListener(filename)
     MainQueueHandler = QueueHandler(ql.bg_queue)
     root = logging.getLogger()
