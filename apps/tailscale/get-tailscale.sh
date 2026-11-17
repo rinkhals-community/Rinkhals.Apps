@@ -8,7 +8,7 @@ mkdir /work
 cd /work
 
 
-TAILSCALE_VERSION="1.104.4"
+TAILSCALE_VERSION="1.104.7"
 TAILSCALE_DIRECTORY=/apps/tailscale
 
 
