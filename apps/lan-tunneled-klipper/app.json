@@ -1,0 +1,43 @@
+{
+    "$version": "1" ,
+
+    "name": "Lan Tunnel KS1",
+    "description": "Socat Tunnel TCP Port 7003 & 7005 ",
+    "version": "0.2",
+
+    "properties": {
+        "network_enabled": {
+            "display": "Set static network configuration",
+            "type": "enum",
+            "options": ["False", "True"],
+            "default": "True"
+        },
+        "interface": {
+            "display": "Ethernet interface",
+            "type": "text",
+            "default": "eth1"
+        },
+        "mac_address": {
+            "display": "Ethernet MAC address",
+            "type": "text",
+            "default": "00:E0:4C:44:4E:50"
+        },
+        "ip_address": {
+            "display": "Static IPv4 address",
+            "type": "text",
+            "default": "192.168.10.67"
+        },
+        "netmask": {
+            "display": "IPv4 netmask",
+            "type": "text",
+            "default": "255.255.255.0"
+        },
+        "watchdog_enabled": {
+            "display": "Keep LAN print mode enabled",
+            "type": "enum",
+            "options": ["False", "True"],
+            "default": "True"
+        }
+    }
+
+}
