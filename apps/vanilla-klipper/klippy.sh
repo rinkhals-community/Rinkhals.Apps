@@ -23,6 +23,12 @@ if [ ! -f $CONFIG_DESTINATION ]; then
     cp $CONFIG_SOURCE $CONFIG_DESTINATION
 fi
 
+# The shipped configs' heater PID values were tuned on someone else's printer.
+# Use this printer's own calibration from GoKlipper instead, as long as the
+# config still has the shipped values (a user's own tuning is left alone).
+python "$APP_ROOT/printer-pid.py" "$APP_ROOT/$CONFIG_SOURCE" "$CONFIG_DESTINATION" /userdata/app/gk/printer_mutable.cfg 2>&1 |
+    while IFS= read -r line; do log "vanilla-klipper: $line"; done
+
 #Copy printer specific ACE config if there is one
 if [ -f $ACE_CONFIG_SOURCE ]; then
     ACE_CONFIG_DESTINATION=/userdata/app/gk/printer_data/config/$ACE_CONFIG_SOURCE

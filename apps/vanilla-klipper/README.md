@@ -135,6 +135,18 @@ That means you can have **both installed on the printer at the same time** witho
 either configuration interfering with the other — each klipper-variant reads only its own
 files.
 
+### Heater PID values
+
+The configs ship with heater PID values tuned on another printer, which can leave
+the nozzle swinging around its target and make print starts wait for minutes. When
+the app starts Klipper, it replaces them with **your printer's own calibration**,
+which GoKlipper keeps in `printer_mutable.cfg` (GoKlipper and Klipper use the same
+PID math, so the values carry over as they are). This only happens while
+`printer.klipper.cfg` still has the shipped values, so if you've tuned them
+yourself, for example with `PID_CALIBRATE` and `SAVE_CONFIG`, they're left alone.
+What it did is in the Rinkhals log, and the config as it was before is kept as
+`printer.klipper.cfg.before-printer-pid`.
+
 ---
 
 ## ACE Pro / ACE2 Pro
