@@ -1,0 +1,3094 @@
+diff --git a/klippy/extras/cs1237.py b/klippy/extras/cs1237.py
+new file mode 100644
+index 00000000..59a0d469
+--- /dev/null
++++ b/klippy/extras/cs1237.py
+@@ -0,0 +1,635 @@
++# CS1237 support 
++#
++# Copyright (C) 2025 Antiriad <mail.antiriad@gmail.com>
++#
++# This file may be distributed under the terms of the GNU GPLv3 license.
++
++import logging
++import ctypes
++
++
++# State and error constants
++SELF_CHECK_STATE      = 1 << 0
++SCRATCH_STATE         = 1 << 1
++BLOCK_FILAMENT_STATE  = 1 << 2
++HEAD_BLOCK_STATE      = 1 << 3
++SELF_CHECK_ERR        = SELF_CHECK_STATE      | 0x80
++SCRATCH_STATE_ERR     = SCRATCH_STATE         | 0x80
++BLOCK_FILAMENT_ERR    = BLOCK_FILAMENT_STATE  | 0x80
++HEAD_BLOCK_STATE_ERR  = HEAD_BLOCK_STATE      | 0x80
++
++
++class CS1237:
++    head_block_sensitivity     = 0
++    scratch_sensitivity        = 0
++    self_check_sensitivity     = 0
++    block_filament_sensitivity = 0
++    
++    def __init__(self, config):
++        # Core references
++        self.BLOCK_FILAMENT_STATE = BLOCK_FILAMENT_STATE
++        self.SCRATCH_STATE = SCRATCH_STATE
++        self.SELF_CHECK_STATE = SELF_CHECK_STATE
++        self.HEAD_BLOCK_STATE = HEAD_BLOCK_STATE
++        
++        self.printer = config.get_printer()
++        self.mcu = config.get_printer().lookup_object('mcu nozzle_mcu')
++        ppins       = self.printer.lookup_object('pins')
++
++        # Configuration parameters
++        self.level_pin_name      = config.get('level_pin', None)
++        self.dout_pin_name       = config.get('dout_pin')
++        self.sclk_pin_name       = config.get('sclk_pin')
++        self.register_address    = config.getint('register', default=60)
++        self.sensitivity         = config.getint('sensitivity', default=-2500)
++        self._samples_per_second = config.getint('samples_per_second', default=10)
++        self._range              = (-0x800000, 0x7FFFFF)
++
++        # Threshold sensitivities
++        self.head_block_sensitivity = config.getint('head_block_sensitivity', default=-300000)
++        self.scratch_sensitivity = config.getint('scratch_sensitivity', default=-100000)  
++        self.self_check_sensitivity = config.getint('self_check_sensitivity', default=-400)
++        self.block_filament_sensitivity = config.getint('block_filament_sensitivity', default=-3000)
++
++        # Resolve pin numbers
++        def _get_pin(name):
++            return ppins.lookup_pin(name, True, True, None)['pin']
++
++        self.level_pin = _get_pin(self.level_pin_name) if self.level_pin_name else 0
++        self.dout_pin  = _get_pin(self.dout_pin_name)
++        self.sclk_pin  = _get_pin(self.sclk_pin_name)
++
++        # State variables
++        self.adc_value       = None
++        self.raw_value       = None
++        self.sensor_state    = None
++        self.checkself_flag  = None
++        self._clients        = []
++        self._reporting      = False
++        self._query_complete = None
++        self._enable_count   = 0
++        self.capabilities    = set()
++
++        # Register config callback for MCU command setup
++        self.mcu.register_config_callback(self._build_config)
++
++        # Register G-code commands
++        gcode = self.printer.lookup_object('gcode')
++        # Note: Klipper's extended command parser rejects digits inside names;
++        # use digit-free aliases for this module.
++        gcode.register_command('CS_ADC',      self.cmd_dump, when_not_ready=False, desc='')
++        gcode.register_command('G9121',       self.cmd_g9121, False, '')
++        gcode.register_command('G9122',       self.cmd_g9122, False, '')
++        gcode.register_command('G9123',       self.cmd_g9123, False, '')
++        gcode.register_command('CS_ADC_DUMP', self.cmd_dump, False, 'debug CS1237 DUMP')
++
++        # Dedicated MCU test commands
++        gcode.register_command('CS_ADC_CHECKSELF', self.cmd_checkself_cs1237, False, 'Trigger checkself_cs1237 MCU command')
++        gcode.register_command('CS_ADC_CONFIG',    self.cmd_config_cs1237, False, 'Trigger config_cs1237 MCU command')
++        gcode.register_command('CS_ADC_RESET',     self.cmd_reset_cs1237, False, 'Trigger reset_cs1237 MCU command')
++        gcode.register_command('CS_ADC_REPORT',    self.cmd_start_cs1237_report, False, 'Trigger start_cs1237_report MCU command')
++        gcode.register_command('CS_ADC_DIFF',      self.cmd_query_cs1237_diff, False, 'Trigger query_cs1237_diff MCU command')
++        gcode.register_command('CS_ADC_ENABLE',    self.cmd_enable_cs1237, False, 'Trigger enable_cs1237 MCU command')
++
++        # Register event handlers
++        self.printer.register_event_handler('klippy:ready', self._handle_ready)
++
++    def _handle_do_ready(self, eventtime):
++        """Boot-time self-check: temporarily enables sensor, then disables."""
++        params = None
++        try:
++            self._cmd_reset.send([self._oid, 3])
++
++            reactor = self.printer.get_reactor()
++            reactor.pause(reactor.monotonic() + 0.1)
++
++            # Temporarily enable for self-check only (bypass ref-count)
++            self._enable_cs1237(1)
++            self._query_complete = reactor.completion()
++            self.cmd_checkself.send([self._oid, 0])
++
++            params = self._query_complete.wait(reactor.monotonic() + 2.0)
++        except Exception:
++            logging.exception("CS1237: Error in _handle_ready")
++        finally:
++            # Always disable after self-check
++            self._enable_cs1237(0)
++            self._query_complete = None
++
++        if params is None:
++            logging.warning("CS1237: boot self-check timed out (no response in 2s)")
++        else:
++            state = int(params.get('flag', 0))
++            if state == 0:
++                logging.warning(
++                    "CS1237: boot self-check returned flag=0 "
++                    "(flash at 0x08007800 may not have been written by factory calibration)")
++            else:
++                logging.info("CS1237: boot self-check passed (flag=%d)", state)
++
++    def _handle_ready(self, *args):
++        # Defer to reactor callback: klippy:ready runs with pause disabled.
++        self.printer.get_reactor().register_callback(self._handle_do_ready)
++
++    def cmd_enable_cs1237(self, gcmd):
++        state = gcmd.get_int('STATE', 1, minval=0, maxval=1)
++        self._enable_cs1237(state)
++        gcmd.respond_info(f"CS_ADC_ENABLE state={state}")
++
++    def _enable_cs1237(self, state=1):
++        """Send raw enable/disable command to MCU."""
++        self._cmd_enable.send([self._oid, state])
++        logging.info("[CS1237] _enable_cs1237 STATE=%d enable_count=%d",
++                     state, self._enable_count)
++    
++    # Dedicated G-code command handlers for MCU commands
++    def cmd_checkself_cs1237(self, gcmd):
++        w = gcmd.get_int('W', 0, minval=0, maxval=3)
++        self.cmd_checkself.send([
++            self._oid,
++            w
++        ])
++        logging.info(f"[CS1237] Sent checkself_cs1237 with W={w}")
++        gcmd.respond_info(f"CS_ADC_CHECKSELF sent W={w}")
++    def cmd_config_cs1237(self, gcmd):
++        cfg = (
++            f"config_cs1237 oid={self._oid} "
++            f"level_pin={self.level_pin} dout_pin={self.dout_pin} sclk_pin={self.sclk_pin} "
++            f"register={self.register_address} sensitivity={self.sensitivity}"
++        )
++        self.mcu.add_config_cmd(cfg)
++        gcmd.respond_info("CS_ADC_CONFIG queued")
++
++    def cmd_reset_cs1237(self, gcmd):
++        count = gcmd.get_int('COUNT', 3, minval=1, maxval=10)
++        self._cmd_reset.send([
++            self._oid,
++            count
++        ])
++        gcmd.respond_info(f"CS_ADC_RESET sent count={count}")
++
++    def cmd_start_cs1237_report(self, gcmd):
++        ticks = gcmd.get_int('TICKS', self.mcu.seconds_to_clock(1.0 / self._samples_per_second))
++        print_state = gcmd.get_int('STATE', 0, minval=0, maxval=3)
++        sensitivity = gcmd.get_int('SENS', self.sensitivity)
++        self.cmd_start_report.send([
++            self._oid,
++            1,
++            ticks,
++            print_state,
++            sensitivity
++        ])
++        gcmd.respond_info(f"CS_ADC_REPORT enable=1 ticks={ticks} state={print_state} sens={sensitivity}")
++
++    def cmd_query_cs1237_diff(self, gcmd):
++        self._cmd_query_diff.send([
++            self._oid
++        ])
++        self.printer.register_event_handler('cs1237:self_check', self._self_check_sequence)
++        gcmd.respond_info("CS_ADC_DIFF requested")
++
++    def cmd_cs1237_calibration_phase(self, gcmd):
++        cali_state = gcmd.get_int('CALI_STATE', minval=0, maxval=255)
++        speed_state = gcmd.get_int('SPEED_STATE', minval=0, maxval=255)
++        self.cs1237_calibration_phase(cali_state, speed_state)
++        gcmd.respond_info(
++            f"CS_ADC_CAL_PHASE sent cali_state={cali_state} speed_state={speed_state}")
++
++    def cmd_cs1237_calibration_data(self, gcmd):
++        timeout = gcmd.get_float('TIMEOUT', 2.0, above=0.0)
++        params = self.cs1237_calibration_data_process(timeout=timeout)
++        gcmd.respond_info(
++            "CS_ADC_CAL_DATA "
++            f"BlockPreVal={params['BlockPreVal']} "
++            f"TargetVal={params['TargetVal']} "
++            f"RealVal={params['RealVal']}")
++
++    def _build_config(self):
++        self._oid = self.mcu.create_oid()
++        cfg = (
++            f"config_cs1237 oid={self._oid} "
++            f"level_pin={self.level_pin} dout_pin={self.dout_pin} sclk_pin={self.sclk_pin} "
++            f"register={self.register_address} sensitivity={self.sensitivity}"
++        )
++
++        self.mcu.add_config_cmd(cfg)
++        self.cmd_start_report = self.mcu.lookup_command(
++            "start_cs1237_report oid=%c enable=%c ticks=%i print_state=%c sensitivity=%i"
++        )
++        self.cmd_checkself = self.mcu.lookup_command(
++            "checkself_cs1237 oid=%c write=%c"
++        )
++        self._cmd_query_diff = self.mcu.lookup_command(
++            "query_cs1237_diff oid=%c"
++        )
++        self._cmd_enable = self.mcu.lookup_command("enable_cs1237 oid=%c state=%c")
++        self._cmd_reset  = self.mcu.lookup_command("reset_cs1237 oid=%c count=%c")
++
++        # Ensure sensor is disabled after config (guards against warm restart
++        # leaving EXTI enabled and level_out pin in stale triggered state)
++        self.mcu.add_config_cmd(
++            f"enable_cs1237 oid={self._oid} state=0"
++        )
++
++        self.mcu.register_serial_response(
++            self._handle_cs1237_report,
++            'cs1237_state oid=%c adc=%i raw=%i state=%c',
++            self._oid,
++        )
++        self.mcu.register_serial_response(
++            self._handle_cs1237_diff,
++            'cs1237_diff oid=%c diff=%i raw=%i',
++            self._oid,
++        )
++        self.mcu.register_serial_response(
++            self._handle_cs1237_check,
++            'cs1237_checkself_flag oid=%c flag=%c',
++            self._oid,
++        )
++        self._maybe_enable_stock_calibration()
++
++    def _handle_start_report_ack(self, params):
++        logging.info(f"[CS1237] start_cs1237_report ACK received: {params}")
++
++    def _handle_checkself_ack(self, params):
++        logging.info(f"[CS1237] checkself_cs1237 ACK received: {params}")
++
++    # ---- MCU Response Handlers ----
++    def _int32_conversion(self, value):
++        return ctypes.c_int32(value).value
++
++    def _handle_cs1237_report(self, params):
++        try:
++            self.adc_value = self._int32_conversion(int(params.get('adc', 0)))
++            self.raw_value = self._int32_conversion(int(params.get('raw', 0)))
++            self.sensor_state = int(params.get('state', 0))
++            now = self.printer.get_reactor().monotonic()
++            logging.info(f"[CS1237 REPORT] adc={self.adc_value} raw={self.raw_value} state={self.sensor_state}")
++
++            msg = {
++                'timestamp': now,
++                'adc': self.adc_value,
++                'raw': self.raw_value,
++                'state': self.sensor_state
++            }
++            
++            # Process sensor state events
++            if self.sensor_state == SCRATCH_STATE_ERR:
++                logging.info("CS1237: SCRATCH_STATE_ERR detected")
++                self.printer.send_event("CS1237:scratch_notice", None)
++            elif self.sensor_state == BLOCK_FILAMENT_ERR:
++                logging.info("CS1237: BLOCK_FILAMENT_ERR detected")
++                self.printer.send_event("CS1237:block_filament_notice", None)
++            elif self.sensor_state == HEAD_BLOCK_STATE_ERR:
++                logging.info("CS1237: HEAD_BLOCK_STATE_ERR detected")
++                self.printer.send_event("CS1237:head_block_notice", None)
++                
++            # Notify clients
++            for cb in list(self._clients):
++                if cb(msg) is False:
++                    self._clients.remove(cb)
++        except Exception:
++            logging.exception("CS1237: report handler error")
++
++    def _handle_cs1237_diff(self, params):
++        try:
++            raw_val = self._int32_conversion(int(params.get('raw', 0)))
++            diff_val = self._int32_conversion(int(params.get('diff', 0)))
++            self.raw_value = raw_val
++
++            logging.info(
++                "[CS1237] diff raw=%d diff=%d",
++                raw_val, diff_val
++            )
++
++            if self._query_complete:
++                self._query_complete.complete(params)
++        except Exception:
++            logging.exception("CS1237: diff handler error")
++
++
++    def _handle_cs1237_check(self, params):
++        try:
++            self.checkself_flag = int(params.get('flag', 0))
++            if self._query_complete:
++                self._query_complete.complete(params)
++        except Exception:
++            logging.exception("CS1237: self-check handler error")
++
++    def _handle_cs1237_calibration_val(self, params):
++        try:
++            logging.info(
++                "[CS1237 CALTRACE] calibration_Val raw params keys=%s vals=%s",
++                list(params.keys()) if hasattr(params, 'keys') else type(params).__name__,
++                {k: v for k, v in params.items()} if hasattr(params, 'items') else params,
++            )
++            block_pre_val = self._int32_conversion(
++                int(params.get('BlockPreVal', 0))
++            )
++            target_val = self._int32_conversion(int(params.get('TargetVal', 0)))
++            real_val = self._int32_conversion(int(params.get('RealVal', 0)))
++
++            payload = {
++                'BlockPreVal': block_pre_val,
++                'TargetVal': target_val,
++                'RealVal': real_val,
++            }
++            logging.info(
++                "[CS1237 CALTRACE] cal raw=(%d,%d,%d) delta=%d",
++                block_pre_val, target_val, real_val,
++                real_val - target_val,
++            )
++            if self._query_complete:
++                self._query_complete.complete(payload)
++        except Exception:
++            logging.exception("CS1237: calibration value handler error")
++
++    def cs1237_diff_process(self, timeout=2.0):
++        """Request the current stock diff/raw pair and wait for reply."""
++        if self._query_complete is not None:
++            raise self.printer.command_error(
++                "CS1237: another synchronous query is already pending")
++        reactor = self.printer.get_reactor()
++        params = None
++        try:
++            self._query_complete = reactor.completion()
++            self._cmd_query_diff.send([self._oid])
++            params = self._query_complete.wait(reactor.monotonic() + timeout)
++        finally:
++            self._query_complete = None
++        if params is None:
++            raise self.printer.command_error("CS1237: diff query timed out")
++        return {
++            'diff': self._int32_conversion(int(params.get('diff', 0))),
++            'raw': self._int32_conversion(int(params.get('raw', 0))),
++        }
++
++    def _stock_cs1237_calibration_phase(self, cali_state, speed_state):
++        self._cmd_calibration_phase.send([
++            self._oid,
++            int(cali_state) & 0xff,
++            int(speed_state) & 0xff,
++        ])
++        logging.info(
++            "[CS1237 CALTRACE] phase cali_state=%d speed_state=%d",
++            cali_state, speed_state)
++
++    def _stock_cs1237_calibration_data_process(self, timeout=2.0):
++        if self._query_complete is not None:
++            raise self.printer.command_error(
++                "CS1237: another synchronous query is already pending")
++        reactor = self.printer.get_reactor()
++        params = None
++        try:
++            self._query_complete = reactor.completion()
++            self._cmd_calibration_data.send([self._oid])
++            params = self._query_complete.wait(reactor.monotonic() + timeout)
++        finally:
++            self._query_complete = None
++        if params is None:
++            raise self.printer.command_error(
++                "CS1237: calibration data timed out")
++        return {
++            'BlockPreVal': self._int32_conversion(int(params.get('BlockPreVal', 0))),
++            'TargetVal': self._int32_conversion(int(params.get('TargetVal', 0))),
++            'RealVal': self._int32_conversion(int(params.get('RealVal', 0))),
++        }
++
++
++    # ---- Status ----
++    def get_status(self, eventtime=None):
++        if not self._reporting:
++            return {}
++        
++        # Return status data when reporting is enabled
++        return {
++            'adc': self.adc_value,
++            'raw': self.raw_value,
++            'state': self.sensor_state,
++            'checkself_flag': self.checkself_flag
++        }
++    
++    def stats(self, eventtime):
++        return False, f"cs1237:adc_value={self.adc_value} raw_value={self.raw_value} sensor_state={self.sensor_state}"
++
++    # ---- Reporting Control ----
++    def start_reporting(self):
++        if self._reporting:
++            return
++        self._reporting = True
++        ticks = self.mcu.seconds_to_clock(1.0 / self._samples_per_second)
++        self.cmd_start_report.send([
++            self._oid,
++            1,
++            ticks,
++            0,
++            self.sensitivity
++        ])
++    
++    def stop_reporting(self):
++        if not self._reporting:
++            return
++        self._reporting = False
++        self.cmd_start_report.send([
++            self._oid,
++            0,
++            0,
++            0,
++            self.sensitivity
++        ])
++
++    def add_client(self, callback):
++        if callback not in self._clients:
++            self._clients.append(callback)
++        self.start_reporting()
++
++    def remove_client(self, callback):
++        if callback in self._clients:
++            self._clients.remove(callback)
++        if not self._clients:
++            self.stop_reporting()
++
++    # ---- G-Code Commands ----
++
++    def cmd_dump(self, gcmd):
++        e = gcmd.get_int('E', 0, minval=0, maxval=1)
++        t = gcmd.get_float('T', 1.0, minval=0.1, maxval=1.0)
++        s = gcmd.get_int('S', SELF_CHECK_STATE, minval=SELF_CHECK_STATE, maxval=HEAD_BLOCK_STATE)
++        # map thresholds
++        sensitivity_map = {
++            SELF_CHECK_STATE:     self.self_check_sensitivity,
++            SCRATCH_STATE:        self.scratch_sensitivity,
++            BLOCK_FILAMENT_STATE: self.block_filament_sensitivity,
++            HEAD_BLOCK_STATE:     self.head_block_sensitivity
++        }
++        sens = sensitivity_map.get(s, self.sensitivity)
++
++        if e:
++            # Ref-counted enable: only sends MCU command on first enable
++            if self._enable_count == 0:
++                self._enable_cs1237(1)
++            self._enable_count += 1
++            self.start_reporting()
++            # Instruct MCU to report cs1237_state every T seconds
++            self._check_start(t, s, sens, 0)
++            gcmd.respond_info(f"CS_ADC reporting enabled state={s} sens={sens} period={t}")
++        else:
++            # First tell MCU to stop cs1237_state messages
++            self._check_stop(s)
++            # Then stop host-side reporting
++            self.stop_reporting()
++            # Ref-counted disable: only sends MCU command on last disable
++            self._enable_count -= 1
++            if self._enable_count <= 0:
++                self._enable_count = 0
++                self._enable_cs1237(0)
++            gcmd.respond_info("CS_ADC reporting disabled")
++
++    def cmd_g9121(self, gcmd):
++        e = gcmd.get_int('E', 0, minval=0, maxval=1)
++        r = gcmd.get_int('R', 0, minval=0, maxval=1)
++        self._reporting = r > 0
++        t = gcmd.get_float('T', 1.0, minval=0.1, maxval=1.0)
++        
++        if e:
++            self._enable_cs1237(1)
++            self._check_start(t, SCRATCH_STATE, self.scratch_sensitivity, 0)
++        else:
++            self._check_stop(SCRATCH_STATE)
++            self._enable_cs1237(0)
++    
++    def cmd_g9122(self, gcmd):
++        e = gcmd.get_int('E', 0, minval=0, maxval=1)
++        r = gcmd.get_int('R', 0, minval=0, maxval=1)
++        self._reporting = r > 0
++        t = gcmd.get_float('T', 1.0, minval=0.1, maxval=1.0)
++        
++        if e:
++            self._enable_cs1237(1)
++            self._check_start(t, SELF_CHECK_STATE, self.self_check_sensitivity, 0)
++        else:
++            self._check_stop(SELF_CHECK_STATE)
++            self._enable_cs1237(0)
++
++    def cmd_g9123(self, gcmd):
++        reactor = self.printer.get_reactor()
++        params = None
++        try:
++            w = gcmd.get_int('W', 0, minval=0, maxval=3)
++            self._query_complete = reactor.completion()
++            self.cmd_checkself.send([self._oid, w])
++
++            params = self._query_complete.wait(reactor.monotonic() + 2.0)
++            if params:
++                self.checkself_flag = int(params.get('flag', 0))
++                gcode = self.printer.lookup_object('gcode')
++                gcode.respond_info(f"NozzleTestFlag:{self.checkself_flag}")
++        finally:
++            self._query_complete = None
++
++
++    # ---- Internal Helpers ----
++    def _check_start(self, check_period, check_type, sensitivity, delay_send_time=0):
++        ticks = self.mcu.seconds_to_clock(check_period)
++        delay_t = self.mcu.seconds_to_clock(delay_send_time) if delay_send_time else 0
++        
++        self.cmd_start_report.send([
++            self._oid,
++            1,
++            ticks,
++            check_type,
++            sensitivity
++        ], minclock=delay_t)
++
++    def _check_stop(self, check_type):
++        self.cmd_start_report.send([
++            self._oid,
++            0,
++            0,
++            check_type,
++            0
++        ])
++
++    # ---- Startup Self-Check ----
++    def _self_check_sequence(self, _args):
++        # Reset before self-check
++        self._cmd_reset.send([self._oid, 3])
++        
++        # Small delay after reset
++        self.printer.get_reactor().pause(
++            self.printer.get_reactor().monotonic() + 0.1
++        )
++        
++        # Enable sensor for self-check
++        self._enable_cs1237(1)
++        try:
++            self._check_start(1.0, SELF_CHECK_STATE,
++                              self.self_check_sensitivity, 0)
++            
++            self._self_check_resonances()
++            
++            # Wait for moves to complete
++            toolhead = self.printer.lookup_object('toolhead')
++            toolhead.wait_moves()
++            
++            # Pause for 3 seconds to collect data
++            self.printer.get_reactor().pause(
++                self.printer.get_reactor().monotonic() + 3.0
++            )
++            
++            # Stop the check
++            self._check_stop(SELF_CHECK_STATE)
++        finally:
++            # Always disable sensor after self-check
++            self._enable_cs1237(0)
++        
++        # Check result and raise error if needed
++        if self.sensor_state == SELF_CHECK_ERR:
++            raise Exception("CS1237 boot up self-check failed")
++
++    def _self_check_resonances(self):
++        try:
++            gcode = self.printer.lookup_object('gcode')
++            toolhead = self.printer.lookup_object('toolhead')
++            pos = toolhead.get_position()
++            
++            cmd = f"SPECIALIZED_TEST_RESONANCES axis=x FREQ_START=45 FREQ_END=55 HZ_PER_SEC=10 POINT={pos[0]},{pos[1]},{pos[2]}"
++            gcode.run_script_from_command(cmd)
++        except Exception:
++            logging.exception("CS1237: Error running resonance test")
++
++    def _maybe_enable_stock_calibration(self):
++        phase_cmd = self.mcu.try_lookup_command(
++            "cs1237_calibration_phase oid=%c cali_state=%c speed_state=%c"
++        )
++        data_cmd = self.mcu.try_lookup_command(
++            "cs1237_calibration_DataProcess oid=%c"
++        )
++        has_response = self.mcu.check_valid_response(
++            'cs1237_calibration_Val oid=%c BlockPreVal=%i TargetVal=%i RealVal=%i'
++        )
++        if phase_cmd is None or data_cmd is None or not has_response:
++            return
++
++        self._cmd_calibration_phase = phase_cmd
++        self._cmd_calibration_data = data_cmd
++        self.mcu.register_serial_response(
++            self._handle_cs1237_calibration_val,
++            'cs1237_calibration_Val oid=%c BlockPreVal=%i TargetVal=%i RealVal=%i',
++            self._oid,
++        )
++        gcode = self.printer.lookup_object('gcode')
++        gcode.register_command(
++            'CS_ADC_CAL_PHASE', self.cmd_cs1237_calibration_phase, False,
++            'Trigger cs1237_calibration_phase MCU command')
++        gcode.register_command(
++            'CS_ADC_CAL_DATA', self.cmd_cs1237_calibration_data, False,
++            'Trigger cs1237_calibration_DataProcess MCU command')
++        self.cs1237_calibration_phase = self._stock_cs1237_calibration_phase
++        self.cs1237_calibration_data_process = (
++            self._stock_cs1237_calibration_data_process)
++        self.capabilities.add('stock_calibration')
++        self.capabilities.add('stock_compat')
++
++def load_config(config):
++    return CS1237(config)
+diff --git a/klippy/extras/filament_tracker.py b/klippy/extras/filament_tracker.py
+new file mode 100644
+index 00000000..a25d4a44
+--- /dev/null
++++ b/klippy/extras/filament_tracker.py
+@@ -0,0 +1,549 @@
++# extras/filament_tracker.py
++#
++# Dual-input filament tracker (ADC or GPIO) with optional motion
++# detection (clog/jam sensing by comparing encoder vs extruder movement).
++#
++# Two hardware variants:
++#   1. Dual-encoder (K3M): both pins are channels of a single rotary
++#      encoder wheel.  Neither is a simple presence switch.
++#   2. Switch + encoder (KS1): detect pin is a dedicated filament
++#      presence switch; encoder pin counts filament movement.
++#
++# Presence logic:
++#   detect_pin_is_switch = False (dual-encoder, default):
++#     - Any encoder edge immediately latches filament_present = 1.
++#     - Filament is declared absent only after BOTH channels read "open"
++#       continuously for 'absence_timeout' seconds with no encoder edges.
++#   detect_pin_is_switch = True (switch + encoder):
++#     - Detect pin alone determines presence (open = absent, closed =
++#       present).  No timeout needed.
++#     - Encoder pin is used for pulse counting only.
++#
++# ADC polarity:
++#   adc_inverted = False (default): voltage > threshold = open (no filament)
++#   adc_inverted = True:            voltage < threshold = open (no filament)
++#   Use adc_inverted = True when the sensor reads low voltage with no
++#   filament (e.g. RDM hub on main MCU).  GPIO pins use the '!' prefix
++#   in the pin name for inversion instead.
++# - Pulses: counted from the encoder input.
++# - Optional callback hook to notify other modules.
++#
++# Motion detection (enabled when ``extruder`` is configured):
++#   Compares encoder pulse movement with extruder stepper movement.
++#   If the extruder extrudes ``detection_length`` mm without any encoder
++#   pulse, a clog/jam is reported through RunoutHelper.  Uses the same
++#   config keys as Klipper's filament_motion_sensor for compatibility.
++
++import logging
++from . import filament_switch_sensor
++
++ADC_REPORT_TIME       = 0.025   # seconds between ADC callbacks (40 Hz)
++ADC_SAMPLE_TIME       = 0.001   # seconds per individual ADC sample
++ADC_SAMPLE_COUNT      = 4       # samples to average per report (= 4 ms)
++# NOTE: sample_count * sample_time MUST be well below report_time,
++# otherwise the MCU will shutdown with "Rescheduled timer in the past".
++# Current headroom: 25 ms - 4 ms = 21 ms margin.
++ADC_REFER_VOLTAGE     = 0.70    # volts; above this = "open" on that channel
++ABSENCE_TIMEOUT       = 5.0     # seconds; both-open must persist this long
++CHECK_RUNOUT_TIMEOUT  = 0.250   # seconds between motion-detection checks
++
++class FilamentTrackerStatus:
++    """Mutable container for the filament tracker's runtime state.
++
++    Attributes:
++        filament_distance: Cumulative filament travel in mm as measured
++            by the encoder (encoder_pulse × length_per_pulse).  Stays
++            0.0 when length_per_pulse is not configured.
++        filament_present: 1 when filament is detected, 0 when absent.
++        encoder_pulse: Total rising/falling edge count from the
++            encoder input.
++        encoder_signal_state: Current digital level of the encoder
++            channel (0 or 1).
++    """
++    def __init__(self):
++        self.filament_distance = 0.0
++        self.filament_present = 0
++        self.encoder_pulse = 0
++        # Start at 1 (open) to match the initial ADC value of 1.0,
++        # preventing a false encoder edge on the first ADC callback.
++        self.encoder_signal_state = 1
++
++class FilamentTracker:
++    """Dual-input filament tracker supporting ADC or GPIO signal types,
++    with optional motion detection for clog/jam sensing.
++
++    Monitors a detect pin and an encoder pin to determine filament
++    presence and count encoder pulses.  When an ``extruder`` is
++    configured, also compares encoder activity against extruder
++    movement to detect clogs (filament present but not moving).
++
++    Two hardware modes (``detect_pin_is_switch``):
++
++    False (default, dual-encoder — K3M):
++        Both pins are channels of a single rotary encoder wheel.
++        Any encoder edge immediately latches filament as present.
++        Absence is only declared after **both** channels read "open"
++        continuously for ``absence_timeout`` seconds with no edges.
++
++    True (switch + encoder — KS1):
++        Detect pin is a dedicated filament presence switch.  It alone
++        determines presence (open = absent, closed = present).
++        Encoder pin is used only for pulse counting.
++
++    Motion detection (optional, enabled by setting ``extruder``):
++        Uses the same approach as Klipper's ``filament_motion_sensor``.
++        On each encoder pulse the allowed-extrusion window is reset to
++        ``extruder_pos + detection_length``.  A periodic timer checks
++        whether the extruder has moved beyond that window without any
++        encoder activity — if so, a clog/jam is signalled via
++        RunoutHelper.
++
++    Signal modes:
++        adc  — Each pin is read via ADC; voltage > ADC_REFER_VOLTAGE
++               means "open".
++        gpio — Both pins are registered as digital buttons; a combined
++               bitmask is decoded per callback.
++    """
++    def __init__(self, config):
++        """Initialise the tracker from a Klipper config section.
++
++        Args:
++            config: A Klipper ConfigWrapper providing the keys
++                ``tracker_detect_pin``, ``tracker_encoder_pin``,
++                ``signal_type`` ("adc" or "gpio"),
++                ``detect_pin_is_switch`` (bool, default False),
++                ``safe_unwind_len``, ``length_per_pulse``, and
++                optionally ``extruder`` + ``detection_length`` for
++                motion detection.
++        """
++        self.printer = config.get_printer()
++        self.reactor = self.printer.get_reactor()
++        self.tracker_status = FilamentTrackerStatus()
++        self.last_pos_map = {}
++        self.callback = None
++
++        self.safe_unwind_len = config.getfloat("safe_unwind_len", 100., above=0.)
++        self.length_per_pulse = config.getfloat("length_per_pulse", 0., above=0.)
++        self.signal_type = config.get("signal_type", "gpio")
++        self._detect_pin_is_switch = config.getboolean(
++            "detect_pin_is_switch", False)
++        self._adc_inverted = config.getboolean("adc_inverted", False)
++        # Initial ADC values represent "open" (no filament).
++        # Normal: high voltage = open.  Inverted: low voltage = open.
++        self._detect_adc_val = 0.0 if self._adc_inverted else 1.0
++        self._encoder_adc_val = 0.0 if self._adc_inverted else 1.0
++        self._absence_timeout = config.getfloat(
++            "absence_timeout", ABSENCE_TIMEOUT, above=0.)
++        self._last_edge_time = -self._absence_timeout
++        # Zero-cost tracing: when disabled _trace is a no-op;
++        # when enabled it logs state transitions at INFO level.
++        self._debug_trace = config.getboolean("debug_trace", False)
++        if self._debug_trace:
++            self._trace = self._trace_enabled
++            self._adc_trace_counter = 0
++        else:
++            self._trace = lambda *args: None
++
++        # --- Motion detection (clog/jam sensing) ---
++        # When 'extruder' is configured, we compare encoder activity
++        # against extruder movement to detect filament jams, using the
++        # same approach as Klipper's filament_motion_sensor.
++        self._extruder_name = config.get("extruder", None)
++        self._motion_detection_enabled = self._extruder_name is not None
++        self._detection_length = config.getfloat(
++            "detection_length", 7., above=0.)
++        self._extruder = None
++        self._estimated_print_time = None
++        self._filament_runout_pos = None
++        self._extruder_pos_update_timer = None
++
++        # RunoutHelper gives us runout_gcode/insert_gcode support,
++        # QUERY/SET_FILAMENT_SENSOR commands, and sensor_enabled toggle.
++        self.runout_helper = filament_switch_sensor.RunoutHelper(config)
++        self.get_status = self._get_status
++
++        # Optional UI compatibility alias:
++        # expose this object also as "filament_motion_sensor <name>"
++        # so Moonraker/Mainsail can discover it through existing sensor
++        # whitelists without requiring frontend patches.
++        self._expose_as_motion_sensor = config.getboolean(
++            "expose_as_filament_motion_sensor", True)
++        self._register_motion_sensor_alias(config)
++
++        self.detect_pin = config.get("tracker_detect_pin")
++        self.encoder_pin = config.get("tracker_encoder_pin")
++        if not self.detect_pin or not self.encoder_pin:
++            raise config.error("tracker_detect_pin and tracker_encoder_pin are required")
++
++        if self.signal_type == "adc":
++            ppins = self.printer.lookup_object("pins")
++            self._detect_adc_pin = ppins.setup_pin("adc", self.detect_pin)
++            self._detect_adc_pin.setup_adc_sample(ADC_SAMPLE_TIME, ADC_SAMPLE_COUNT)
++            self._detect_adc_pin.setup_adc_callback(ADC_REPORT_TIME, self._detect_adc_handler)
++
++            self._encoder_adc_pin = ppins.setup_pin("adc", self.encoder_pin)
++            self._encoder_adc_pin.setup_adc_sample(ADC_SAMPLE_TIME, ADC_SAMPLE_COUNT)
++            self._encoder_adc_pin.setup_adc_callback(ADC_REPORT_TIME, self._encoder_adc_handler)
++        else:
++            buttons = self.printer.load_object(config, "buttons")
++            buttons.register_buttons([self.detect_pin, self.encoder_pin],
++                                     self._gpio_handler)
++            self._last_gpio_state = 0
++            self._absence_timer = None
++
++        if self._motion_detection_enabled:
++            self.printer.register_event_handler(
++                'klippy:ready', self._handle_ready)
++            self.printer.register_event_handler(
++                'idle_timeout:printing', self._handle_printing)
++            self.printer.register_event_handler(
++                'idle_timeout:ready', self._handle_not_printing)
++            self.printer.register_event_handler(
++                'idle_timeout:idle', self._handle_not_printing)
++
++    def _register_motion_sensor_alias(self, config):
++        """Register a compatibility object alias for UI auto-discovery.
++
++        If enabled, mirrors this tracker object under the equivalent
++        ``filament_motion_sensor`` section name.
++        """
++        if not self._expose_as_motion_sensor:
++            return
++        section_name = config.get_name()
++        if not section_name.startswith("filament_tracker"):
++            return
++        alias_name = section_name.replace(
++            "filament_tracker", "filament_motion_sensor", 1)
++        if self.printer.lookup_object(alias_name, None) is not None:
++            logging.info(
++                "filament_tracker: motion alias '%s' already exists;"
++                " skipping compatibility alias", alias_name)
++            return
++        self.printer.add_object(alias_name, self)
++
++    # Public API -------------------------------------------------------
++    def register_callback(self, cb):
++        """Register a callback invoked on filament presence changes.
++
++        Args:
++            cb: Callable(eventtime: float, is_present: int) called
++                whenever filament_present transitions between 0 and 1.
++        """
++        self.callback = cb
++
++    def is_filament_present(self):
++        """Return True if filament is currently detected."""
++        return bool(self.tracker_status.filament_present)
++
++    @property
++    def are_both_channels_open(self):
++        """Instantaneous raw channel state — no absence timeout.
++
++        Returns True when both the detect and encoder channels currently
++        read "open" (no filament engaging the sensor wheel).  Unlike
++        ``filament_present``, this does **not** wait for the absence
++        timeout.
++
++        In switch mode (``detect_pin_is_switch``), returns the inverse
++        of the detect pin (already instantaneous).
++
++        Use this when the caller *knows* filament was recently moving
++        (e.g. during active retraction) and needs the fastest possible
++        response.
++
++        Returns:
++            bool: True if both channels are open right now.
++        """
++        if self._detect_pin_is_switch:
++            # Switch mode: detect pin is authoritative, already instant
++            return not bool(self.tracker_status.filament_present)
++        if self.signal_type == "adc":
++            if self._adc_inverted:
++                detect_open = self._detect_adc_val < ADC_REFER_VOLTAGE
++                encoder_open = self._encoder_adc_val < ADC_REFER_VOLTAGE
++            else:
++                detect_open = self._detect_adc_val > ADC_REFER_VOLTAGE
++                encoder_open = self._encoder_adc_val > ADC_REFER_VOLTAGE
++            return detect_open and encoder_open
++        else:
++            # GPIO: _last_gpio_state is the latest bitmask
++            return self._last_gpio_state == 0
++
++    def start_pos_record(self, label):
++        """Snapshot the current filament_distance under *label*.
++
++        Args:
++            label: Arbitrary string key identifying this snapshot.
++        """
++        self.last_pos_map[label] = self.tracker_status.filament_distance
++
++    def get_pos_record(self, label):
++        """Return the filament travel since the snapshot stored as *label*.
++
++        Args:
++            label: Key previously passed to :meth:`start_pos_record`.
++
++        Returns:
++            Delta in mm between the current filament_distance and the
++            snapshot.
++        """
++        return self.tracker_status.filament_distance - self.last_pos_map[label]
++
++    def _get_status(self, eventtime=0.):
++        """Return a dict of the tracker's current state for Klipper status queries.
++
++        Merges tracker-specific fields with RunoutHelper fields
++        (``filament_detected``, ``enabled``) for full compatibility with
++        both ``filament_tracker`` and ``filament_switch_sensor`` templates.
++        """
++        status = {
++            "filament_distance": self.tracker_status.filament_distance,
++            "filament_present": self.tracker_status.filament_present,
++            "encoder_pulse": self.tracker_status.encoder_pulse,
++            "encoder_signal_state": self.tracker_status.encoder_signal_state,
++            "detection_length": self._detection_length,
++        }
++        status.update(self.runout_helper.get_status(eventtime))
++        return status
++
++    # Internal helpers -------------------------------------------------
++    def _note_filament_present(self, present_int, eventtime=None):
++        """Update filament presence, firing the callback on transitions.
++
++        When motion detection is active, only *absence* is forwarded to
++        RunoutHelper (immediate runout on physical removal).  Presence
++        is signalled by encoder pulses instead, which confirm the
++        filament is actually moving.
++
++        Args:
++            present_int: 1 if filament detected, 0 if absent.
++            eventtime:   Monotonic timestamp; if *None*, reads the clock.
++        """
++        if present_int == self.tracker_status.filament_present:
++            return
++        self.tracker_status.filament_present = present_int
++        self._trace(present_int)
++        if eventtime is None:
++            eventtime = self.reactor.monotonic()
++        if self._motion_detection_enabled:
++            # Only forward absence — presence comes from encoder pulses.
++            if not present_int:
++                self.runout_helper.note_filament_present(eventtime, False)
++        else:
++            self.runout_helper.note_filament_present(
++                eventtime, bool(present_int))
++        if self.callback:
++            self.callback(eventtime, present_int)
++
++    def _on_encoder_pulse(self, eventtime):
++        """Handle an encoder pulse: update distance and motion detection.
++
++        Called after every encoder edge.  Updates ``filament_distance``
++        from the new pulse count and, when motion detection is active,
++        resets the runout window and tells RunoutHelper that filament is
++        present (encoder activity = filament is moving).
++        """
++        self.tracker_status.filament_distance = (
++            self.tracker_status.encoder_pulse * self.length_per_pulse)
++        if self._motion_detection_enabled and self._extruder is not None:
++            self._update_filament_runout_pos(eventtime)
++            self.runout_helper.note_filament_present(eventtime, True)
++
++    def _trace_enabled(self, present_int):
++        """Log a filament presence transition (only bound when debug_trace is on)."""
++        logging.info(
++            "filament_tracker [%s]: filament %s"
++            " (pulses=%d, last_edge=%.3f, timeout=%.1f)",
++            self.signal_type,
++            "PRESENT" if present_int else "ABSENT",
++            self.tracker_status.encoder_pulse,
++            self._last_edge_time,
++            self._absence_timeout,
++        )
++
++    # ADC path
++    def _detect_adc_handler(self, read_time, read_value):
++        """ADC callback for the detect (presence) pin."""
++        self._detect_adc_val = read_value
++        self._update_adc_state(read_time)
++
++    def _encoder_adc_handler(self, read_time, read_value):
++        """ADC callback for the encoder pin."""
++        self._encoder_adc_val = read_value
++        self._update_adc_state(read_time)
++
++    def _update_adc_state(self, eventtime):
++        """Re-evaluate presence and encoder state from the latest ADC readings.
++
++        When ``detect_pin_is_switch`` is True, the detect pin alone
++        determines presence (open = absent, closed = present).  The
++        encoder pin is used only for pulse counting.
++
++        When False (default, dual-encoder mode), encoder edges
++        immediately latch filament as present.  Absence is only
++        reported when both channels read open *and* no edge has
++        occurred within ``absence_timeout`` seconds.
++        """
++        if self._adc_inverted:
++            detect_open = self._detect_adc_val < ADC_REFER_VOLTAGE
++            encoder_open = self._encoder_adc_val < ADC_REFER_VOLTAGE
++        else:
++            detect_open = self._detect_adc_val > ADC_REFER_VOLTAGE
++            encoder_open = self._encoder_adc_val > ADC_REFER_VOLTAGE
++
++        # Count encoder edges from the encoder channel
++        encoder_state = 1 if encoder_open else 0
++        if encoder_state != self.tracker_status.encoder_signal_state:
++            self.tracker_status.encoder_signal_state = encoder_state
++            self.tracker_status.encoder_pulse += 1
++            self._last_edge_time = eventtime
++            self._on_encoder_pulse(eventtime)
++            if self._debug_trace:
++                logging.info(
++                    "filament_tracker ADC EDGE: t=%.3f detect=%.4f"
++                    " encoder=%.4f new_state=%d pulses=%d",
++                    eventtime, self._detect_adc_val,
++                    self._encoder_adc_val, encoder_state,
++                    self.tracker_status.encoder_pulse)
++            if not self._detect_pin_is_switch:
++                # Dual-encoder: edge means filament is moving
++                self._note_filament_present(1, eventtime)
++            if self.tracker_status.encoder_pulse % 20 == 0:
++                logging.debug("filament tracker encoder pulse: %d",
++                              self.tracker_status.encoder_pulse)
++        elif self._debug_trace:
++            # Periodic ADC value log (every 40th call ≈ once/sec at 40Hz)
++            self._adc_trace_counter += 1
++            if self._adc_trace_counter % 40 == 0:
++                age = eventtime - self._last_edge_time
++                logging.info(
++                    "filament_tracker ADC POLL: t=%.3f detect=%.4f(%s)"
++                    " encoder=%.4f(%s) present=%d edge_age=%.1fs"
++                    " timeout=%.1fs",
++                    eventtime, self._detect_adc_val,
++                    "open" if detect_open else "CLOSED",
++                    self._encoder_adc_val,
++                    "open" if encoder_open else "CLOSED",
++                    self.tracker_status.filament_present,
++                    age, self._absence_timeout)
++
++        # Presence logic
++        if self._detect_pin_is_switch:
++            # Switch mode: detect pin is authoritative
++            if detect_open:
++                self._note_filament_present(0, eventtime)
++            else:
++                self._note_filament_present(1, eventtime)
++        else:
++            # Dual-encoder mode: absent only after both open for > timeout
++            if detect_open and encoder_open:
++                if eventtime - self._last_edge_time > self._absence_timeout:
++                    self._note_filament_present(0, eventtime)
++            else:
++                self._note_filament_present(1, eventtime)
++
++    # GPIO path
++    def _gpio_handler(self, eventtime, state_bits):
++        """GPIO callback receiving a bitmask of both pins.
++
++        Args:
++            eventtime: Monotonic timestamp of the event.
++            state_bits: Bitmask — bit 0 = detect pin, bit 1 = encoder pin.
++
++        In switch mode (``detect_pin_is_switch``), bit 0 alone determines
++        presence.  In dual-encoder mode, any edge latches present;
++        both-zero starts a delayed absence timer.
++        """
++        # Count encoder edges from the encoder bit
++        encoder_bit = (state_bits >> 1) & 1
++        last_encoder_bit = (self._last_gpio_state >> 1) & 1
++        if encoder_bit != last_encoder_bit:
++            self.tracker_status.encoder_signal_state = encoder_bit
++            self.tracker_status.encoder_pulse += 1
++            self._last_edge_time = eventtime
++            self._on_encoder_pulse(eventtime)
++        self._last_gpio_state = state_bits
++
++        if self._detect_pin_is_switch:
++            # Switch mode: detect bit (bit 0) is authoritative
++            detect_bit = state_bits & 1
++            if detect_bit:
++                self._note_filament_present(1, eventtime)
++            else:
++                self._note_filament_present(0, eventtime)
++        else:
++            # Dual-encoder mode
++            if state_bits:
++                # At least one channel active → filament present
++                self._note_filament_present(1, eventtime)
++                if self._absence_timer is not None:
++                    self.reactor.update_timer(self._absence_timer,
++                                              self.reactor.NEVER)
++            else:
++                # Both channels open — schedule delayed absence check
++                if self._absence_timer is None:
++                    self._absence_timer = self.reactor.register_timer(
++                        self._gpio_absence_event)
++                self.reactor.update_timer(
++                    self._absence_timer,
++                    eventtime + self._absence_timeout)
++
++    def _gpio_absence_event(self, eventtime):
++        """Timer callback: declare filament absent if no recent edges."""
++        if eventtime - self._last_edge_time >= self._absence_timeout:
++            self._note_filament_present(0, eventtime)
++        return self.reactor.NEVER
++
++    # Motion detection (clog/jam sensing) --------------------------------
++    def _handle_ready(self):
++        """Look up the extruder and prepare the motion detection timer."""
++        self._extruder = self.printer.lookup_object(self._extruder_name)
++        self._estimated_print_time = (
++            self.printer.lookup_object('mcu').estimated_print_time)
++        self._update_filament_runout_pos()
++        self._extruder_pos_update_timer = self.reactor.register_timer(
++            self._extruder_pos_update_event)
++
++    def _handle_printing(self, print_time):
++        """Start the motion detection timer when printing begins."""
++        self.reactor.update_timer(
++            self._extruder_pos_update_timer, self.reactor.NOW)
++
++    def _handle_not_printing(self, print_time):
++        """Stop the motion detection timer when printing stops."""
++        self.reactor.update_timer(
++            self._extruder_pos_update_timer, self.reactor.NEVER)
++
++    def _get_extruder_pos(self, eventtime=None):
++        """Return the extruder stepper position in mm at *eventtime*."""
++        if eventtime is None:
++            eventtime = self.reactor.monotonic()
++        print_time = self._estimated_print_time(eventtime)
++        return self._extruder.find_past_position(print_time)
++
++    def _update_filament_runout_pos(self, eventtime=None):
++        """Reset the runout window to current extruder pos + detection_length."""
++        if eventtime is None:
++            eventtime = self.reactor.monotonic()
++        self._filament_runout_pos = (
++            self._get_extruder_pos(eventtime) + self._detection_length)
++
++    def _extruder_pos_update_event(self, eventtime):
++        """Periodic timer: check extruder pos against runout window.
++
++        If the extruder has moved past ``filament_runout_pos`` without
++        any encoder activity, signal a clog to RunoutHelper.
++        """
++        extruder_pos = self._get_extruder_pos(eventtime)
++        self.runout_helper.note_filament_present(
++            eventtime, extruder_pos < self._filament_runout_pos)
++        return eventtime + CHECK_RUNOUT_TIMEOUT
++
++def load_config_filament_tracker(config):
++    """Klipper config loader entry point for bare [filament_tracker] sections."""
++    return FilamentTracker(config)
++
++def load_config_prefix(config):
++    """Klipper config loader for named [filament_tracker <name>] sections."""
++    return FilamentTracker(config)
++
+diff --git a/klippy/extras/lis2dw12.py b/klippy/extras/lis2dw12.py
+new file mode 100644
+index 00000000..c04ad5ab
+--- /dev/null
++++ b/klippy/extras/lis2dw12.py
+@@ -0,0 +1,340 @@
++# Support for reading acceleration data from an LIS2DW12 chip
++#
++# Copyright (C) 2025 Antiriad <mail.antiriad@gmail.com>
++#
++# This file may be distributed under the terms of the GNU GPLv3 license.
++
++import logging
++from . import bus, bulk_sensor, adxl345
++
++# LIS2DW12 registers and constants
++LIS2DW12_REGISTERS = {
++    "REG_DEVID": 0x0F,
++    "REG_CTRL1": 0x20,
++    "REG_CTRL6": 0x25,
++    "REG_FIFO_CTRL": 0x2E,
++    "REG_MOD_READ": 0x80,
++}
++
++LIS2DW12_INFO = {
++    "DEV_ID": 0x44,
++    "POWER_OFF": 0x00,
++    "SET_CTRL1_MODE": 0x04,
++    "SET_FIFO_CTL": 0xC0,
++    "SET_CTRL6_ODR_FS": 0x04,
++    "FREEFALL_ACCEL": 9.80665 * 1000.,
++    "SCALE_XY": 0.000244140625 * 9.80665 * 1000,
++    "SCALE_Z": 0.000244140625 * 9.80665 * 1000,
++}
++
++LIS2DW12_QUERY_RATES = {
++    25: 0x3, 50: 0x4, 100: 0x5, 200: 0x6, 400: 0x7, 800: 0x8, 1600: 0x9,
++}
++
++BYTES_PER_SAMPLE = 6
++SAMPLES_PER_BLOCK = 8
++MIN_MSG_TIME = 0.100
++
++
++class LIS2DW12:
++    def __init__(self, config):
++        self.printer = config.get_printer()
++        adxl345.AccelCommandHelper(config, self)
++
++        logging.info(
++            "LIS2DW12: Initializing section '%s'", config.get_name()
++        )
++        logging.info(
++            "LIS2DW12: axes_map=%s, rate=%s",
++            config.get("axes_map", "x,y,z"),
++            config.get("rate", 1600),
++        )
++
++        # Axes map and scaling
++        am = {
++            "x": (0, LIS2DW12_INFO["SCALE_XY"]),
++            "y": (1, LIS2DW12_INFO["SCALE_XY"]),
++            "z": (2, LIS2DW12_INFO["SCALE_Z"]),
++            "-x": (0, -LIS2DW12_INFO["SCALE_XY"]),
++            "-y": (1, -LIS2DW12_INFO["SCALE_XY"]),
++            "-z": (2, -LIS2DW12_INFO["SCALE_Z"]),
++        }
++        axes_map = config.getlist("axes_map", ["x", "y", "z"], ',', count=3)
++        self.axes_map = [am[str(a).strip()] for a in axes_map]
++
++        self.data_rate = config.getint("rate", 1600)
++        if self.data_rate not in LIS2DW12_QUERY_RATES:
++            raise config.error("Invalid lis2dw12 rate parameter")
++
++        # Setup SPI bus
++        self.bus = bus.MCU_SPI_from_config(config, 3, default_speed=5000000)
++        self.mcu = self.bus.get_mcu()
++        self.oid = self.mcu.create_oid()
++        self.last_sequence = 0
++        self.max_query_duration = 1 << 31
++
++        # MCU commands
++        config_cmd = (
++            f"config_lis2dw12 oid={self.oid} spi_oid={self.bus.get_oid()}"
++        )
++        self.mcu.add_config_cmd(config_cmd)
++        rest_ticks = self.mcu.seconds_to_clock(4.0 / self.data_rate)
++        query_cmd = (
++            f"query_lis2dw12 oid={self.oid} clock=0 rest_ticks={rest_ticks}"
++        )
++        self.mcu.add_config_cmd(query_cmd, on_restart=True)
++        self.mcu.register_config_callback(self._build_config)
++        self.mcu.register_serial_response(
++            self._handle_lis2dw12_data,
++            "lis2dw12_data oid=%c sequence=%hu data=%*s",
++            self.oid,
++        )
++        self.mcu.register_serial_response(
++            self._handle_lis2dw12_status,
++            "lis2dw12_status oid=%c clock=%u query_ticks=%u next_sequence=%hu"
++            " buffered=%c fifo=%c limit_count=%hu",
++            self.oid,
++        )
++
++        # Batch/bulk sensor setup
++        self.samples = []
++        self.last_error_count = 0
++        self.last_limit_count = 0
++        self.name = config.get_name().split()[-1]
++        BATCH_UPDATES = 0.100
++        self.batch_bulk = bulk_sensor.BatchBulkHelper(
++            self.printer,
++            self._process_batch,
++            self._start_measurements,
++            self._finish_measurements,
++            BATCH_UPDATES,
++        )
++        hdr = ("time", "x_acceleration", "y_acceleration", "z_acceleration")
++        self.batch_bulk.add_mux_endpoint(
++            "lis2dw12/dump_lis2dw12", "sensor", self.name, {"header": hdr}
++        )
++        self.clock_sync = bulk_sensor.ClockSyncRegression(self.mcu, 640)
++
++    def _build_config(self):
++        cmdqueue = self.bus.get_command_queue()
++        self.query_sensor_cmd = self.mcu.lookup_command(
++            "query_lis2dw12 oid=%c clock=%u rest_ticks=%u", cq=cmdqueue
++        )
++        self.query_sensor_status_cmd = self.mcu.lookup_query_command(
++            "query_lis2dw12_status oid=%c",
++            "lis2dw12_status oid=%c clock=%u query_ticks=%u next_sequence=%hu"
++            " buffered=%c fifo=%c limit_count=%hu",
++            self.oid,
++            cmdqueue,
++        )
++
++    def start_internal_client(self):
++        aqh = adxl345.AccelQueryHelper(self.printer)
++        self.batch_bulk.add_client(aqh.handle_batch)
++        return aqh
++
++    def _handle_lis2dw12_data(self, params):
++        self.samples.append(params)
++
++    def _handle_lis2dw12_status(self, params):
++        self.last_error_count = params.get("errors", self.last_error_count)
++        self.last_limit_count = params.get("limit_count", self.last_limit_count)
++
++    def _process_batch(self, eventtime):
++        self._update_clock()
++        raw_samples = self.samples
++        self.samples = []
++        if not raw_samples:
++            # No data available, return empty dict (like adxl345)
++            return {}
++        try:
++            samples = self.extract_samples(raw_samples)
++        except Exception:
++            samples = []
++        return {
++            "data": samples,
++            "errors": self.last_error_count,
++            "overflows": self.last_limit_count,
++        }
++
++    def _start_measurements(self):
++        dev_id = self.read_reg(LIS2DW12_REGISTERS["REG_DEVID"])
++        if dev_id != LIS2DW12_INFO["DEV_ID"]:
++            raise self.printer.command_error(
++                "Invalid lis2dw12 id (got %x vs %x)"
++                % (dev_id, LIS2DW12_INFO["DEV_ID"])
++            )
++
++        ctrl1_val = (
++            LIS2DW12_QUERY_RATES[self.data_rate] << 4
++            | LIS2DW12_INFO["SET_CTRL1_MODE"]
++        )
++        self.set_reg(LIS2DW12_REGISTERS["REG_CTRL1"], ctrl1_val)
++        self.set_reg(
++            LIS2DW12_REGISTERS["REG_FIFO_CTRL"], LIS2DW12_INFO["POWER_OFF"]
++        )
++        self.set_reg(
++            LIS2DW12_REGISTERS["REG_CTRL6"], LIS2DW12_INFO["SET_CTRL6_ODR_FS"]
++        )
++        self.set_reg(
++            LIS2DW12_REGISTERS["REG_FIFO_CTRL"], LIS2DW12_INFO["SET_FIFO_CTL"]
++        )
++
++        # Start bulk reading
++        systime = self.printer.get_reactor().monotonic()
++        print_time = self.mcu.estimated_print_time(systime) + MIN_MSG_TIME
++        reqclock = self.mcu.print_time_to_clock(print_time)
++        rest_ticks = self.mcu.seconds_to_clock(4.0 / self.data_rate)
++        self.query_sensor_cmd.send([self.oid, reqclock, rest_ticks])
++
++        # Reset & cleanup state here
++        self.samples = []
++        self.last_sequence = 0
++        self.last_error_count = 0
++        self.last_limit_count = 0
++        self.max_query_duration = 1 << 31
++        if hasattr(self.clock_sync, "reset"):
++            self.clock_sync.reset(float(reqclock), 0.0)
++
++    def _finish_measurements(self):
++        self.set_reg(LIS2DW12_REGISTERS["REG_FIFO_CTRL"], 0x00)
++        self.query_sensor_cmd.send_wait_ack([self.oid, 0, 0])
++        self.set_reg(LIS2DW12_REGISTERS["REG_FIFO_CTRL"], 0x00)
++
++    def read_reg(self, reg):
++        params = self.bus.spi_transfer(
++            [reg | LIS2DW12_REGISTERS["REG_MOD_READ"], 0x00]
++        )
++        response = bytearray(params["response"])
++        return response[1]
++
++    def set_reg(self, reg, val, minclock=0):
++        self.bus.spi_send([reg, val & 0xFF], minclock=minclock)
++        stored_val = self.read_reg(reg)
++        if stored_val != val:
++            raise self.printer.command_error(
++                "Failed to set LIS2DW12 register [0x%x] to 0x%x: got 0x%x."
++                % (reg, val, stored_val)
++            )
++
++    def extract_samples(self, raw_samples):
++        x_pos, x_scale = self.axes_map[0]
++        y_pos, y_scale = self.axes_map[1]
++        z_pos, z_scale = self.axes_map[2]
++
++        try:
++            time_base, chip_base, inv_freq = self.clock_sync.get_time_translation()
++        except ZeroDivisionError:
++            raise self.printer.command_error(
++                "LIS2DW12: Clock synchronization not ready. "
++                "Not enough data for timing translation. "
++                "Wait for more samples or check sensor connection."
++            )
++
++        count = 0
++        samples = [None] * (len(raw_samples) * SAMPLES_PER_BLOCK)
++
++        for params in raw_samples:
++            seq_diff = (self.last_sequence - params.get("sequence", 0)) & 0xFFFF
++            seq_diff -= (seq_diff & 0x8000) << 1
++            seq = self.last_sequence - seq_diff
++            d = params.get("data", b"")
++
++            msg_cdiff = float(seq) * float(SAMPLES_PER_BLOCK) - chip_base
++
++            for i in range(0, len(d), BYTES_PER_SAMPLE):
++                if i + BYTES_PER_SAMPLE > len(d):
++                    break
++
++                xlow = d[i] & 0xFC  # Mask bottom 2 bits
++                ylow = d[i + 1] & 0xFC
++                zlow = d[i + 2] & 0xFC
++                xhigh = d[i + 3] & 0xFF
++                yhigh = d[i + 4] & 0xFF
++                zhigh = d[i + 5] & 0xFF
++
++                rx = xlow | (xhigh << 8)
++                ry = ylow | (yhigh << 8)
++                rz = zlow | (zhigh << 8)
++
++                # Convert to signed 16-bit
++                rx = rx if rx < 0x8000 else rx - 0x10000
++                ry = ry if ry < 0x8000 else ry - 0x10000
++                rz = rz if rz < 0x8000 else rz - 0x10000
++
++                raw_xyz = [rx, ry, rz]
++
++                # Apply axes mapping and scaling
++                x = raw_xyz[int(x_pos)] * x_scale / 4.0
++                y = raw_xyz[int(y_pos)] * y_scale / 4.0
++                z = raw_xyz[int(z_pos)] * z_scale / 4.0
++
++                # Sample index within this message
++                sample_offset = float(i // BYTES_PER_SAMPLE)
++                ptime = time_base + (msg_cdiff + sample_offset) * inv_freq
++
++                samples[count] = (ptime, x, y, z)
++                count += 1
++
++        del samples[count:]
++        return samples
++
++    def _update_clock(self, minclock=0):
++        # Query with retry logic
++        for retry in range(5):
++            try:
++                params = self.query_sensor_status_cmd.send([self.oid], minclock)
++                fifo = params.get("fifo", 0) & 0x7F
++                if fifo <= 32:
++                    break
++            except Exception as e:
++                if retry == 4:
++                    raise self.printer.command_error(
++                        "Unable to query lis2dw12 fifo: %s" % str(e)
++                    )
++                continue
++
++        # Update sequence tracking
++        mcu_clock = self.mcu.clock32_to_clock64(params["clock"])
++        sequence = (self.last_sequence & (~0xFFFF)) | params["next_sequence"]
++        if sequence < self.last_sequence:
++            sequence += 0x10000
++        self.last_sequence = sequence
++
++        # Update limit count tracking
++        buffered = params.get("buffered", 0)
++        limit_count = ((self.last_limit_count & (~0xFFFF)) | params["limit_count"])
++        if limit_count < self.last_limit_count:
++            limit_count += 0x10000
++        self.last_limit_count = limit_count
++
++        # Duration-based filtering
++        duration = params["query_ticks"]
++        if duration > self.max_query_duration:
++            self.max_query_duration = max(
++                2 * self.max_query_duration, self.mcu.seconds_to_clock(0.000005)
++            )
++            return
++
++        self.max_query_duration = 2 * duration
++
++        msg_count = (
++            sequence * SAMPLES_PER_BLOCK
++            + buffered // BYTES_PER_SAMPLE
++            + fifo
++        )
++        chip_clock = float(msg_count + 1)  # +1 for timing offset like Go
++
++        self.clock_sync.update(float(mcu_clock + duration // 2), chip_clock)
++
++        # Set last chip clock for timing continuity
++        if hasattr(self.clock_sync, "set_last_chip_clock"):
++            self.clock_sync.set_last_chip_clock(chip_clock)
++
++
++def load_config(config):
++    return LIS2DW12(config)
++
++
++def load_config_prefix(config):
++    return LIS2DW12(config)
+diff --git a/klippy/extras/probe_ks1.py b/klippy/extras/probe_ks1.py
+new file mode 100644
+index 00000000..a17b95f5
+--- /dev/null
++++ b/klippy/extras/probe_ks1.py
+@@ -0,0 +1,184 @@
++# KS1 Custom Probe support (utilizing Klipper probe helpers)
++#
++# Copyright (C) 2025 Antiriad <mail.antiriad@gmail.com>
++#
++# This file may be distributed under the terms of the GNU GPLv3 license.
++#
++# Adapted for the mainline klipper probe.py rewrite that replaced the old
++# ProbeEndstopWrapper/ProbeSessionHelper/HomingViaProbeHelper composition
++# with per-probe "endstop" wrapper classes (see bltouch.py for the
++# reference implementation this module now mirrors).
++
++import logging
++from . import probe
++
++# KS1 "endstop" wrapper. Drives the CS1237 strain gauge ADC on/off around
++# each probing attempt (instead of a physical actuator like bltouch's pin),
++# then delegates the actual homing move to the standard
++# probe.DescendToEndstopHelper using the MCU endstop pin.
++class KS1ProbeEndstop:
++    def __init__(self, config, probe_offsets, param_helper, ks1):
++        self.printer = config.get_printer()
++        self.ks1 = ks1
++        self.param_helper = param_helper
++        # Unlike the stock [probe], default to enabling/disabling the
++        # strain gauge once per probe session (not per sample), since
++        # enabling involves a 500ms settle dwell.
++        self.stow_on_each_sample = config.getboolean(
++            'deactivate_on_each_sample', False)
++        # Create an "endstop" object to handle the probe pin
++        ppins = self.printer.lookup_object('pins')
++        self.mcu_endstop = ppins.setup_pin('endstop', config.get('pin'))
++        self.get_mcu = self.mcu_endstop.get_mcu
++        self.add_stepper = self.mcu_endstop.add_stepper
++        self.get_steppers = self.mcu_endstop.get_steppers
++        self.home_start = self.mcu_endstop.home_start
++        self.home_wait = self.mcu_endstop.home_wait
++        self.query_endstop = self.mcu_endstop.query_endstop
++        # Probing via homing to endstop
++        self.homing_helper = probe.DescendToEndstopHelper(
++            config, self, probe_offsets, param_helper)
++        # multi probe state
++        self.multi = 'OFF'
++
++    def _check_pre_triggered(self):
++        """Guard against a stale/latched trigger before the probing move."""
++        toolhead = self.printer.lookup_object("toolhead")
++        reactor = self.printer.get_reactor()
++
++        def _is_endstop_active():
++            pt = toolhead.get_last_move_time() + 0.050  # 50 ms in the future
++            try:
++                return bool(self.query_endstop(pt))
++            except Exception:
++                return False
++
++        pre_trig_1 = _is_endstop_active()
++        if pre_trig_1:
++            reactor.pause(reactor.monotonic() + 0.030)  # 30 ms settle
++            pre_trig_2 = _is_endstop_active()
++        else:
++            pre_trig_2 = False
++
++        if pre_trig_1 and pre_trig_2:
++            logging.warning(
++                "ProbeKS1: endstop TRIGGERED before move; lifting 2mm to clear")
++            cur = toolhead.get_position()
++            toolhead.manual_move(
++                [cur[0], cur[1], cur[2] + 2.0], self.param_helper.lift_speed)
++            toolhead.wait_moves()
++            if _is_endstop_active():
++                raise self.printer.command_error(
++                    "ProbeKS1: Endstop still triggered before probing "
++                    "after 2mm lift")
++
++    def _enable_probe(self):
++        logging.info("ProbeKS1: enabling CS1237 strain gauge sensor")
++        cs1237 = self.ks1.cs1237
++        # Reset sensor baseline before enabling for a fresh reference
++        cs1237._cmd_reset.send([cs1237._oid, 3])
++        cs1237._enable_cs1237(1)
++        # 500ms stabilization dwell for EMA filter convergence
++        gcode = self.printer.lookup_object('gcode')
++        gcode.run_script_from_command('G4 P500')
++
++    def _disable_probe(self):
++        logging.info("ProbeKS1: disabling CS1237 strain gauge sensor")
++        if self.ks1.cs1237 is not None:
++            self.ks1.cs1237._enable_cs1237(0)
++
++    def start_probe_session(self, gcmd):
++        self.homing_helper.clear_trigger_positions()
++        if not self.stow_on_each_sample:
++            self.multi = 'FIRST'
++        return self
++
++    def _probe_prepare(self):
++        if self.multi == 'OFF' or self.multi == 'FIRST':
++            self._enable_probe()
++            if self.multi == 'FIRST':
++                self.multi = 'ON'
++        self._check_pre_triggered()
++
++    def _probe_finish(self):
++        if self.multi == 'OFF':
++            self._disable_probe()
++
++    def run_probe(self, gcmd):
++        self._probe_prepare()
++        try:
++            self.homing_helper.descend_until_trigger(gcmd)
++        except self.printer.command_error:
++            self._probe_finish()
++            raise
++        self._probe_finish()
++
++    def pull_probed_results(self):
++        return self.homing_helper.pull_trigger_positions()
++
++    def end_probe_session(self):
++        self.homing_helper.clear_trigger_positions()
++        if not self.stow_on_each_sample:
++            self._disable_probe()
++            self.multi = 'OFF'
++
++
++class ProbeKS1:
++    def __init__(self, config):
++        self.printer = config.get_printer()
++        self.name = config.get_name()
++
++        # Currently not used/supported setting from printer.cfg.
++        # As this module uses probe helpers for probing (and not a manual
++        # approach), this setting is currently without any effect. It is
++        # left active here so it's still possible to load a standard KS1
++        # probe config without klipper complaining about an unused key.
++        self.final_speed = config.getfloat("final_speed", 2.0, above=0.0)
++
++        # CS1237 strain gauge sensor reference (deferred to connect handler)
++        self.cs1237 = None
++        self.printer.register_event_handler('klippy:connect',
++                                            self._handle_connect)
++
++        # Standard Klipper probe helper composition (mirrors probe.PrinterProbe
++        # / bltouch.PrinterBLTouch in current mainline klipper)
++        self.probe_offsets = probe.ProbeOffsetsHelper(config)
++        self.param_helper = probe.ProbeParameterHelper(config)
++        self.mcu_probe = KS1ProbeEndstop(
++            config, self.probe_offsets, self.param_helper, self)
++        self.probe_session = probe.SampleAveragingHelper(
++            config, self.param_helper, self.mcu_probe.start_probe_session)
++        self.query_endstop = self.mcu_probe.query_endstop
++        self.cmd_helper = probe.ProbeCommandHelper(
++            config, self, self.query_endstop)
++        probe.HomingViaProbeHelper(
++            config, self.probe_offsets.get_offsets()[2], self.query_endstop)
++
++        # Register as the printer's probe object, so probe_ks1 gets
++        # registered as the standard probe
++        self.printer.add_object('probe', self)
++
++    def _handle_connect(self):
++        self.cs1237 = self.printer.lookup_object('cs1237', None)
++        if self.cs1237 is None:
++            raise self.printer.config_error(
++                "ProbeKS1: [cs1237] section not found in printer config. "
++                "The strain gauge sensor is required for safe probing.")
++        logging.info("ProbeKS1: cs1237 sensor connected")
++
++    # Interface for ProbeCommandHelper (PrinterProbe-alike)
++    def get_probe_params(self, gcmd=None):
++        return self.param_helper.get_probe_params(gcmd)
++
++    def get_offsets(self, gcmd=None):
++        return self.probe_offsets.get_offsets(gcmd)
++
++    def get_status(self, eventtime):
++        return self.cmd_helper.get_status(eventtime)
++
++    def start_probe_session(self, gcmd):
++        return self.probe_session.start_probe_session(gcmd)
++
++
++def load_config(config):
++    return ProbeKS1(config)
+diff --git a/klippy/extras/temperature_sensors.cfg b/klippy/extras/temperature_sensors.cfg
+index 4fbe5492..52331549 100644
+--- a/klippy/extras/temperature_sensors.cfg
++++ b/klippy/extras/temperature_sensors.cfg
+@@ -109,3 +109,332 @@ beta: 3974
+ temperature1: 25
+ resistance1: 100000
+ beta: 4100
++
++# Definition inherent from name. This sensor is deprecated!
++[thermistor NTC 100K beta 3950]
++temperature1: 25
++resistance1: 100000
++beta: 3950
++
++[thermistor NTC ZM3486 HNS112HC4570G0060Y3486]
++temperature1: 200
++resistance1: 1104
++beta: 4570
++
++[thermistor NTC ZM3863 HNS112HC4570G0]
++temperature1:	-30	
++resistance1:	5667000
++temperature2:	-25	
++resistance2:	4105000
++temperature3:	-20	
++resistance3:	3005000
++temperature4:	-15	
++resistance4:	2221000
++temperature5:	-10	
++resistance5:	1657000
++temperature6:	-5	
++resistance6:	1248000
++temperature7:	0	
++resistance7:	947500
++temperature8:	5	
++resistance8:	725400
++temperature9:	10	
++resistance9:	559700
++temperature10:	15	
++resistance10:	435100
++temperature11:	20	
++resistance11:	340700
++temperature12:	25	
++resistance12:	268600
++temperature13:	30	
++resistance13:	213100
++temperature14:	35	
++resistance14:	170200
++temperature15:	40	
++resistance15:	136800
++temperature16:	45	
++resistance16:	110500
++temperature17:	50	
++resistance17:	89800
++temperature18:	55	
++resistance18:	73370
++temperature19:	60	
++resistance19:	60250
++temperature20:	65	
++resistance20:	49720
++temperature21:	70	
++resistance21:	41230
++temperature22:	75	
++resistance22:	34350
++temperature23:	80	
++resistance23:	28750
++temperature24:	85	
++resistance24:	24160
++temperature25:	90	
++resistance25:	20390
++temperature26:	95	
++resistance26:	17270
++temperature27:	100	
++resistance27:	14690
++temperature28:	105	
++resistance28:	12540
++temperature29:	110	
++resistance29:	10750
++temperature30:	115	
++resistance30:	9242
++temperature31:	120	
++resistance31:	7973
++temperature32:	125	
++resistance32:	6902
++temperature33:	130	
++resistance33:	5993
++temperature34:	135	
++resistance34:	5220
++temperature35:	140	
++resistance35:	4560
++temperature36:	145	
++resistance36:	3995
++temperature37:	150	
++resistance37:	3510
++temperature38:	155	
++resistance38:	3093
++temperature39:	160	
++resistance39:	2732
++temperature40:	165	
++resistance40:	2419
++temperature41:	170	
++resistance41:	2148
++temperature42:	175	
++resistance42:	1911
++temperature43:	180	
++resistance43:	1705
++temperature44:	185	
++resistance44:	1525
++temperature45:	190	
++resistance45:	1366
++temperature46:	195	
++resistance46:	1227
++temperature47:	200	
++resistance47:	1104
++temperature48:	205	
++resistance48:	995.5
++temperature49:	210	
++resistance49:	899.5
++temperature50:	215	
++resistance50:	814.4
++temperature51:	220	
++resistance51:	738.6
++temperature52:	225	
++resistance52:	671.2
++temperature53:	230	
++resistance53:	611
++temperature54:	235	
++resistance54:	557.2
++temperature55:	240	
++resistance55:	509
++temperature56:	245	
++resistance56:	465.8
++temperature57:	250	
++resistance57:	426.9
++temperature58:	255	
++resistance58:	391.8
++temperature59:	260	
++resistance59:	360.3
++temperature60:	265	
++resistance60:	331.7
++temperature61:	270	
++resistance61:	305.9
++temperature62:	275	
++resistance62:	282.5
++temperature63:	280	
++resistance63:	261.2
++temperature64:	285	
++resistance64:	241.9
++temperature65:	290	
++resistance65:	224.3
++temperature66:	295	
++resistance66:	208.3
++temperature67:	300	
++resistance67:	193.6
++temperature68:	305	
++resistance68:	180
++temperature69:	310	
++resistance69:	167.6
++temperature70:	315	
++resistance70:	156.2
++temperature71:	320	
++resistance71:	145.7
++temperature72:	325	
++resistance72:	136
++temperature73:	330	
++resistance73:	127.1
++temperature74:	335	
++resistance74:	118.9
++temperature75:	340	
++resistance75:	111.4
++temperature76:	345	
++resistance76:	104.4
++temperature77:	350	
++resistance77:	98
++temperature78:	360	
++resistance78:	78
++
++# Custom linear-style alias for K3M configs that previously used
++# [customLinear NTC ZM3863 HNS112HC4570G0].
++[thermistor NTC ZM3863 HNS112HC4570G0 customLinear]
++temperature1:	-30	
++resistance1:	5667000
++temperature2:	-25	
++resistance2:	4105000
++temperature3:	-20	
++resistance3:	3005000
++temperature4:	-15	
++resistance4:	2221000
++temperature5:	-10	
++resistance5:	1657000
++temperature6:	-5	
++resistance6:	1248000
++temperature7:	0	
++resistance7:	947500
++temperature8:	5	
++resistance8:	725400
++temperature9:	10	
++resistance9:	559700
++temperature10:	15	
++resistance10:	435100
++temperature11:	20	
++resistance11:	340700
++temperature12:	25	
++resistance12:	268600
++temperature13:	30	
++resistance13:	213100
++temperature14:	35	
++resistance14:	170200
++temperature15:	40	
++resistance15:	136800
++temperature16:	45	
++resistance16:	110500
++temperature17:	50	
++resistance17:	89800
++temperature18:	55	
++resistance18:	73370
++temperature19:	60	
++resistance19:	60250
++temperature20:	65	
++resistance20:	49720
++temperature21:	70	
++resistance21:	41230
++temperature22:	75	
++resistance22:	34350
++temperature23:	80	
++resistance23:	28750
++temperature24:	85	
++resistance24:	24160
++temperature25:	90	
++resistance25:	20390
++temperature26:	95	
++resistance26:	17270
++temperature27:	100	
++resistance27:	14690
++temperature28:	105	
++resistance28:	12540
++temperature29:	110	
++resistance29:	10750
++temperature30:	115	
++resistance30:	9242
++temperature31:	120	
++resistance31:	7973
++temperature32:	125	
++resistance32:	6902
++temperature33:	130	
++resistance33:	5993
++temperature34:	135	
++resistance34:	5220
++temperature35:	140	
++resistance35:	4560
++temperature36:	145	
++resistance36:	3995
++temperature37:	150	
++resistance37:	3510
++temperature38:	155	
++resistance38:	3093
++temperature39:	160	
++resistance39:	2732
++temperature40:	165	
++resistance40:	2419
++temperature41:	170	
++resistance41:	2148
++temperature42:	175	
++resistance42:	1911
++temperature43:	180	
++resistance43:	1705
++temperature44:	185	
++resistance44:	1525
++temperature45:	190	
++resistance45:	1366
++temperature46:	195	
++resistance46:	1227
++temperature47:	200	
++resistance47:	1104
++temperature48:	205	
++resistance48:	995.5
++temperature49:	210	
++resistance49:	899.5
++temperature50:	215	
++resistance50:	814.4
++temperature51:	220	
++resistance51:	738.6
++temperature52:	225	
++resistance52:	671.2
++temperature53:	230	
++resistance53:	611
++temperature54:	235	
++resistance54:	557.2
++temperature55:	240	
++resistance55:	509
++temperature56:	245	
++resistance56:	465.8
++temperature57:	250	
++resistance57:	426.9
++temperature58:	255	
++resistance58:	391.8
++temperature59:	260	
++resistance59:	360.3
++temperature60:	265	
++resistance60:	331.7
++temperature61:	270	
++resistance61:	305.9
++temperature62:	275	
++resistance62:	282.5
++temperature63:	280	
++resistance63:	261.2
++temperature64:	285	
++resistance64:	241.9
++temperature65:	290	
++resistance65:	224.3
++temperature66:	295	
++resistance66:	208.3
++temperature67:	300	
++resistance67:	193.6
++temperature68:	305	
++resistance68:	180
++temperature69:	310	
++resistance69:	167.6
++temperature70:	315	
++resistance70:	156.2
++temperature71:	320	
++resistance71:	145.7
++temperature72:	325	
++resistance72:	136
++temperature73:	330	
++resistance73:	127.1
++temperature74:	335	
++resistance74:	118.9
++temperature75:	340	
++resistance75:	111.4
++temperature76:	345	
++resistance76:	104.4
++temperature77:	350	
++resistance77:	98
++temperature78:	360	
++resistance78:	78
+diff --git a/klippy/extras/test_filament_tracker.py b/klippy/extras/test_filament_tracker.py
+new file mode 100644
+index 00000000..ccca4f6c
+--- /dev/null
++++ b/klippy/extras/test_filament_tracker.py
+@@ -0,0 +1,1019 @@
++import unittest
++
++import extras.filament_tracker as tracker
++
++
++class FakeReactor:
++    NOW = 0.0
++    NEVER = 1e16
++
++    def __init__(self):
++        self.time = 0.0
++        self._timers = {}  # callback -> waketime
++
++    def monotonic(self):
++        return self.time
++
++    def register_timer(self, callback):
++        self._timers[callback] = self.NEVER
++        return callback
++
++    def update_timer(self, timer_id, waketime):
++        self._timers[timer_id] = waketime
++
++    def fire_ready_timers(self):
++        """Fire all timers whose waketime <= self.time."""
++        for cb, wake in list(self._timers.items()):
++            if wake <= self.time:
++                self._timers[cb] = cb(self.time)
++
++
++class FakeExtruder:
++    """Minimal extruder stub for motion detection tests."""
++    def __init__(self):
++        self.position = 0.0
++
++    def find_past_position(self, print_time):
++        return self.position
++
++
++class FakeMcu:
++    """Minimal MCU stub providing estimated_print_time."""
++    def estimated_print_time(self, eventtime):
++        return eventtime
++
++
++class FakeButtons:
++    def __init__(self):
++        self.callbacks = []
++
++    def register_buttons(self, pins, callback):
++        self.callbacks.append((pins, callback))
++
++
++class FakeADC:
++    def __init__(self, name):
++        self.name = name
++        self.sampled = False
++        self.cb = None
++
++    def setup_adc_sample(self, *args, **kwargs):
++        self.sampled = True
++
++    def setup_adc_callback(self, period, cb):
++        self.cb = cb
++
++
++class FakePins:
++    def __init__(self):
++        self.adcs = {}
++
++    def setup_pin(self, pin_type, pin_name):
++        assert pin_type == "adc"
++        adc = FakeADC(pin_name)
++        self.adcs[pin_name] = adc
++        return adc
++
++
++class FakeTemplate:
++    """Minimal template stub for RunoutHelper."""
++    def render(self):
++        return ""
++
++
++class FakeGcodeMacro:
++    """Stub for the gcode_macro Klipper module."""
++    def load_template(self, config, key, default=""):
++        return FakeTemplate()
++
++
++class FakeGcode:
++    """Stub for the gcode Klipper object."""
++    def register_mux_command(self, cmd, key, value, func, desc=""):
++        pass
++
++    def run_script(self, script):
++        pass
++
++    def respond_info(self, msg):
++        pass
++
++
++class FakePrinter:
++    def __init__(self, signal_type):
++        self.reactor = FakeReactor()
++        self.buttons = FakeButtons()
++        self.pins = FakePins()
++        self.gcode = FakeGcode()
++        self.gcode_macro = FakeGcodeMacro()
++        self.signal_type = signal_type
++        self.event_handlers = {}
++        self.extruder = FakeExtruder()
++        self.mcu = FakeMcu()
++
++    def get_reactor(self):
++        return self.reactor
++
++    def lookup_object(self, name):
++        if name == "pins":
++            return self.pins
++        if name == "gcode":
++            return self.gcode
++        if name == "mcu":
++            return self.mcu
++        if name.startswith("extruder"):
++            return self.extruder
++        raise ValueError(name)
++
++    def load_object(self, config, name):
++        if name == "buttons":
++            return self.buttons
++        if name == "gcode_macro":
++            return self.gcode_macro
++        raise ValueError(name)
++
++    def register_event_handler(self, event, callback):
++        self.event_handlers.setdefault(event, []).append(callback)
++
++
++class FakeConfig:
++    def __init__(self, printer, values):
++        self.printer = printer
++        self.values = values
++
++    def get_printer(self):
++        return self.printer
++
++    def get_name(self):
++        return "filament_tracker"
++
++    def getfloat(self, key, default, above=None, minval=None):
++        return float(self.values.get(key, default))
++
++    def getboolean(self, key, default):
++        val = self.values.get(key)
++        if val is None:
++            return default
++        if isinstance(val, bool):
++            return val
++        return str(val).lower() in ("true", "1", "yes")
++
++    def get(self, key, default=None):
++        return self.values.get(key, default)
++
++    def error(self, msg):
++        return ValueError(msg)
++
++
++class FilamentTrackerGpioTest(unittest.TestCase):
++    def setUp(self):
++        self.printer = FakePrinter(signal_type="gpio")
++        self.config = FakeConfig(self.printer, {
++            "signal_type": "gpio",
++            "tracker_detect_pin": "PB0",
++            "tracker_encoder_pin": "PA1",
++            "absence_timeout": "1.0",
++            "pause_on_runout": False,
++        })
++
++    def test_both_open_does_not_immediately_report_absent(self):
++        """Encoder resting at 0b00 must NOT instantly declare absent."""
++        ft = tracker.FilamentTracker(self.config)
++        pins, cb = self.printer.buttons.callbacks[0]
++        # Simulate encoder activity (filament moving)
++        cb(0.1, 0b01)
++        cb(0.2, 0b11)  # block edge
++        cb(0.3, 0b01)  # block edge
++        self.assertTrue(ft.is_filament_present())
++        # Encoder rests at 0b00
++        cb(0.4, 0b00)
++        # Should still be present (edge at t=0.3, timeout=1.0)
++        self.assertTrue(ft.is_filament_present())
++
++    def test_absence_declared_after_timeout(self):
++        """After sustained both-open with no edges, absence is declared."""
++        ft = tracker.FilamentTracker(self.config)
++        reactor = self.printer.reactor
++        pins, cb = self.printer.buttons.callbacks[0]
++        # Some activity then both-open
++        cb(0.1, 0b01)
++        cb(0.2, 0b00)
++        self.assertTrue(ft.is_filament_present())
++        # Advance past absence timeout and fire the timer
++        reactor.time = 1.3  # 0.2 + 1.0 + margin
++        reactor.fire_ready_timers()
++        self.assertFalse(ft.is_filament_present())
++
++    def test_edge_during_timeout_cancels_absence(self):
++        """An encoder edge while the absence timer is running resets it."""
++        ft = tracker.FilamentTracker(self.config)
++        reactor = self.printer.reactor
++        pins, cb = self.printer.buttons.callbacks[0]
++        cb(0.1, 0b01)
++        cb(0.2, 0b00)  # starts absence timer
++        self.assertTrue(ft.is_filament_present())
++        # Edge arrives before timeout
++        cb(0.5, 0b10)  # block channel active
++        self.assertTrue(ft.is_filament_present())
++        # Original timeout fires — should still be present
++        reactor.time = 1.3
++        reactor.fire_ready_timers()
++        self.assertTrue(ft.is_filament_present())
++
++    def test_pulses_counted_on_block_edges(self):
++        ft = tracker.FilamentTracker(self.config)
++        pins, cb = self.printer.buttons.callbacks[0]
++        # Toggle block pin (bit 1) to generate pulses
++        cb(0.1, 0b00)
++        cb(0.2, 0b10)  # block rising
++        cb(0.3, 0b00)  # block falling
++        cb(0.4, 0b10)  # block rising
++        self.assertEqual(ft.get_status()["encoder_pulse"], 3)
++
++    def test_no_false_absent_at_any_rest_position(self):
++        """All four encoder rest positions with recent activity stay present."""
++        for rest_state in [0b00, 0b01, 0b10, 0b11]:
++            ft = tracker.FilamentTracker(self.config)
++            self.printer.buttons.callbacks.clear()
++            ft2 = tracker.FilamentTracker(self.config)
++            pins, cb = self.printer.buttons.callbacks[0]
++            # Generate some activity
++            cb(0.1, 0b01)
++            cb(0.2, 0b11)
++            cb(0.3, 0b01)
++            # Rest at arbitrary position
++            cb(0.4, rest_state)
++            self.assertTrue(ft2.is_filament_present(),
++                            f"False absent at rest state 0b{rest_state:02b}")
++
++
++class FilamentTrackerAdcTest(unittest.TestCase):
++    def setUp(self):
++        self.printer = FakePrinter(signal_type="adc")
++        self.config = FakeConfig(self.printer, {
++            "signal_type": "adc",
++            "tracker_detect_pin": "adc0",
++            "tracker_encoder_pin": "adc1",
++            "absence_timeout": "1.0",
++            "pause_on_runout": False,
++        })
++
++    def test_one_channel_closed_is_present(self):
++        ft = tracker.FilamentTracker(self.config)
++        break_adc = self.printer.pins.adcs["adc0"]
++        block_adc = self.printer.pins.adcs["adc1"]
++        # One channel below threshold -> present
++        break_adc.cb(10.0, 0.5)
++        block_adc.cb(10.0, 0.8)
++        self.assertTrue(ft.is_filament_present())
++
++    def test_both_open_does_not_immediately_report_absent(self):
++        """Both above threshold should NOT instantly declare absent."""
++        ft = tracker.FilamentTracker(self.config)
++        break_adc = self.printer.pins.adcs["adc0"]
++        block_adc = self.printer.pins.adcs["adc1"]
++        # Generate an edge first (so _last_edge_time is set)
++        block_adc.cb(10.0, 0.2)
++        block_adc.cb(10.1, 0.9)  # edge at t=10.1
++        # Both open, but within timeout
++        break_adc.cb(10.2, 0.9)
++        block_adc.cb(10.2, 0.9)
++        self.assertTrue(ft.is_filament_present())
++
++    def test_absence_after_timeout(self):
++        """Both open for > absence_timeout -> absent."""
++        ft = tracker.FilamentTracker(self.config)
++        break_adc = self.printer.pins.adcs["adc0"]
++        block_adc = self.printer.pins.adcs["adc1"]
++        # Edge at t=10.0
++        block_adc.cb(10.0, 0.9)  # encoder_signal_state 0->1, edge
++        # Both open, well past timeout (t=20.0 >> 10.0 + 1.0)
++        break_adc.cb(20.0, 0.9)
++        block_adc.cb(20.0, 0.9)
++        self.assertFalse(ft.is_filament_present())
++
++    def test_encoder_pulse_counts_block_edges(self):
++        ft = tracker.FilamentTracker(self.config)
++        block_adc = self.printer.pins.adcs["adc1"]
++        # encoder_signal_state starts at 1 (open), so first 0.9 is no edge
++        block_adc.cb(0.0, 0.2)  # closed -> state 0 (edge 1)
++        block_adc.cb(0.1, 0.9)  # open   -> state 1 (edge 2)
++        block_adc.cb(0.2, 0.2)  # closed -> state 0 (edge 3)
++        self.assertEqual(ft.get_status()["encoder_pulse"], 3)
++
++    def test_recent_edge_keeps_present_despite_both_open(self):
++        """Even when both channels read open, a recent edge keeps present."""
++        ft = tracker.FilamentTracker(self.config)
++        break_adc = self.printer.pins.adcs["adc0"]
++        block_adc = self.printer.pins.adcs["adc1"]
++        # Create a real edge: close then open
++        block_adc.cb(4.9, 0.2)  # closed -> state 0 (edge)
++        block_adc.cb(5.0, 0.9)  # open   -> state 1 (edge at t=5.0)
++        # Both open at t=5.5 (within 1.0s timeout)
++        break_adc.cb(5.5, 0.9)
++        block_adc.cb(5.5, 0.9)
++        self.assertTrue(ft.is_filament_present())
++        # Still open at t=6.5 (past timeout: 6.5 - 5.0 = 1.5 > 1.0)
++        break_adc.cb(6.5, 0.9)
++        block_adc.cb(6.5, 0.9)
++        self.assertFalse(ft.is_filament_present())
++
++
++class FilamentTrackerAdcInvertedTest(unittest.TestCase):
++    """Tests for adc_inverted=True (low voltage = open, e.g. RDM hub)."""
++
++    def setUp(self):
++        self.printer = FakePrinter(signal_type="adc")
++        self.config = FakeConfig(self.printer, {
++            "signal_type": "adc",
++            "tracker_detect_pin": "adc0",
++            "tracker_encoder_pin": "adc1",
++            "absence_timeout": "1.0",
++            "adc_inverted": True,
++            "pause_on_runout": False,
++        })
++
++    def test_both_low_is_absent(self):
++        """With adc_inverted, low voltage on both pins = open = absent."""
++        ft = tracker.FilamentTracker(self.config)
++        detect_adc = self.printer.pins.adcs["adc0"]
++        encoder_adc = self.printer.pins.adcs["adc1"]
++        # Both low (open in inverted mode), past timeout
++        detect_adc.cb(20.0, 0.04)
++        encoder_adc.cb(20.0, 0.04)
++        self.assertFalse(ft.is_filament_present())
++
++    def test_high_voltage_is_present(self):
++        """With adc_inverted, high voltage = closed = filament present."""
++        ft = tracker.FilamentTracker(self.config)
++        detect_adc = self.printer.pins.adcs["adc0"]
++        encoder_adc = self.printer.pins.adcs["adc1"]
++        detect_adc.cb(10.0, 0.9)  # high = closed in inverted mode
++        encoder_adc.cb(10.0, 0.04)
++        self.assertTrue(ft.is_filament_present())
++
++    def test_encoder_edges_counted_on_inverted(self):
++        """Encoder pulses counted correctly with inverted polarity."""
++        ft = tracker.FilamentTracker(self.config)
++        encoder_adc = self.printer.pins.adcs["adc1"]
++        # Init state: low (open, encoder_signal_state=1)
++        # Go high (closed, state 0) → edge 1
++        encoder_adc.cb(0.1, 0.9)
++        # Go low (open, state 1) → edge 2
++        encoder_adc.cb(0.2, 0.04)
++        # Go high (closed, state 0) → edge 3
++        encoder_adc.cb(0.3, 0.9)
++        self.assertEqual(ft.get_status()["encoder_pulse"], 3)
++
++    def test_absence_needs_timeout_inverted(self):
++        """Recent edge prevents absence even with both low."""
++        ft = tracker.FilamentTracker(self.config)
++        detect_adc = self.printer.pins.adcs["adc0"]
++        encoder_adc = self.printer.pins.adcs["adc1"]
++        # Create a real edge
++        encoder_adc.cb(5.0, 0.9)   # high → closed, edge
++        encoder_adc.cb(5.1, 0.04)  # low → open, edge at t=5.1
++        # Both low at t=5.5 (within 1.0s timeout)
++        detect_adc.cb(5.5, 0.04)
++        encoder_adc.cb(5.5, 0.04)
++        self.assertTrue(ft.is_filament_present())
++        # Past timeout: t=6.5 - 5.1 = 1.4 > 1.0
++        detect_adc.cb(6.5, 0.04)
++        encoder_adc.cb(6.5, 0.04)
++        self.assertFalse(ft.is_filament_present())
++
++
++class FilamentTrackerGpioSwitchModeTest(unittest.TestCase):
++    """Tests for detect_pin_is_switch=True with GPIO signal type."""
++
++    def setUp(self):
++        self.printer = FakePrinter(signal_type="gpio")
++        self.config = FakeConfig(self.printer, {
++            "signal_type": "gpio",
++            "tracker_detect_pin": "PB0",
++            "tracker_encoder_pin": "PA1",
++            "absence_timeout": "1.0",
++            "detect_pin_is_switch": True,
++            "pause_on_runout": False,
++        })
++
++    def test_detect_open_immediately_absent(self):
++        """When detect pin is 0, filament absent regardless of encoder."""
++        ft = tracker.FilamentTracker(self.config)
++        _, cb = self.printer.buttons.callbacks[0]
++        # Detect=1, encoder=1 → present
++        cb(0.1, 0b11)
++        self.assertTrue(ft.is_filament_present())
++        # Detect=0, encoder=1 → absent immediately (no timeout)
++        cb(0.2, 0b10)
++        self.assertFalse(ft.is_filament_present())
++
++    def test_detect_closed_present_regardless_of_encoder(self):
++        """When detect pin is 1, filament present even if encoder is 0."""
++        ft = tracker.FilamentTracker(self.config)
++        _, cb = self.printer.buttons.callbacks[0]
++        # Detect=1, encoder=0
++        cb(0.1, 0b01)
++        self.assertTrue(ft.is_filament_present())
++        # Detect=1, encoder=1
++        cb(0.2, 0b11)
++        self.assertTrue(ft.is_filament_present())
++
++    def test_encoder_pulses_still_counted(self):
++        """Encoder edges are counted even in switch mode."""
++        ft = tracker.FilamentTracker(self.config)
++        _, cb = self.printer.buttons.callbacks[0]
++        cb(0.1, 0b01)  # detect=1, encoder=0
++        cb(0.2, 0b11)  # encoder 0→1 (edge)
++        cb(0.3, 0b01)  # encoder 1→0 (edge)
++        cb(0.4, 0b11)  # encoder 0→1 (edge)
++        self.assertEqual(ft.get_status()["encoder_pulse"], 3)
++
++    def test_no_absence_timer_in_switch_mode(self):
++        """Switch mode should not use the absence timer at all."""
++        ft = tracker.FilamentTracker(self.config)
++        _, cb = self.printer.buttons.callbacks[0]
++        cb(0.1, 0b01)
++        # Detect=0, encoder=0 → absent immediately, no timer needed
++        cb(0.2, 0b00)
++        self.assertFalse(ft.is_filament_present())
++
++
++class FilamentTrackerAdcSwitchModeTest(unittest.TestCase):
++    """Tests for detect_pin_is_switch=True with ADC signal type."""
++
++    def setUp(self):
++        self.printer = FakePrinter(signal_type="adc")
++        self.config = FakeConfig(self.printer, {
++            "signal_type": "adc",
++            "tracker_detect_pin": "adc0",
++            "tracker_encoder_pin": "adc1",
++            "absence_timeout": "1.0",
++            "detect_pin_is_switch": True,
++            "pause_on_runout": False,
++        })
++
++    def test_detect_open_immediately_absent(self):
++        """Detect pin open → immediate absent even if encoder is closed."""
++        ft = tracker.FilamentTracker(self.config)
++        detect_adc = self.printer.pins.adcs["adc0"]
++        encoder_adc = self.printer.pins.adcs["adc1"]
++        # Detect closed, encoder closed → present
++        detect_adc.cb(10.0, 0.3)
++        encoder_adc.cb(10.0, 0.3)
++        self.assertTrue(ft.is_filament_present())
++        # Detect open, encoder still closed → absent immediately
++        detect_adc.cb(10.1, 0.9)
++        self.assertFalse(ft.is_filament_present())
++
++    def test_detect_closed_present_with_encoder_open(self):
++        """Detect pin closed → present even if encoder reads open."""
++        ft = tracker.FilamentTracker(self.config)
++        detect_adc = self.printer.pins.adcs["adc0"]
++        encoder_adc = self.printer.pins.adcs["adc1"]
++        # Detect closed (0.3 < 0.70), encoder open (0.9 > 0.70)
++        detect_adc.cb(10.0, 0.3)
++        encoder_adc.cb(10.0, 0.9)
++        self.assertTrue(ft.is_filament_present())
++
++    def test_encoder_pulses_counted_in_switch_mode(self):
++        """Encoder edges are counted regardless of switch mode."""
++        ft = tracker.FilamentTracker(self.config)
++        detect_adc = self.printer.pins.adcs["adc0"]
++        encoder_adc = self.printer.pins.adcs["adc1"]
++        detect_adc.cb(0.0, 0.3)  # detect closed (present)
++        # encoder_signal_state starts at 1, so start with close
++        encoder_adc.cb(0.1, 0.2)  # closed → state 0 (edge 1)
++        encoder_adc.cb(0.2, 0.9)  # open   → state 1 (edge 2)
++        encoder_adc.cb(0.3, 0.2)  # closed → state 0 (edge 3)
++        self.assertEqual(ft.get_status()["encoder_pulse"], 3)
++
++    def test_no_timeout_dependency(self):
++        """Absence should not depend on timeout in switch mode."""
++        ft = tracker.FilamentTracker(self.config)
++        detect_adc = self.printer.pins.adcs["adc0"]
++        encoder_adc = self.printer.pins.adcs["adc1"]
++        # Recent encoder edge, but detect open → still absent
++        encoder_adc.cb(10.0, 0.9)  # edge at t=10.0
++        detect_adc.cb(10.05, 0.9)  # detect open at t=10.05 (within timeout)
++        self.assertFalse(ft.is_filament_present())
++
++
++class FilamentDistanceTrackingTest(unittest.TestCase):
++    """Tests for filament_distance (cumulative mm) tracking."""
++
++    def test_filament_distance_updates_on_gpio_pulses(self):
++        """filament_distance = encoder_pulse × length_per_pulse."""
++        printer = FakePrinter(signal_type="gpio")
++        config = FakeConfig(printer, {
++            "signal_type": "gpio",
++            "tracker_detect_pin": "PB0",
++            "tracker_encoder_pin": "PA1",
++            "absence_timeout": "1.0",
++            "length_per_pulse": "0.5",
++            "pause_on_runout": False,
++        })
++        ft = tracker.FilamentTracker(config)
++        _, cb = printer.buttons.callbacks[0]
++        cb(0.1, 0b00)
++        cb(0.2, 0b10)  # encoder edge 1
++        cb(0.3, 0b00)  # encoder edge 2
++        cb(0.4, 0b10)  # encoder edge 3
++        self.assertEqual(ft.get_status()["encoder_pulse"], 3)
++        self.assertAlmostEqual(ft.get_status()["filament_distance"], 1.5)
++
++    def test_filament_distance_updates_on_adc_pulses(self):
++        """filament_distance tracks ADC encoder edges too."""
++        printer = FakePrinter(signal_type="adc")
++        config = FakeConfig(printer, {
++            "signal_type": "adc",
++            "tracker_detect_pin": "adc0",
++            "tracker_encoder_pin": "adc1",
++            "absence_timeout": "1.0",
++            "length_per_pulse": "0.25",
++            "pause_on_runout": False,
++        })
++        ft = tracker.FilamentTracker(config)
++        encoder_adc = printer.pins.adcs["adc1"]
++        # encoder_signal_state starts at 1 (open), so start with close
++        encoder_adc.cb(0.0, 0.2)  # close → state 0 (edge 1)
++        encoder_adc.cb(0.1, 0.9)  # open  → state 1 (edge 2)
++        encoder_adc.cb(0.2, 0.2)  # close → state 0 (edge 3)
++        encoder_adc.cb(0.3, 0.9)  # open  → state 1 (edge 4)
++        self.assertEqual(ft.get_status()["encoder_pulse"], 4)
++        self.assertAlmostEqual(ft.get_status()["filament_distance"], 1.0)
++
++    def test_filament_distance_zero_when_no_length_per_pulse(self):
++        """filament_distance stays 0 when length_per_pulse is not set."""
++        printer = FakePrinter(signal_type="gpio")
++        config = FakeConfig(printer, {
++            "signal_type": "gpio",
++            "tracker_detect_pin": "PB0",
++            "tracker_encoder_pin": "PA1",
++            "absence_timeout": "1.0",
++            "pause_on_runout": False,
++        })
++        ft = tracker.FilamentTracker(config)
++        _, cb = printer.buttons.callbacks[0]
++        cb(0.1, 0b10)  # encoder 0→1 (edge 1)
++        cb(0.2, 0b00)  # encoder 1→0 (edge 2)
++        self.assertEqual(ft.get_status()["encoder_pulse"], 2)
++        self.assertAlmostEqual(ft.get_status()["filament_distance"], 0.0)
++
++    def test_status_exposes_detection_length_config(self):
++        """detection_length in status reflects the config threshold."""
++        printer = FakePrinter(signal_type="gpio")
++        config = FakeConfig(printer, {
++            "signal_type": "gpio",
++            "tracker_detect_pin": "PB0",
++            "tracker_encoder_pin": "PA1",
++            "absence_timeout": "1.0",
++            "detection_length": "10.0",
++            "pause_on_runout": False,
++        })
++        ft = tracker.FilamentTracker(config)
++        self.assertAlmostEqual(ft.get_status()["detection_length"], 10.0)
++
++    def test_pos_record_uses_filament_distance(self):
++        """start_pos_record/get_pos_record track filament_distance delta."""
++        printer = FakePrinter(signal_type="gpio")
++        config = FakeConfig(printer, {
++            "signal_type": "gpio",
++            "tracker_detect_pin": "PB0",
++            "tracker_encoder_pin": "PA1",
++            "absence_timeout": "1.0",
++            "length_per_pulse": "1.0",
++            "pause_on_runout": False,
++        })
++        ft = tracker.FilamentTracker(config)
++        _, cb = printer.buttons.callbacks[0]
++        cb(0.1, 0b10)  # 1 pulse = 1mm
++        ft.start_pos_record("start")
++        cb(0.2, 0b00)  # 2 pulses = 2mm
++        cb(0.3, 0b10)  # 3 pulses = 3mm
++        self.assertAlmostEqual(ft.get_pos_record("start"), 2.0)
++
++
++class MotionDetectionGpioTest(unittest.TestCase):
++    """Tests for motion detection (clog/jam sensing) with GPIO."""
++
++    def _make_tracker(self, **overrides):
++        """Helper to create a tracker with motion detection enabled."""
++        printer = FakePrinter(signal_type="gpio")
++        values = {
++            "signal_type": "gpio",
++            "tracker_detect_pin": "PB0",
++            "tracker_encoder_pin": "PA1",
++            "absence_timeout": "1.0",
++            "extruder": "extruder",
++            "detection_length": "7.0",
++            "length_per_pulse": "1.0",
++            "pause_on_runout": False,
++        }
++        values.update(overrides)
++        config = FakeConfig(printer, values)
++        ft = tracker.FilamentTracker(config)
++        return ft, printer
++
++    def _fire_ready(self, printer):
++        """Simulate klippy:ready event."""
++        for cb in printer.event_handlers.get('klippy:ready', []):
++            cb()
++
++    def test_motion_detection_registers_events(self):
++        """When extruder is configured, ready/printing events are registered."""
++        ft, printer = self._make_tracker()
++        self.assertIn('klippy:ready', printer.event_handlers)
++        self.assertIn('idle_timeout:printing', printer.event_handlers)
++        self.assertIn('idle_timeout:ready', printer.event_handlers)
++        self.assertIn('idle_timeout:idle', printer.event_handlers)
++
++    def test_motion_detection_not_registered_without_extruder(self):
++        """Without extruder config, no motion detection events are registered."""
++        printer = FakePrinter(signal_type="gpio")
++        config = FakeConfig(printer, {
++            "signal_type": "gpio",
++            "tracker_detect_pin": "PB0",
++            "tracker_encoder_pin": "PA1",
++            "absence_timeout": "1.0",
++            "pause_on_runout": False,
++        })
++        ft = tracker.FilamentTracker(config)
++        # idle_timeout events are only registered for motion detection
++        self.assertNotIn('idle_timeout:printing', printer.event_handlers)
++        self.assertFalse(ft._motion_detection_enabled)
++
++    def test_clog_detected_when_extruder_moves_past_threshold(self):
++        """Extruder moves > detection_length without encoder → clog."""
++        ft, printer = self._make_tracker(detection_length="5.0")
++        self._fire_ready(printer)
++        # Extruder starts at 0, runout_pos = 0 + 5 = 5
++        # Simulate printing start
++        for cb in printer.event_handlers.get('idle_timeout:printing', []):
++            cb(0.0)
++        # Extruder advances past threshold (no encoder activity)
++        printer.extruder.position = 6.0
++        printer.reactor.time = 1.0
++        printer.reactor.fire_ready_timers()
++        # RunoutHelper should have been told filament is NOT present (clog)
++        self.assertFalse(ft.runout_helper.filament_present)
++
++    def test_encoder_pulse_prevents_clog_detection(self):
++        """Encoder activity resets the runout window, preventing false clog."""
++        ft, printer = self._make_tracker(detection_length="5.0")
++        self._fire_ready(printer)
++        for cb in printer.event_handlers.get('idle_timeout:printing', []):
++            cb(0.0)
++        _, gpio_cb = printer.buttons.callbacks[0]
++        # Extruder moves to 4.0 (under threshold)
++        printer.extruder.position = 4.0
++        # Encoder pulse → resets runout_pos to 4.0 + 5.0 = 9.0
++        gpio_cb(1.0, 0b10)  # encoder edge
++        # Extruder moves to 8.0 (< 9.0, still OK)
++        printer.extruder.position = 8.0
++        printer.reactor.time = 2.0
++        printer.reactor.fire_ready_timers()
++        # Should be present — encoder kept up
++        self.assertTrue(ft.runout_helper.filament_present)
++
++    def test_presence_absent_still_signals_runout_with_motion_enabled(self):
++        """Physical filament removal signals RunoutHelper even with motion on."""
++        ft, printer = self._make_tracker(detect_pin_is_switch=True)
++        self._fire_ready(printer)
++        _, gpio_cb = printer.buttons.callbacks[0]
++        # Filament present initially
++        gpio_cb(0.1, 0b01)  # detect=1
++        self.assertTrue(ft.is_filament_present())
++        # Filament physically removed
++        gpio_cb(0.2, 0b00)  # detect=0
++        self.assertFalse(ft.is_filament_present())
++        # RunoutHelper should know immediately
++        self.assertFalse(ft.runout_helper.filament_present)
++
++    def test_presence_present_does_not_signal_runout_helper_with_motion(self):
++        """With motion detection on, presence→present doesn't tell RunoutHelper."""
++        ft, printer = self._make_tracker(detect_pin_is_switch=True)
++        self._fire_ready(printer)
++        _, gpio_cb = printer.buttons.callbacks[0]
++        # Start absent
++        self.assertFalse(ft.runout_helper.filament_present)
++        # Detect switch sees filament (but no encoder pulse yet)
++        gpio_cb(0.1, 0b01)  # detect=1
++        self.assertTrue(ft.is_filament_present())
++        # RunoutHelper still False — only encoder pulses signal presence
++        self.assertFalse(ft.runout_helper.filament_present)
++        # Encoder pulse → NOW RunoutHelper is True
++        gpio_cb(0.2, 0b11)  # detect=1, encoder=1 (edge)
++        self.assertTrue(ft.runout_helper.filament_present)
++
++    def test_timer_stopped_when_not_printing(self):
++        """Motion detection timer is NEVER when not printing."""
++        ft, printer = self._make_tracker()
++        self._fire_ready(printer)
++        # Timer registered at NEVER initially
++        timer = ft._extruder_pos_update_timer
++        self.assertEqual(printer.reactor._timers[timer], printer.reactor.NEVER)
++        # Start printing → timer activated
++        for cb in printer.event_handlers.get('idle_timeout:printing', []):
++            cb(0.0)
++        self.assertNotEqual(printer.reactor._timers[timer],
++                            printer.reactor.NEVER)
++        # Stop printing → timer back to NEVER
++        for cb in printer.event_handlers.get('idle_timeout:ready', []):
++            cb(0.0)
++        self.assertEqual(printer.reactor._timers[timer], printer.reactor.NEVER)
++
++    def test_encoder_pulse_signals_present_to_runout_helper(self):
++        """Each encoder pulse tells RunoutHelper filament is present."""
++        ft, printer = self._make_tracker()
++        self._fire_ready(printer)
++        _, gpio_cb = printer.buttons.callbacks[0]
++        self.assertFalse(ft.runout_helper.filament_present)
++        # Encoder edge
++        gpio_cb(1.0, 0b10)
++        self.assertTrue(ft.runout_helper.filament_present)
++
++
++class MotionDetectionAdcTest(unittest.TestCase):
++    """Tests for motion detection with ADC signal type."""
++
++    def _make_tracker(self, **overrides):
++        printer = FakePrinter(signal_type="adc")
++        values = {
++            "signal_type": "adc",
++            "tracker_detect_pin": "adc0",
++            "tracker_encoder_pin": "adc1",
++            "absence_timeout": "1.0",
++            "extruder": "extruder",
++            "detection_length": "5.0",
++            "length_per_pulse": "0.5",
++            "pause_on_runout": False,
++        }
++        values.update(overrides)
++        config = FakeConfig(printer, values)
++        ft = tracker.FilamentTracker(config)
++        return ft, printer
++
++    def _fire_ready(self, printer):
++        for cb in printer.event_handlers.get('klippy:ready', []):
++            cb()
++
++    def test_adc_clog_detected(self):
++        """ADC mode: extruder past threshold without encoder → clog."""
++        ft, printer = self._make_tracker()
++        self._fire_ready(printer)
++        for cb in printer.event_handlers.get('idle_timeout:printing', []):
++            cb(0.0)
++        # Extruder moves past detection_length (5.0)
++        printer.extruder.position = 6.0
++        printer.reactor.time = 1.0
++        printer.reactor.fire_ready_timers()
++        self.assertFalse(ft.runout_helper.filament_present)
++
++    def test_adc_encoder_pulse_resets_runout_window(self):
++        """ADC encoder edge resets the runout window."""
++        ft, printer = self._make_tracker()
++        self._fire_ready(printer)
++        for cb in printer.event_handlers.get('idle_timeout:printing', []):
++            cb(0.0)
++        encoder_adc = printer.pins.adcs["adc1"]
++        # Encoder pulse at extruder pos 3.0 → new window = 3.0 + 5.0 = 8.0
++        printer.extruder.position = 3.0
++        encoder_adc.cb(0.9, 0.2)  # close → state 0 (edge)
++        encoder_adc.cb(1.0, 0.9)  # open  → state 1 (edge, resets window)
++        # Extruder at 7.0 (< 8.0) → no clog
++        printer.extruder.position = 7.0
++        printer.reactor.time = 2.0
++        printer.reactor.fire_ready_timers()
++        self.assertTrue(ft.runout_helper.filament_present)
++
++    def test_adc_filament_distance_tracks_correctly(self):
++        """ADC mode: filament_distance = pulses × length_per_pulse."""
++        ft, printer = self._make_tracker()
++        self._fire_ready(printer)
++        encoder_adc = printer.pins.adcs["adc1"]
++        # encoder_signal_state starts at 1 (open), so start with close
++        encoder_adc.cb(0.0, 0.2)  # close → state 0 (edge 1)
++        encoder_adc.cb(0.1, 0.9)  # open  → state 1 (edge 2)
++        self.assertAlmostEqual(
++            ft.get_status()["filament_distance"], 1.0)  # 2 × 0.5
++
++
++class RunoutHelperIntegrationTest(unittest.TestCase):
++    """Verify RunoutHelper fields are exposed in status and track presence."""
++
++    def test_status_includes_filament_detected_and_enabled(self):
++        """get_status() must include RunoutHelper's fields."""
++        printer = FakePrinter(signal_type="gpio")
++        config = FakeConfig(printer, {
++            "signal_type": "gpio",
++            "tracker_detect_pin": "PB0",
++            "tracker_encoder_pin": "PA1",
++            "absence_timeout": "1.0",
++            "pause_on_runout": False,
++        })
++        ft = tracker.FilamentTracker(config)
++        status = ft.get_status()
++        self.assertIn("filament_detected", status)
++        self.assertIn("enabled", status)
++        self.assertIn("filament_present", status)
++        self.assertIn("encoder_pulse", status)
++        self.assertIn("filament_distance", status)
++        self.assertIn("detection_length", status)
++
++    def test_runout_helper_tracks_presence(self):
++        """RunoutHelper.filament_present must follow tracker transitions."""
++        printer = FakePrinter(signal_type="gpio")
++        config = FakeConfig(printer, {
++            "signal_type": "gpio",
++            "tracker_detect_pin": "PB0",
++            "tracker_encoder_pin": "PA1",
++            "absence_timeout": "1.0",
++            "pause_on_runout": False,
++        })
++        ft = tracker.FilamentTracker(config)
++        _, cb = printer.buttons.callbacks[0]
++
++        self.assertFalse(ft.runout_helper.filament_present)
++
++        # Encoder activity → present
++        cb(1.0, 0b01)
++        self.assertTrue(ft.runout_helper.filament_present)
++
++        # Both open → schedule absence
++        cb(1.1, 0b00)
++        printer.reactor.time = 2.2
++        printer.reactor.fire_ready_timers()
++        self.assertFalse(ft.runout_helper.filament_present)
++
++    def test_sensor_enabled_defaults_true(self):
++        """sensor_enabled on RunoutHelper must default to True."""
++        printer = FakePrinter(signal_type="gpio")
++        config = FakeConfig(printer, {
++            "signal_type": "gpio",
++            "tracker_detect_pin": "PB0",
++            "tracker_encoder_pin": "PA1",
++            "absence_timeout": "1.0",
++            "pause_on_runout": False,
++        })
++        ft = tracker.FilamentTracker(config)
++        self.assertTrue(ft.runout_helper.sensor_enabled)
++
++
++class AreBothChannelsOpenGpioTest(unittest.TestCase):
++    """Tests for are_both_channels_open property with GPIO signal type."""
++
++    def setUp(self):
++        self.printer = FakePrinter(signal_type="gpio")
++        self.config = FakeConfig(self.printer, {
++            "signal_type": "gpio",
++            "tracker_detect_pin": "PB0",
++            "tracker_encoder_pin": "PA1",
++            "absence_timeout": "5.0",
++            "pause_on_runout": False,
++        })
++
++    def test_both_open_returns_true(self):
++        """Both channels open (state_bits=0) → are_both_channels_open is True."""
++        ft = tracker.FilamentTracker(self.config)
++        gpio_cb = self.printer.buttons.callbacks[0][1]
++        # First give an edge so filament_present is latched
++        gpio_cb(10.0, 0b01)
++        self.assertTrue(ft.is_filament_present())
++        # Now both open
++        gpio_cb(10.1, 0b00)
++        # filament_present is still True (timeout hasn't expired)
++        self.assertTrue(ft.is_filament_present())
++        # But are_both_channels_open is instantly True
++        self.assertTrue(ft.are_both_channels_open)
++
++    def test_one_channel_closed_returns_false(self):
++        """At least one channel closed → are_both_channels_open is False."""
++        ft = tracker.FilamentTracker(self.config)
++        gpio_cb = self.printer.buttons.callbacks[0][1]
++        gpio_cb(10.0, 0b01)  # detect closed
++        self.assertFalse(ft.are_both_channels_open)
++        gpio_cb(10.1, 0b10)  # encoder closed
++        self.assertFalse(ft.are_both_channels_open)
++        gpio_cb(10.2, 0b11)  # both closed
++        self.assertFalse(ft.are_both_channels_open)
++
++    def test_instant_vs_debounced_during_retraction(self):
++        """Key scenario: after retraction, instant detects before debounced."""
++        ft = tracker.FilamentTracker(self.config)
++        gpio_cb = self.printer.buttons.callbacks[0][1]
++        # Simulate encoder edges during retraction
++        for t in range(20):
++            gpio_cb(10.0 + t * 0.05, 0b01 if t % 2 == 0 else 0b10)
++        self.assertTrue(ft.is_filament_present())
++        # Filament tail passes — both channels open
++        gpio_cb(11.0, 0b00)
++        # Debounced: still "present" (timeout is 5s)
++        self.assertTrue(ft.is_filament_present())
++        # Instant: immediately "clear"
++        self.assertTrue(ft.are_both_channels_open)
++
++
++class AreBothChannelsOpenAdcTest(unittest.TestCase):
++    """Tests for are_both_channels_open property with ADC signal type."""
++
++    def setUp(self):
++        self.printer = FakePrinter(signal_type="adc")
++        self.config = FakeConfig(self.printer, {
++            "signal_type": "adc",
++            "tracker_detect_pin": "adc0",
++            "tracker_encoder_pin": "adc1",
++            "absence_timeout": "5.0",
++            "pause_on_runout": False,
++        })
++
++    def test_both_above_threshold_returns_true(self):
++        """Both ADC channels above threshold → both open → True."""
++        ft = tracker.FilamentTracker(self.config)
++        detect_adc = self.printer.pins.adcs["adc0"]
++        encoder_adc = self.printer.pins.adcs["adc1"]
++        # Give an edge first
++        encoder_adc.cb(10.0, 0.2)  # closed
++        encoder_adc.cb(10.1, 0.9)  # open, edge
++        # Both open
++        detect_adc.cb(10.2, 0.9)
++        encoder_adc.cb(10.2, 0.9)
++        self.assertTrue(ft.are_both_channels_open)
++        # But debounced still present (within 5s timeout)
++        self.assertTrue(ft.is_filament_present())
++
++    def test_one_below_threshold_returns_false(self):
++        """One channel below threshold → not both open → False."""
++        ft = tracker.FilamentTracker(self.config)
++        detect_adc = self.printer.pins.adcs["adc0"]
++        encoder_adc = self.printer.pins.adcs["adc1"]
++        detect_adc.cb(10.0, 0.5)   # closed
++        encoder_adc.cb(10.0, 0.9)  # open
++        self.assertFalse(ft.are_both_channels_open)
++
++    def test_inverted_both_low_returns_true(self):
++        """adc_inverted=True: both below threshold → both open → True."""
++        config = FakeConfig(self.printer, {
++            "signal_type": "adc",
++            "tracker_detect_pin": "adc0",
++            "tracker_encoder_pin": "adc1",
++            "absence_timeout": "5.0",
++            "adc_inverted": True,
++            "pause_on_runout": False,
++        })
++        ft = tracker.FilamentTracker(config)
++        detect_adc = self.printer.pins.adcs["adc0"]
++        encoder_adc = self.printer.pins.adcs["adc1"]
++        detect_adc.cb(10.0, 0.04)
++        encoder_adc.cb(10.0, 0.04)
++        self.assertTrue(ft.are_both_channels_open)
++
++    def test_inverted_one_high_returns_false(self):
++        """adc_inverted=True: one high voltage → closed → False."""
++        config = FakeConfig(self.printer, {
++            "signal_type": "adc",
++            "tracker_detect_pin": "adc0",
++            "tracker_encoder_pin": "adc1",
++            "absence_timeout": "5.0",
++            "adc_inverted": True,
++            "pause_on_runout": False,
++        })
++        ft = tracker.FilamentTracker(config)
++        detect_adc = self.printer.pins.adcs["adc0"]
++        encoder_adc = self.printer.pins.adcs["adc1"]
++        detect_adc.cb(10.0, 0.9)   # high = closed in inverted mode
++        encoder_adc.cb(10.0, 0.04)
++        self.assertFalse(ft.are_both_channels_open)
++
++
++class AreBothChannelsOpenSwitchModeTest(unittest.TestCase):
++    """In switch mode, are_both_channels_open delegates to filament_present."""
++
++    def setUp(self):
++        self.printer = FakePrinter(signal_type="gpio")
++        self.config = FakeConfig(self.printer, {
++            "signal_type": "gpio",
++            "tracker_detect_pin": "PB0",
++            "tracker_encoder_pin": "PA1",
++            "detect_pin_is_switch": True,
++            "absence_timeout": "1.0",
++            "pause_on_runout": False,
++        })
++
++    def test_switch_open_returns_true(self):
++        """Switch open (detect=0) → absent → are_both_channels_open True."""
++        ft = tracker.FilamentTracker(self.config)
++        gpio_cb = self.printer.buttons.callbacks[0][1]
++        gpio_cb(10.0, 0b00)  # detect=0 → absent
++        self.assertTrue(ft.are_both_channels_open)
++
++    def test_switch_closed_returns_false(self):
++        """Switch closed (detect=1) → present → are_both_channels_open False."""
++        ft = tracker.FilamentTracker(self.config)
++        gpio_cb = self.printer.buttons.callbacks[0][1]
++        gpio_cb(10.0, 0b01)  # detect=1 → present
++        self.assertFalse(ft.are_both_channels_open)
++
++
++if __name__ == "__main__":
++    unittest.main()

@@ -1,0 +1,7 @@
+{
+    "$version": "1",
+
+    "name": "Klipper (vanilla)",
+    "description": "Vanilla Klipper to replace Anycubic GoKlipper (with ACE&ACE2 and ACE Dashboard support)",
+    "version": "1.1"
+}
