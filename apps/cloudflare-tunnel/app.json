@@ -3,7 +3,7 @@
 
     "name": "Cloudflare Tunnel",
     "description": "Manages Cloudflare tunnels for remote access to the printer",
-    "version": "2026.10.7",
+    "version": "2026.11.1",
     "depends": [],
 
     "upstream": {

@@ -20,6 +20,7 @@ on:
 permissions:
   contents: write       # push branches
   pull-requests: write  # open PRs
+  packages: read        # pull the build image from ghcr.io (403 without it)
 
 jobs:
   bump:
@@ -28,7 +29,7 @@ jobs:
       - name: Check out
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # script resets to origin/master between iterations
+          fetch-depth: 0   # script resets to origin/develop between iterations
 
       # The bump rebuilds app payloads in Docker, including armv7 Python
       # packages, so it needs the registry and ARM emulation

@@ -8,7 +8,7 @@ mkdir /work
 cd /work
 
 
-CLOUDFLARED_VERSION="2026.10.7"
+CLOUDFLARED_VERSION="2026.11.1"
 CLOUDFLARED_DIRECTORY=/apps/cloudflare-tunnel
 
 
