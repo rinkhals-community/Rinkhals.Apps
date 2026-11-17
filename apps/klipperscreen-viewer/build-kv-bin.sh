@@ -39,6 +39,10 @@ EOF
     exit 1
 }
 
+# libvncserver commit the committed binary was built against (master on
+# 2026-08-16). Pinned so a rebuild gives the same viewer.
+LIBVNCSERVER_VERSION=42494999e6492aaab9c1db785ecd293ef10b3aed
+
 mkdir -p "$APP_DIR/bin"
 
 ensure_arm_emulation
@@ -46,6 +50,7 @@ ensure_arm_emulation
 echo "[1/2] Building ARM static binary in isolated container..."
 docker run --rm \
   --platform=linux/arm/v7 \
+  -e LIBVNCSERVER_VERSION="$LIBVNCSERVER_VERSION" \
   -v "$APP_DIR:/work/app" \
   debian:12 \
   /bin/sh -lc '
@@ -58,7 +63,9 @@ docker run --rm \
 
     cd /tmp
     rm -rf libvncserver libvncserver-build
-    git clone --depth=1 https://github.com/LibVNC/libvncserver.git
+    git init -q libvncserver
+    git -C libvncserver fetch -q --depth=1 https://github.com/LibVNC/libvncserver.git "$LIBVNCSERVER_VERSION"
+    git -C libvncserver checkout -q FETCH_HEAD
 
     cmake -S libvncserver -B libvncserver-build \
       -DCMAKE_BUILD_TYPE=Release \
