@@ -9,6 +9,40 @@ from **Mainsail / Fluidd** and use standard Klipper macros, tuning and G-code.
 
 ---
 
+## Have an ACE Pro? Do these three things first
+
+The ACE is **off** when the app is first installed, so a printer without one
+doesn't try to use it. If you have an ACE Pro or ACE 2 Pro connected, do this
+before your first print:
+
+1. **Turn the ACE on.** In Mainsail, switch on **"ACE Pro"**, or type this in the
+   console:
+
+   ```
+   SET_PIN PIN=ACE_Pro VALUE=1
+   ```
+
+   Your choice is saved and stays after a restart. You can also set `value: 1`
+   under `[output_pin ACE_Pro]` in `ace_<model>.cfg` (for example `ace_KS1.cfg`)
+   in your printer's config folder and restart Klipper, but that only counts until
+   the switch has been used once. After that, the switch's saved setting wins.
+2. **Pass the starting tool from your slicer.** With the ACE on, the print start
+   macro stops with "Missing required TOOL parameter" unless your slicer's start
+   G-code passes `tool=[initial_tool]`:
+
+   ```
+   G9111 bedTemp=[first_layer_bed_temperature] extruderTemp=[first_layer_temperature[initial_tool]] tool=[initial_tool] SKIP_PURGE_FOR_ALREADY_LOADED_TOOL=1
+   ```
+3. **End prints with `PRINT_END CUT_TIP=1`** in your slicer's end G-code.
+
+While the ACE is off, ACE commands fail with messages like "ACE Pro is disabled"
+or "Feed assist on slot 0 was not started after 3 attempts (no answer)", and the
+print start reports "TOOL not passed and ACE Pro is disabled". Those mean the
+switch is still off, not that the ACE is broken. More on the ACE, including
+more than one unit, is in [ACE Pro / ACE2 Pro](#ace-pro--ace2-pro) below.
+
+---
+
 ## What it replaces (and what it does *not*)
 
 This app **only replaces the `go-klipper` process**. It does **not** replace the
