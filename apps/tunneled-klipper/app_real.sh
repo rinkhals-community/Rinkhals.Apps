@@ -211,10 +211,22 @@ stop() {
             ;;
     esac
 
-    # Start gklib from vendor working dir as well
+    # Start GoKlipper the way Rinkhals' start.sh does: same priority
+    # (rinkhals-community/Rinkhals#128), config link and log. The log used to
+    # be "$LOG_DIR/gklib.log", but LOG_DIR is only set for KS1/KS1M, so on
+    # the other models that was /gklib.log on the read-only root, the
+    # redirect failed and gklib never started.
+    # The KS1/KS1M branch above only sent SIGTERM, which gklib can take
+    # several seconds to act on, so make sure it's gone before starting one.
+    kill_by_name gklib
+    i=0
+    while [ -n "$(get_by_name gklib)" ] && [ $i -lt 10 ]; do
+        sleep 1
+        i=$((i + 1))
+    done
     cd /userdata/app/gk || exit 0
-    nohup ./gklib -a /tmp/unix_uds1 /userdata/app/gk/printer_data/config/printer.generated.cfg \
-        >> "$LOG_DIR/gklib.log" 2>&1 &
+    ln -sf /userdata/app/gk/printer_data/config/printer.generated.cfg /userdata/app/gk/rinkhals_gklib.cfg
+    nice -n -5 ./gklib -a /tmp/unix_uds1 rinkhals_gklib.cfg >> $RINKHALS_LOGS/gklib.log 2>&1 &
 }
 
 

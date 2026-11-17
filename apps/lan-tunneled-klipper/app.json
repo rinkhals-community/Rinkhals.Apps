@@ -3,7 +3,7 @@
 
     "name": "Lan Tunnel KS1",
     "description": "Socat Tunnel TCP Port 7003 & 7005 ",
-    "version": "0.2",
+    "version": "0.3",
 
     "properties": {
         "network_enabled": {

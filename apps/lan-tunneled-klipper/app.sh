@@ -418,6 +418,14 @@ status() {
     fi
 }
 start() {
+        # The tunnel ports below are the Kobra S1's (main MCU on ttyS3, nozzle
+        # on ttyS5). Other models put the nozzle MCU elsewhere, so don't stop
+        # GoKlipper and tunnel the wrong port on them.
+        if [ "${KOBRA_MODEL_CODE:-}" != "KS1" ]; then
+            log "LAN tunnel only supports the Kobra S1, not ${KOBRA_MODEL_CODE:-this printer}; not starting"
+            return 0
+        fi
+
         (
         mkdir -p "$STATE_DIR"
         echo 1 > "$STATE_DIR/.status"
@@ -491,10 +499,15 @@ stop() {
             "$APP_ROOT/gkapi_patched_run.sh" run-patched || true
         fi
 
-        cd /userdata/app/gk
-        LD_LIBRARY_PATH=/userdata/app/gk:$LD_LIBRARY_PATH \
-                ./gklib -a /tmp/unix_uds1 /userdata/app/gk/printer_data/config/printer.generated.cfg &> $RINKHALS_ROOT/logs/gklib.log &
-        log "gklib started"
+        # Start GoKlipper the way Rinkhals' start.sh does: same priority
+        # (rinkhals-community/Rinkhals#128), config link and log
+        if [ -z "$(get_by_name gklib)" ]; then
+            cd /userdata/app/gk
+            ln -sf /userdata/app/gk/printer_data/config/printer.generated.cfg /userdata/app/gk/rinkhals_gklib.cfg
+            LD_LIBRARY_PATH=/userdata/app/gk:$LD_LIBRARY_PATH \
+                nice -n -5 ./gklib -a /tmp/unix_uds1 rinkhals_gklib.cfg >> $RINKHALS_LOGS/gklib.log 2>&1 &
+            log "gklib started"
+        fi
     ) &
 }
 
