@@ -1,0 +1,7 @@
+{
+    "$version": "1",
+
+    "name": "KlipperScreen Viewer",
+    "description": "VNC viewer that displays a remote KlipperScreen on the printer touchscreen and forwards touch input back to VNC.",
+    "version": "1.0.0"
+}
