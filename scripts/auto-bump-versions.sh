@@ -121,8 +121,8 @@ bump_tracked_app() {
     return 0
   fi
 
-  git checkout --quiet master
-  git reset --quiet --hard origin/master
+  git checkout --quiet develop
+  git reset --quiet --hard origin/develop
   git checkout --quiet -B "$branch_name"
 
   for assignment in $moved; do
@@ -144,7 +144,7 @@ bump_tracked_app() {
 Moved:$moved"
   git push --quiet -u origin "$branch_name"
 
-  gh pr create --base master --head "$branch_name" \
+  gh pr create --base develop --head "$branch_name" \
     --title "chore($app): auto-bump $from -> $to" \
     --body "Auto-bump from the upstream-tracking bot. These repos moved:
 
@@ -249,10 +249,10 @@ for manifest in "$APPS_DIR"/*/app.json; do
     continue
   fi
 
-  # Reset to clean state on origin/master before each app's branch, so we
+  # Reset to clean state on origin/develop before each app's branch, so we
   # don't carry edits from a previous iteration into the next PR's diff.
-  git checkout --quiet master
-  git reset --quiet --hard origin/master
+  git checkout --quiet develop
+  git reset --quiet --hard origin/develop
   git checkout --quiet -B "$branch_name"
 
   # Quote like the existing line: if the value was double-quoted, keep quotes.
@@ -303,7 +303,7 @@ the bot will re-open it next week unless the manifest's \`upstream\` block is
 updated or removed.
 EOF
 )
-  gh pr create --base master --head "$branch_name" \
+  gh pr create --base develop --head "$branch_name" \
     --title "chore($app): auto-bump $from -> $upstream" \
     --body "$body" >&2
   opened=$((opened + 1))
