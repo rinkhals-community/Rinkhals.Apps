@@ -23,3 +23,17 @@ diff --git klippy/queuelogger.py klippy/queuelogger.py
          self.bg_queue = queue.Queue()
          self.bg_thread = threading.Thread(target=self._bg_thread)
          self.bg_thread.start()
+diff --git klippy/extras/shaper_calibrate.py klippy/extras/shaper_calibrate.py
+--- klippy/extras/shaper_calibrate.py
++++ klippy/extras/shaper_calibrate.py
+@@ -491,3 +491,10 @@
+                     csvfile.write("\n")
+         except IOError as e:
+             raise self.error("Error writing to file '%s': %s", output, str(e))
++
++# Rinkhals: there is no numpy on the printer. Without it, use the classes that
++# hand the calculations to the app's shaper-calibrate program instead.
++try:
++    importlib.import_module('numpy')
++except ImportError:
++    from .shaper_calibrate_native import CalibrationData, ShaperCalibrate

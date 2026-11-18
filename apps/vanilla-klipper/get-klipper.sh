@@ -34,6 +34,11 @@ cp -p "$KLIPPER/scripts/klippy-requirements.txt" "$APP/"
 cd "$APP"
 patch -p0 < klippy.patch
 
+# SHAPER_CALIBRATE without numpy: klippy.patch makes shaper_calibrate.py fall
+# back to this module, which runs the compiled shaper-calibrate/shaper-calibrate
+# (built by shaper-calibrate/build.sh)
+cp -p "$APP/shaper-calibrate/shaper_calibrate_native.py" "$APP/klippy/extras/"
+
 # ACE Pro driver
 rm -rf "$APP/klippy/extras/ace"
 cp -pr "$ACEPRO/extras/ace" "$APP/klippy/extras/ace"

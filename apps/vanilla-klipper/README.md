@@ -273,6 +273,41 @@ print.
 
 ---
 
+## Input shaper calibration (resonance testing)
+
+Every printer resonates a little differently, so the input shaper values in the
+shipped configs are only a starting point. On the Kobra 3, Kobra 3 Max and Kobra
+S1, the app's configs set up the printer's built-in accelerometer, and Klipper's
+own calibration works on the printer:
+
+```
+SHAPER_CALIBRATE
+SAVE_CONFIG
+```
+
+Home the printer first. `SHAPER_CALIBRATE` shakes each axis through a range of
+frequencies, which takes a few minutes and is loud, then prints the recommended
+`shaper_type` and `shaper_freq` for X and Y. `SAVE_CONFIG` stores them and
+restarts Klipper. `SHAPER_CALIBRATE AXIS=X`, `TEST_RESONANCES AXIS=X` and
+`MEASURE_AXES_NOISE` work too. See Klipper's
+[Measuring Resonances](https://www.klipper3d.org/Measuring_Resonances.html) for
+what the numbers mean.
+
+**Run it with the printer idle, never during a print.**
+
+Klipper normally needs the `numpy` Python package for this, which these printers
+don't have. The app instead ships a small compiled program,
+`shaper-calibrate`, that does the same calculation (the frequency response of the
+accelerometer data and the shaper fit) and gives the same results. Its source is
+in the app's `shaper-calibrate` folder. Like Klipper, which it's ported from,
+it's under the GNU GPLv3.
+
+The CSV files Klipper mentions (`/tmp/calibration_data_*.csv`) are on the
+printer's RAM disk and are gone after a restart. Copy them off over SSH if you
+want to plot them with Klipper's `calibrate_shaper.py`.
+
+---
+
 ## Full uninstall
 
 This app deploys files **outside** its own app directory — configs copied into the

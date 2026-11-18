@@ -491,3 +491,10 @@ class ShaperCalibrate:
                     csvfile.write("\n")
         except IOError as e:
             raise self.error("Error writing to file '%s': %s", output, str(e))
+
+# Rinkhals: there is no numpy on the printer. Without it, use the classes that
+# hand the calculations to the app's shaper-calibrate program instead.
+try:
+    importlib.import_module('numpy')
+except ImportError:
+    from .shaper_calibrate_native import CalibrationData, ShaperCalibrate
