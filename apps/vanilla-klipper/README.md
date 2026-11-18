@@ -273,6 +273,25 @@ print.
 
 ---
 
+## Chamber light (Kobra S1)
+
+On the Kobra S1 the chamber light is wired to the printer's Linux board, not to
+the MCU, so Klipper can't drive it as a normal pin. The app adds a
+**Chamber Light** switch that works like one anyway: it shows up under
+Miscellaneous in Mainsail and Fluidd, and touch screens that look for a light
+pin (HelixScreen, for example) pick it up as the printer's light.
+
+- The switch keeps its setting across Klipper restarts.
+- `SET_PIN PIN=chamber_light VALUE=0` (or `1`) works from macros and slicer
+  G-code.
+- It needs a Rinkhals release newer than `20261117_01_test`. On older ones the
+  switch moves but the light stays as it is.
+
+It lives in `chamber_light.cfg` in your config folder, included from
+`printer.klipper.cfg`. To get rid of it, remove the
+`[include chamber_light.cfg]` line. The Kobra 3 family doesn't need this: its
+lights are ordinary MCU pins in the printer config.
+
 ## Input shaper calibration (resonance testing)
 
 Every printer resonates a little differently, so the input shaper values in the
