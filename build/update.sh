@@ -15,6 +15,48 @@ APP=$(basename $APP_ROOT)
 chmod +x $APP_ROOT/app.sh
 APP_VERSION=$($APP_ROOT/app.sh version)
 
+# App dependencies: "depends" in app.json lists the apps this one can't work
+# without. Refuse to install until they are all installed, the same rule
+# Rinkhals applies in its app store (rinkhals-community/Rinkhals#246). This
+# script also runs on Rinkhals versions from before that, and from a USB stick
+# with nothing else loaded, so it reads the list itself and doesn't use jq.
+USER_APPS=/useremain/home/rinkhals/apps
+BUILTIN_APPS=/useremain/rinkhals/.current/home/rinkhals/apps
+
+is_app_installed() {
+    for APPS in $USER_APPS $BUILTIN_APPS; do
+        if [ -f $APPS/$1/app.sh ] && [ -f $APPS/$1/app.json ]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+DEPENDS=$(sed '/^[[:space:]]*\/\//d' $APP_ROOT/app.json 2> /dev/null | tr -d '\n\r' \
+    | sed -n 's/.*"depends"[[:space:]]*:[[:space:]]*\[\([^]]*\)\].*/\1/p' | tr -d '" \t' | tr ',' ' ')
+
+MISSING=""
+for DEPEND in $DEPENDS; do
+    is_app_installed $DEPEND || MISSING="$MISSING $DEPEND"
+done
+
+if [ -n "$MISSING" ]; then
+    MESSAGE="Can't install $APP. It needs these apps installed first:$MISSING"
+    echo "$MESSAGE"
+
+    # Installing from a USB stick, there is no screen to say so on: leave a
+    # note on the stick, and beep three times instead of the usual once
+    if grep -q ' /mnt/udisk ' /proc/mounts 2> /dev/null; then
+        echo "$MESSAGE" >> /mnt/udisk/rinkhals-app-install.log
+    fi
+    for i in 1 2 3; do
+        beep 150
+        usleep 150000
+    done
+
+    exit 1
+fi
+
 # Copy to final path
 DESTINATION_ROOT=/useremain/home/rinkhals/apps/$APP
 
