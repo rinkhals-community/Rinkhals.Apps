@@ -20,7 +20,18 @@ It talks to Moonraker, so it needs real Klipper behind it.
   to work, and Klipper (vanilla) 1.4.0 or later, which adds the light switch.
 
 Anycubic's own firmware (GoKlipper) is not supported. HelixScreen expects real
-Klipper, and nobody has checked what works without it.
+Klipper, and nobody has checked what works without it. So the app never puts
+HelixScreen on the screen while GoKlipper is running the printer:
+
+- If you stop, disable or remove your Klipper app, GoKlipper comes back, and
+  within about ten seconds so does Anycubic's screen.
+- The same happens if Klipper (vanilla) can't start and falls back to GoKlipper.
+- HelixScreen returns by itself once a Klipper app is running again.
+
+This doesn't depend on your Rinkhals version. Newer Rinkhals also refuses to
+disable or remove the last Klipper app while HelixScreen is enabled or
+installed, but on older ones nothing stops you, and this is what keeps the
+printer usable when you do.
 
 ## What happens to Anycubic's screen
 
@@ -35,6 +46,8 @@ interface (K3SysUi) is stopped. That has consequences:
   re-checks the network, so expect a short network blip.
 - If HelixScreen can't stay up (three quick exits in a row), the app gives the
   screen back to K3SysUi by itself and says so in the Rinkhals log.
+- At boot, Anycubic's screen shows for a few seconds first. HelixScreen takes
+  over once Klipper is in charge.
 
 Memory is not a concern: HelixScreen uses about 20 MB where K3SysUi uses 40 MB
 or more.
