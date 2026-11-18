@@ -48,6 +48,23 @@ if [ -f $ACE_CONFIG_SOURCE ]; then
     fi
 fi
 
+# Chamber light switch, on the models whose light isn't on an MCU pin (see the
+# comments in the file). Added to configs from before this existed too, right
+# after the generic macros include, which every shipped config has.
+LIGHT_CONFIG_SOURCE=chamber_light_${KOBRA_MODEL_CODE}.cfg
+if [ -f "$LIGHT_CONFIG_SOURCE" ]; then
+    LIGHT_CONFIG_DESTINATION=/userdata/app/gk/printer_data/config/chamber_light.cfg
+    if [ ! -f "$LIGHT_CONFIG_DESTINATION" ]; then
+        cp "$LIGHT_CONFIG_SOURCE" "$LIGHT_CONFIG_DESTINATION"
+    fi
+    if ! grep -q '^\[include chamber_light.cfg\]' $CONFIG_DESTINATION; then
+        sed -i 's/^\[include printer_generic_macros.cfg\][ \t]*$/&\n[include chamber_light.cfg]/' $CONFIG_DESTINATION
+        if grep -q '^\[include chamber_light.cfg\]' $CONFIG_DESTINATION; then
+            log "vanilla-klipper: added the chamber light switch to printer.klipper.cfg"
+        fi
+    fi
+fi
+
 MAINSAIL_DESTINATION=/userdata/app/gk/printer_data/config/mainsail.cfg
 if [ ! -f "$MAINSAIL_DESTINATION" ]; then
     cp mainsail.cfg "$MAINSAIL_DESTINATION"
