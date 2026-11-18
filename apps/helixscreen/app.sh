@@ -29,32 +29,38 @@ case "$KOBRA_MODEL_CODE" in
         ;;
 esac
 
-pids_of() {
-    # By executable path: busybox ps cuts command lines short
+SUPERVISOR_PID=$STATE_DIR/supervisor.pid
+
+# Lists the processes with a given name. This runs every few seconds and on
+# every status request, on a printer with one slow core, so it must not start
+# a program per process: the kernel's short name for each process is a file
+# the shell can read by itself.
+pids_named() {
     for PROC in /proc/[0-9]*; do
-        case "$(readlink $PROC/exe 2> /dev/null)" in
+        { read -r COMM < $PROC/comm; } 2> /dev/null || continue
+        case "$COMM" in
             $1) echo ${PROC#/proc/} ;;
         esac
     done
 }
 helix_pids() {
-    echo $(pids_of "$PAYLOAD/bin/helix-screen*")
+    echo $(pids_named "helix-screen")
 }
 sysui_pids() {
-    echo $(pids_of "/userdata/app/gk/K3SysUi*")
+    echo $(pids_named "K3SysUi*")
 }
 supervisor_pids() {
-    for PROC in /proc/[0-9]*; do
-        case "$(cat $PROC/cmdline 2> /dev/null | tr '\000' ' ')" in
-            *"$APP_ROOT/app.sh supervise"*) echo ${PROC#/proc/} ;;
-        esac
-    done
+    # The supervisor leaves its id in a file. Make sure it still belongs to it
+    { read -r PID < $SUPERVISOR_PID; } 2> /dev/null || return
+    case "$(cat /proc/$PID/cmdline 2> /dev/null | tr '\000' ' ')" in
+        *"app.sh supervise"*) echo $PID ;;
+    esac
 }
 # Anycubic's GoKlipper is running the printer. HelixScreen needs real Klipper:
 # the Klipper apps all stop gklib, and it comes back when they are stopped,
 # removed, or fall back to it because Klipper wouldn't start.
 goklipper_running() {
-    [ "$(pids_of "/userdata/app/gk/gklib*")" != "" ]
+    [ "$(pids_named "gklib")" != "" ]
 }
 
 status() {
@@ -96,7 +102,7 @@ start_sysui() {
 
     if [ ! -f $SYSUI_ENV ]; then
         # Not stopped by us this boot: gkapi was started with the same settings
-        GKAPI=$(echo $(pids_of "/userdata/app/gk/gkapi*"))
+        GKAPI=$(echo $(pids_named "gkapi*"))
         [ "$GKAPI" != "" ] && save_environment ${GKAPI%% *} > $SYSUI_ENV
     fi
 
@@ -163,6 +169,8 @@ kill_helix() {
 # A change has to be seen twice in a row before it is acted on, so a Klipper
 # app restarting doesn't flip the screen back and forth.
 supervise() {
+    echo $$ > $SUPERVISOR_PID
+
     FAILURES=0
     STARTED=0
     SEEN=0
