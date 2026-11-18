@@ -35,19 +35,36 @@ type ShaperRequest struct {
 	Candidates []Candidate `json:"candidates"`
 }
 
+// FitRequest is everything find_best_shaper needs. The fields are the
+// arguments of Klipper's find_best_shaper with their defaults already filled
+// in by shaper_calibrate_native.py.
 type FitRequest struct {
-	Datasets          []Dataset       `json:"datasets"`
-	Shapers           []ShaperRequest `json:"shapers"`
-	Scv               float64         `json:"scv"`
-	MaxSmoothing      *float64        `json:"max_smoothing"`
-	MaxVibrations     *float64        `json:"max_vibrations"`
-	TestDampingRatios []float64       `json:"test_damping_ratios"`
-	MaxFreq           float64         `json:"max_freq"`
+	// One entry per measurement (several when a test used several probe
+	// points or accelerometers). A shaper has to work for all of them.
+	Datasets []Dataset `json:"datasets"`
+	// The shaper types to try, in the order to try them
+	Shapers []ShaperRequest `json:"shapers"`
+	// The printer's square corner velocity (mm/s), used to estimate smoothing
+	Scv float64 `json:"scv"`
+	// Optional limits (JSON null when not set)
+	MaxSmoothing  *float64 `json:"max_smoothing"`
+	MaxVibrations *float64 `json:"max_vibrations"`
+	// The printer's real damping ratio is unknown, so every candidate is
+	// judged by its worst result over these
+	TestDampingRatios []float64 `json:"test_damping_ratios"`
+	// Frequencies above this are ignored (Hz)
+	MaxFreq float64 `json:"max_freq"`
 	// SHAPER_VIBRATION_REDUCTION from shaper_defs.py
 	VibrationReduction float64 `json:"vibration_reduction"`
 }
 
-// ShaperResult is Klipper's CalibrationResult.
+// ShaperResult is Klipper's CalibrationResult: how well one candidate did.
+//
+// Vibrs is the fraction of the measured vibrations the shaper leaves (lower
+// is better), Smoothing how much it rounds off corners (lower is better),
+// Score combines the two, and MaxAccel is the acceleration up to which the
+// smoothing stays small. FreqBins and Vals are the shaper's response curve
+// for the CSV file: the fraction of a vibration left at each frequency.
 type ShaperResult struct {
 	Name      string    `json:"name"`
 	Freq      float64   `json:"freq"`
@@ -58,6 +75,7 @@ type ShaperResult struct {
 	Score     float64   `json:"score"`
 	MaxAccel  float64   `json:"max_accel"`
 
+	// Not part of the output: what fill() needs to compute Vals later
 	shaper    *ShaperRequest
 	candidate *Candidate
 	maxFreq   float64
@@ -109,7 +127,11 @@ func interp(x, xp, fp []float64) []float64 {
 }
 
 // estimateShaper is how much of a vibration at each frequency is left by
-// the shaper, for a printer with the given damping ratio.
+// the shaper, for a printer with the given damping ratio: 1 means the shaper
+// does nothing at that frequency, 0 that it cancels it completely. The result
+// for freqBins[i] is written to out[i].
+//
+// Port of ShaperCalibrate._estimate_shaper.
 func estimateShaper(c *Candidate, dampingRatio float64, freqBins, out []float64) {
 	invD := 0.0
 	for _, a := range c.A {
@@ -132,6 +154,10 @@ func estimateShaper(c *Candidate, dampingRatio float64, freqBins, out []float64)
 	}
 }
 
+// remainingVibrations is the fraction of the measured vibrations (psd) left
+// after a shaper with the response vals.
+//
+// Port of ShaperCalibrate._estimate_remaining_vibrations.
 func remainingVibrations(vals, psd []float64, reduction float64) float64 {
 	peak := psd[0]
 	for _, p := range psd {
@@ -149,6 +175,10 @@ func remainingVibrations(vals, psd []float64, reduction float64) float64 {
 	return remaining / all
 }
 
+// shaperSmoothing estimates how far (mm) the shaper pulls the toolhead off
+// a sharp corner taken at the given acceleration and square corner velocity.
+//
+// Port of ShaperCalibrate._get_shaper_smoothing.
 func shaperSmoothing(c *Candidate, accel, scv float64) float64 {
 	halfAccel := accel * .5
 	invD, ts := 0.0, 0.0
@@ -173,6 +203,8 @@ func shaperSmoothing(c *Candidate, accel, scv float64) float64 {
 	return math.Max(offset90, offset180)
 }
 
+// bisect finds the largest x for which f(x) is true, for an f that is true
+// for small x and false for large x. Port of ShaperCalibrate._bisect.
 func bisect(f func(float64) bool) float64 {
 	left, right := 1.0, 1.0
 	if !f(1e-9) {
@@ -198,6 +230,8 @@ func bisect(f func(float64) bool) float64 {
 	return left
 }
 
+// shaperMaxAccel is the highest acceleration at which the shaper's smoothing
+// stays acceptable. Port of ShaperCalibrate.find_shaper_max_accel.
 func shaperMaxAccel(c *Candidate, scv float64) float64 {
 	// Just some empirically chosen value which produces good projections
 	// for max_accel without much smoothing
@@ -249,8 +283,13 @@ func shaperVals(c *Candidate, data trimmed, req *FitRequest, scratch []float64) 
 	return vals, vibrations
 }
 
-// fill computes the response curve of a result. Klipper computes it for
-// every candidate; only the ones that get reported need it.
+// fill computes the response curve (FreqBins, Vals) of a result.
+//
+// This is the one place where the structure differs from Klipper's. Klipper
+// computes the curve for every candidate inside fit_shaper, hundreds per
+// shaper type, and throws nearly all of them away. Here fitShaper only
+// computes the numbers needed to compare candidates, and findBestShaper
+// calls fill for the few results that are reported. The values are the same.
 func (r *ShaperResult) fill(req *FitRequest) error {
 	if r.Vals != nil {
 		return nil
@@ -277,8 +316,11 @@ func (r *ShaperResult) fill(req *FitRequest) error {
 	return nil
 }
 
-// fitShaper returns the selected result and all results, in the order
-// Klipper builds them (highest frequency first).
+// fitShaper tries one shaper type at every candidate frequency and picks
+// the best frequency for it. It returns that result and all results, in the
+// order Klipper builds them (highest frequency first).
+//
+// Port of ShaperCalibrate.fit_shaper.
 func fitShaper(s *ShaperRequest, req *FitRequest) (*ShaperResult, []*ShaperResult, error) {
 	if len(s.Candidates) == 0 {
 		return nil, nil, fmt.Errorf("shaper %s: no frequencies to test", s.Name)
@@ -344,6 +386,9 @@ func fitShaper(s *ShaperRequest, req *FitRequest) (*ShaperResult, []*ShaperResul
 	return selected, results, nil
 }
 
+// findBestShaper fits every requested shaper type and chooses between them.
+//
+// Port of ShaperCalibrate.find_best_shaper.
 func findBestShaper(req *FitRequest) (*FitResponse, error) {
 	if len(req.Datasets) == 0 || len(req.Shapers) == 0 {
 		return nil, fmt.Errorf("nothing to fit: %d datasets, %d shapers", len(req.Datasets), len(req.Shapers))
@@ -376,6 +421,8 @@ func findBestShaper(req *FitRequest) (*FitResponse, error) {
 		}
 		all = append(all, shaper)
 	}
+	// ZV is only kept as the best when no other shaper type is clearly
+	// better at removing vibrations
 	if best.shaper.Name == "zv" {
 		for _, tuned := range all {
 			if tuned.shaper.Name != "zv" && tuned.Vibrs*1.1 < best.Vibrs {
@@ -384,6 +431,7 @@ func findBestShaper(req *FitRequest) (*FitResponse, error) {
 			}
 		}
 	}
+	// Only now compute the response curves, for the results being returned
 	resp := &FitResponse{Best: -1, Shapers: all}
 	for i, s := range all {
 		if err := s.fill(req); err != nil {

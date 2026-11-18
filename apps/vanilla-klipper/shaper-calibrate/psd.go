@@ -82,7 +82,9 @@ func kaiser(n int, beta float64) []float64 {
 	return w
 }
 
-// fft is an in-place radix-2 FFT; len(re) must be a power of two.
+// fft is an in-place radix-2 (Cooley-Tukey) FFT of n complex numbers, n a
+// power of two. The sines, cosines and the bit-reversed index order are
+// worked out once in newFFT and reused for every window.
 type fft struct {
 	n        int
 	cos, sin []float64
@@ -104,13 +106,17 @@ func newFFT(n int) *fft {
 	return f
 }
 
+// transform replaces the complex numbers re[i] + im[i]*i by their discrete
+// Fourier transform.
 func (f *fft) transform(re, im []float64) {
+	// Reorder the input so that the butterflies below can work in place
 	for i, j := range f.rev {
 		if i < j {
 			re[i], re[j] = re[j], re[i]
 			im[i], im[j] = im[j], im[i]
 		}
 	}
+	// Combine transforms of 1 element into transforms of 2, then 4, ...
 	for size := 2; size <= f.n; size <<= 1 {
 		half, step := size/2, f.n/size
 		for start := 0; start < f.n; start += size {
@@ -126,8 +132,12 @@ func (f *fft) transform(re, im []float64) {
 	}
 }
 
-// psd is the power spectral density of x by Welch's algorithm: Kaiser
-// windows of nfft samples, half overlapping, each detrended by its mean.
+// psd is the power spectral density of x: how the signal's power is spread
+// over frequencies. It uses Welch's algorithm: cut x into half-overlapping
+// windows of nfft samples, take the spectrum of each, and average them.
+// The result has nfft/2+1 values, for 0 Hz up to fs/2.
+//
+// Port of ShaperCalibrate._psd.
 func psd(x []float64, fs float64, nfft int, window []float64, f *fft) []float64 {
 	scale := 0.0
 	for _, w := range window {
@@ -149,6 +159,8 @@ func psd(x []float64, fs float64, nfft int, window []float64, f *fft) []float64 
 			mean += v
 		}
 		mean /= float64(nfft)
+		// First detrend (remove the mean, which is mostly gravity), then
+		// apply the windowing function
 		for i, v := range seg {
 			re[i] = window[i] * (v - mean)
 			im[i] = 0
@@ -170,8 +182,13 @@ func psd(x []float64, fs float64, nfft int, window []float64, f *fft) []float64 
 	return out
 }
 
-// calcFreqResponse returns nil, nil when there are too few samples for one
-// window, which Klipper reports as an error of its own.
+// calcFreqResponse is the frequency response of a set of accelerometer
+// samples, for each axis and summed.
+//
+// It returns nil, nil when there are too few samples for one window, which
+// Klipper reports as an error of its own.
+//
+// Port of ShaperCalibrate.calc_freq_response.
 func calcFreqResponse(s *Samples, windowSec float64) (*FreqResponse, error) {
 	n := len(s.Time)
 	if n == 0 {
@@ -181,8 +198,9 @@ func calcFreqResponse(s *Samples, windowSec float64) (*FreqResponse, error) {
 	if !(t > 0) {
 		return nil, fmt.Errorf("accelerometer samples span no time (%d samples)", n)
 	}
+	// The accelerometer's real sample rate, from the timestamps
 	fs := float64(n) / t
-	// Round up to the nearest power of 2 for faster FFT
+	// The window is windowSec long. Round up to the nearest power of 2 for faster FFT
 	m := int(fs*windowSec - 1)
 	if m < 0 {
 		m = -m

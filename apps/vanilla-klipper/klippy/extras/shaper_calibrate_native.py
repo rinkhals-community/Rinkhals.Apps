@@ -53,6 +53,8 @@ def interp(x, xp, fp):
     return res
 
 class CalibrationData(upstream.CalibrationData):
+    # Klipper's CalibrationData, holding lists (Series) instead of numpy
+    # arrays. Only the one method that does array math is replaced.
     def normalize_to_frequencies(self):
         if not self._normalized:
             min_freq = upstream.MIN_FREQ
@@ -71,6 +73,10 @@ class CalibrationData(upstream.CalibrationData):
             other.normalize_to_frequencies()
 
 class ShaperCalibrate(upstream.ShaperCalibrate):
+    # Klipper's ShaperCalibrate with the methods that need numpy replaced.
+    # resonance_tester.py calls: process_accelerometer_data(),
+    # find_best_shaper(), save_calibration_data(), and the inherited
+    # save_params() and apply_params().
     def __init__(self, printer):
         self.printer = printer
         self.error = printer.command_error if printer else Exception
@@ -86,11 +92,15 @@ class ShaperCalibrate(upstream.ShaperCalibrate):
                 pass
 
     def _pause(self):
+        # Lets Klipper's reactor run its other tasks in the middle of a long
+        # loop here (printer is None when run outside Klipper, in tests)
         if self.printer is not None:
             reactor = self.printer.get_reactor()
             reactor.pause(reactor.NOW)
 
     def _run(self, workdir, args):
+        # Runs shaper-calibrate and waits for it without blocking Klipper,
+        # with the same "Wait for calculations.." message Klipper prints
         cmd = [BINARY] + args
         nice = shutil.which('nice')
         if nice:
@@ -138,6 +148,8 @@ class ShaperCalibrate(upstream.ShaperCalibrate):
             shutil.rmtree(workdir, ignore_errors=True)
 
     def calc_freq_response(self, name, raw_values):
+        # raw_values is Klipper's AccelQueryHelper, or a list of
+        # (time, accel_x, accel_y, accel_z) samples
         if raw_values is None:
             return None
         if isinstance(raw_values, (list, tuple)):
@@ -171,6 +183,8 @@ class ShaperCalibrate(upstream.ShaperCalibrate):
         return calibration_data
 
     def _get_test_freqs(self, shaper_name, shaper_freqs):
+        # The frequencies to try for a shaper, as fit_shaper() works them out:
+        # shaper_freqs is None, a (start, end, step) tuple, or a list
         if not shaper_freqs:
             shaper_freqs = (None, None, None)
         if isinstance(shaper_freqs, tuple):
