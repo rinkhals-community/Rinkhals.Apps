@@ -1,0 +1,54 @@
+name: shaper-calibrate
+
+# The vanilla-klipper app ships a compiled program that stands in for numpy in
+# Klipper's input shaper calibration. This checks that it still gives the same
+# numbers as Klipper's own numpy code, and that the committed binary and the
+# copy of the Klipper module are what the source in the repo builds.
+
+on:
+  pull_request:
+    paths:
+      - 'apps/vanilla-klipper/shaper-calibrate/**'
+      - 'apps/vanilla-klipper/klippy/extras/shaper_*.py'
+      - 'apps/vanilla-klipper/klippy/mathutil.py'
+      - 'apps/vanilla-klipper/klippy.patch'
+      - '.github/workflows/shaper-calibrate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/vanilla-klipper/shaper-calibrate
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.1'
+          cache: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Go checks
+        run: |
+          test -z "$(gofmt -l .)"
+          go vet ./...
+          go test ./...
+
+      - name: Same results as Klipper with numpy
+        run: |
+          pip install numpy
+          go build -o "$RUNNER_TEMP/shaper-calibrate" .
+          SHAPER_CALIBRATE_BIN="$RUNNER_TEMP/shaper-calibrate" python test_against_numpy.py
+
+      - name: Committed files match the source
+        run: |
+          cmp shaper_calibrate_native.py ../klippy/extras/shaper_calibrate_native.py
+          cp shaper-calibrate "$RUNNER_TEMP/committed"
+          sh build.sh
+          cmp shaper-calibrate "$RUNNER_TEMP/committed"

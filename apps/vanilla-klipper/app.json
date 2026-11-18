@@ -3,7 +3,7 @@
 
     "name": "Klipper (vanilla)",
     "description": "Mainline Klipper in place of Anycubic's GoKlipper, with ACE Pro and ACE 2 Pro support and the ACE dashboard. By Kobra-S1. If you have an ACE Pro, it starts out off: turn on the \"ACE Pro\" switch in Mainsail (or set value: 1 under [output_pin ACE_Pro] in ace_<model>.cfg), and add tool=[initial_tool] to G9111 in your slicer's start G-code.",
-    "version": "1.2.0",
+    "version": "1.3.0",
 
     "track": [
         { "repo": "Kobra-S1/klipper-kobra-s1", "branch": "Kobra-S1-Dev", "pin": "KLIPPER_VERSION" },
