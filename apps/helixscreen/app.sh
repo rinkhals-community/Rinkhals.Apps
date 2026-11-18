@@ -2,8 +2,10 @@
 # HelixScreen (https://github.com/prestonbrown/helixscreen) on the printer's
 # own touch screen, in place of Anycubic's K3SysUi.
 #
-# Only one program can own the screen. Starting this app stops K3SysUi, and
-# stopping it brings K3SysUi back. See README.md for what that means.
+# Only one program can own the screen. While this app runs and Klipper is in
+# charge of the printer, K3SysUi is stopped and HelixScreen has the screen.
+# Whenever Anycubic's GoKlipper is running instead, or the app is stopped,
+# K3SysUi gets the screen back. See README.md for what that means.
 
 . /useremain/rinkhals/.current/tools.sh
 
@@ -41,9 +43,23 @@ helix_pids() {
 sysui_pids() {
     echo $(pids_of "/userdata/app/gk/K3SysUi*")
 }
+supervisor_pids() {
+    for PROC in /proc/[0-9]*; do
+        case "$(cat $PROC/cmdline 2> /dev/null | tr '\000' ' ')" in
+            *"$APP_ROOT/app.sh supervise"*) echo ${PROC#/proc/} ;;
+        esac
+    done
+}
+# Anycubic's GoKlipper is running the printer. HelixScreen needs real Klipper:
+# the Klipper apps all stop gklib, and it comes back when they are stopped,
+# removed, or fall back to it because Klipper wouldn't start.
+goklipper_running() {
+    [ "$(pids_of "/userdata/app/gk/gklib*")" != "" ]
+}
 
 status() {
-    PIDS=$(helix_pids)
+    # The supervisor counts: the app is also running while it waits for Klipper
+    PIDS=$(echo $(helix_pids) $(supervisor_pids))
 
     if [ "$PIDS" = "" ]; then
         report_status $APP_STATUS_STOPPED
@@ -127,27 +143,75 @@ run_helix() {
     HELIX_DISABLE_AUTO_UPDATES=1 \
         ./bin/helix-screen --rotate $ROTATION --skip-splash --no-sound \
             --moonraker ws://${HOST:-127.0.0.1}:${PORT:-7125} \
-            --log-dest file --log-file $LOG --log-level info > /dev/null 2>&1
+            --log-dest file --log-file $LOG --log-level info > /dev/null 2>&1 &
 }
 
-# Keeps HelixScreen running, and gives the screen back to K3SysUi if it won't stay up
+kill_helix() {
+    PIDS=$(helix_pids)
+    [ "$PIDS" = "" ] && return
+    kill $PIDS 2> /dev/null
+    msleep 1000
+    PIDS=$(helix_pids)
+    [ "$PIDS" != "" ] && kill -9 $PIDS 2> /dev/null
+}
+
+# Decides who has the screen, every few seconds:
+#   - Klipper in charge: HelixScreen, restarted if it exits
+#   - GoKlipper in charge: K3SysUi. That is the case before a Klipper app has
+#     started at boot, and after one is stopped, removed or has fallen back
+#   - HelixScreen won't stay up: K3SysUi, for good
+# A change has to be seen twice in a row before it is acted on, so a Klipper
+# app restarting doesn't flip the screen back and forth.
 supervise() {
     FAILURES=0
+    STARTED=0
+    SEEN=0
+    OWNER=
 
-    while [ $FAILURES -lt 3 ]; do
-        STARTED=$(date +%s)
-        run_helix
-        # A run of a minute or more was a working one
-        if [ $(( $(date +%s) - STARTED )) -ge 60 ]; then
-            FAILURES=0
+    while true; do
+        if goklipper_running; then WANT=sysui; else WANT=helix; fi
+
+        if [ "$WANT" = "$OWNER" ]; then
+            SEEN=0
         else
-            FAILURES=$((FAILURES + 1))
+            SEEN=$((SEEN + 1))
         fi
-        sleep 2
-    done
 
-    log "helixscreen: HelixScreen keeps exiting, giving the screen back to K3SysUi (see $LOG)"
-    start_sysui
+        if [ "$WANT" != "$OWNER" ] && [ $SEEN -ge 2 ]; then
+            if [ "$WANT" = "helix" ]; then
+                log "helixscreen: Klipper is in charge, taking the screen"
+                stop_sysui
+            else
+                log "helixscreen: Anycubic's GoKlipper is running, leaving the screen to K3SysUi until a Klipper app takes over"
+                kill_helix
+                start_sysui
+            fi
+            OWNER=$WANT
+            SEEN=0
+            FAILURES=0
+        fi
+
+        if [ "$OWNER" = "helix" ] && [ "$(helix_pids)" = "" ]; then
+            # Not running: first start, or it exited. A run of a minute or more was a working one
+            NOW=$(date +%s)
+            if [ $STARTED -ne 0 ] && [ $((NOW - STARTED)) -lt 60 ]; then
+                FAILURES=$((FAILURES + 1))
+            else
+                FAILURES=0
+            fi
+
+            if [ $FAILURES -ge 3 ]; then
+                log "helixscreen: HelixScreen keeps exiting, giving the screen back to K3SysUi (see $LOG)"
+                start_sysui
+                return
+            fi
+
+            STARTED=$NOW
+            run_helix
+        fi
+
+        sleep 3
+    done
 }
 
 start() {
@@ -159,26 +223,18 @@ start() {
     stop_helix
     prepare_config
     chmod +x $PAYLOAD/bin/helix-screen
-    stop_sysui
 
-    # Detached, with no inherited output, so that a caller waiting on ours isn't held up
+    # The supervisor takes the screen once Klipper is in charge. Detached, with
+    # no inherited output, so that a caller waiting on ours isn't held up
     setsid sh "$APP_ROOT/app.sh" supervise < /dev/null > /dev/null 2>&1 &
 }
 
 stop_helix() {
     # The supervisor first, so it doesn't start HelixScreen again
-    for PROC in /proc/[0-9]*; do
-        case "$(cat $PROC/cmdline 2> /dev/null | tr '\000' ' ')" in
-            *"$APP_ROOT/app.sh supervise"*) kill ${PROC#/proc/} 2> /dev/null ;;
-        esac
-    done
+    PIDS=$(echo $(supervisor_pids))
+    [ "$PIDS" != "" ] && kill $PIDS 2> /dev/null
 
-    PIDS=$(helix_pids)
-    [ "$PIDS" = "" ] && return
-    kill $PIDS 2> /dev/null
-    msleep 1000
-    PIDS=$(helix_pids)
-    [ "$PIDS" != "" ] && kill -9 $PIDS 2> /dev/null
+    kill_helix
 }
 stop() {
     stop_helix
