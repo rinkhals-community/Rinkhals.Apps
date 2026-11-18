@@ -1,0 +1,3 @@
+<?xml version="1.0"?><component><api><prop name="text" type="string" default="Connecting..."/></api><view extends="lv_obj"
+        width="100%" height="100%" flex_flow="column" style_flex_main_place="center" style_flex_cross_place="center"
+        style_flex_track_place="center" style_pad_gap="#space_md" scrollable="false"><spinner size="lg"/><text_muted text="$text"/></view></component>

@@ -1,0 +1,10 @@
+<?xml version="1.0"?><component><view name="console_settings_overlay"
+        extends="overlay_panel" title="Console Settings" title_tag="Console Settings" bg_color="#screen_bg"><lv_obj name="overlay_content" width="100%" flex_grow="1" style_pad_top="0" scrollable="true" flex_flow="column"><setting_section_header title="FILTERS" title_tag="FILTERS" icon="tune"/><setting_toggle_row name="row_filter_temps"
+                          label="Hide Temperature Reports" label_tag="Hide Temperature Reports" icon="thermometer"
+                          description="Suppress periodic 'T:.../B:...' status lines"
+                          description_tag="Suppress periodic temperature status lines" subject="console_filter_temps"
+                          callback="on_console_filter_temps_changed"/><setting_toggle_row name="row_filter_firmware_noise"
+                          label="Hide Firmware Noise" label_tag="Hide Firmware Noise" icon="code_tags"
+                          description="Suppress raw debug output from printer firmware modules"
+                          description_tag="Suppress raw debug output from printer firmware modules"
+                          subject="console_filter_firmware_noise" callback="on_console_filter_firmware_noise_changed"/></lv_obj></view></component>

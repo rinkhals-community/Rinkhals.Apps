@@ -1,0 +1,120 @@
+{
+  "preset": "qidi_q2",
+  "wizard_completed": false,
+  "display": {
+    "rotate": 0,
+    "rotation_probed": true
+  },
+  "printer": {
+    "heaters": {
+      "bed": "heater_bed",
+      "hotend": "extruder"
+    },
+    "temp_sensors": {
+      "bed": "heater_bed",
+      "hotend": "extruder"
+    },
+    "fans": {
+      "chamber": "controller_fan chamber_fan",
+      "exhaust": "fan_generic chamber_circulation_fan",
+      "hotend": "heater_fan hotend_fan",
+      "part": "fan_generic cooling_fan"
+    },
+    "leds": {
+      "strip": "output_pin caselight",
+      "selected_strips": [
+        "output_pin caselight"
+      ],
+      "startup_brightness": 80,
+      "led_on_at_start": false
+    },
+    "filament_sensors": {
+      "master_enabled": true,
+      "sensors": [
+        {
+          "enabled": true,
+          "klipper_name": "filament_switch_sensor mmu_pre_gate_0",
+          "role": "none",
+          "type": "switch"
+        },
+        {
+          "enabled": true,
+          "klipper_name": "filament_switch_sensor mmu_pre_gate_1",
+          "role": "none",
+          "type": "switch"
+        },
+        {
+          "enabled": true,
+          "klipper_name": "filament_switch_sensor mmu_pre_gate_2",
+          "role": "none",
+          "type": "switch"
+        },
+        {
+          "enabled": true,
+          "klipper_name": "filament_switch_sensor mmu_pre_gate_3",
+          "role": "none",
+          "type": "switch"
+        },
+        {
+          "enabled": true,
+          "klipper_name": "filament_switch_sensor mmu_gate_sensor",
+          "role": "none",
+          "type": "switch"
+        },
+        {
+          "enabled": true,
+          "klipper_name": "filament_switch_sensor extruder_sensor",
+          "role": "runout",
+          "type": "switch"
+        },
+        {
+          "enabled": true,
+          "klipper_name": "filament_switch_sensor filament_tension_sensor",
+          "role": "none",
+          "type": "switch"
+        },
+        {
+          "enabled": true,
+          "klipper_name": "filament_switch_sensor filament_switch_sensor",
+          "role": "none",
+          "type": "switch"
+        }
+      ]
+    },
+    "hardware": {
+      "expected": [
+        "heater_bed",
+        "extruder",
+        "fan_generic cooling_fan",
+        "heater_fan hotend_fan",
+        "output_pin caselight",
+        "filament_switch_sensor extruder_sensor",
+        "mmu",
+        "heater_fan box1_heater_fan_a",
+        "heater_fan box1_heater_fan_b",
+        "controller_fan box1_board_fan",
+        "controller_fan board_fan",
+        "fan_generic auxiliary_cooling_fan"
+      ]
+    },
+    "default_macros": {
+      "cooldown": "SET_HEATER_TEMPERATURE HEATER=extruder TARGET=0\nSET_HEATER_TEMPERATURE HEATER=heater_bed TARGET=0",
+      "load_filament": {
+        "gcode": "LOAD_FILAMENT",
+        "label": "Load"
+      },
+      "macro_1": {
+        "gcode": "HELIX_CLEAN_NOZZLE",
+        "label": "Clean Nozzle"
+      },
+      "macro_2": {
+        "gcode": "HELIX_BED_MESH_IF_NEEDED",
+        "label": "Bed Level"
+      },
+      "unload_filament": {
+        "gcode": "UNLOAD_FILAMENT",
+        "label": "Unload"
+      }
+    }
+  }
+}

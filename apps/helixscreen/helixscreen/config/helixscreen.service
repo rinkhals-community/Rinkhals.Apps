@@ -1,0 +1,171 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# systemd service file for HelixScreen
+#
+# This service launches HelixScreen with an early splash screen for
+# instant visual feedback during boot. The launcher starts a lightweight
+# splash binary in parallel with the main app. When the main app is ready,
+# it sends SIGUSR1 to the splash process, which then exits gracefully.
+#
+# Installation:
+#   sudo cp helixscreen.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable helixscreen
+#   sudo systemctl start helixscreen
+#
+# Logs (application logs to systemd journal automatically):
+#   sudo journalctl -u helixscreen -f
+#   sudo journalctl -t helix -f          # Filter by syslog identifier
+
+[Unit]
+Description=HelixScreen 3D Printer Touch UI
+Documentation=https://github.com/prestonbrown/helixscreen
+After=network.target
+
+# Wait for display hardware to be ready
+After=systemd-udev-settle.service
+Wants=systemd-udev-settle.service
+
+# Wait for Plymouth boot splash to release the DRM device before starting.
+# On Armbian (BTT CB1/CB2) and Raspberry Pi OS, Plymouth grabs DRM master
+# during boot; starting before it releases causes Plymouth's quit sequence
+# to kill HelixScreen (#536).  After= is a no-op when Plymouth is not
+# installed (Artillery M1, Linaro, embedded), so this doesn't delay boot
+# on those platforms.  The other races that originally motivated
+# multi-user.target (update watcher, fbcon contention) have been
+# independently fixed by ExecStartPre watcher stop and vtconsole unbind.
+After=plymouth-quit-wait.service
+
+[Service]
+Type=simple
+
+# Run as the Klipper ecosystem user (templated by installer)
+User=@@HELIX_USER@@
+Group=@@HELIX_GROUP@@
+
+# Working directory for config/assets
+WorkingDirectory=@@INSTALL_DIR@@
+
+# Cancel any pending update-watcher restart during startup.
+#
+# During a self-update, install.sh writes release_info.json which triggers
+# helixscreen-update.path → helixscreen-update.service (10s sleep then restart).
+# The app also calls _exit(0) after install, so systemd's Restart=always fires
+# immediately — giving two restarts.  Stopping both units here cancels the pending
+# oneshot if it's still sleeping, eliminating the second restart.
+#
+# For Moonraker web-type updates the oneshot's ExecStart (systemctl restart
+# helixscreen) is still running when this fires — stopping it kills the client
+# process, but systemd's job manager already has the restart queued so it
+# proceeds.  The ExecStartPost below re-arms the path unit afterward.
+ExecStartPre=+/bin/sh -c '/bin/systemctl stop helixscreen-update.path helixscreen-update.service 2>/dev/null || true'
+
+# Self-heal systemd units from the install dir templates on every start.
+# Ensures: (1) update watcher units (path + oneshot) are installed even if the
+# initial install predated them or was partial, (2) unit files pick up any
+# changes shipped in a new release (ExecStartPre additions, security hardening,
+# etc.), and (3) placeholder templating is always applied.
+# Runs as root (+prefix) since it writes to /etc/systemd/system/ and reloads.
+# The script is idempotent — safe to run on every start.
+ExecStartPre=+/bin/sh -c '[ -x "@@INSTALL_DIR@@/config/refresh-service-units.sh" ] && @@INSTALL_DIR@@/config/refresh-service-units.sh || true'
+
+# Stop firmware display-management services that conflict with HelixScreen.
+# Creality SonicPad/Nebula ships display-sleep.sh which kills the backlight
+# when X11 isn't running (it polls xset, fails, and interprets that as "Off").
+ExecStartPre=+/bin/sh -c 'systemctl stop display-sleep.service 2>/dev/null || true'
+
+# Run the platform's stock-UI stop on every start, from the same hook file the
+# SysV init script sources. A vendor UI that a firmware update re-enables comes
+# back down here rather than fighting HelixScreen for the framebuffer.
+# Root (+prefix): stopping vendor units needs it, and it runs before the User=
+# drop. Platforms that ship no hook file, or whose hook leaves the function at
+# its default no-op, make this a no-op.
+ExecStartPre=+/bin/sh -c '[ -f "@@INSTALL_DIR@@/platform/hooks.sh" ] || exit 0; . "@@INSTALL_DIR@@/platform/hooks.sh"; command -v platform_stop_competing_uis >/dev/null 2>&1 && platform_stop_competing_uis; exit 0'
+
+# Fix un-substituted polkit template if present (self-heal from broken initial install).
+# The grep/sed patterns use quote-splitting so the installer's own sed pass
+# doesn't substitute them — they must remain literal to match a broken deployed file.
+ExecStartPre=+/bin/sh -c 'u=@@HELIX_USER@@; for f in /etc/polkit-1/localauthority/50-local.d/helixscreen-network.pkla /etc/polkit-1/rules.d/50-helixscreen-network.rules; do [ -f "$$f" ] && grep -q "@@""HELIX_USER""@@" "$$f" 2>/dev/null && sed -i "s|@@""HELIX_USER""@@|$$u|g" "$$f" || true; done'
+
+# Create NetworkManager polkit rule if missing (self-heal for installs that predate polkit support).
+# Runs as root (+prefix). Handles both .rules (Debian 12+) and .pkla (Debian 11) formats.
+ExecStartPre=+@@INSTALL_DIR@@/config/ensure-polkit-rule.sh @@HELIX_USER@@
+
+# Fix install dir ownership for self-updates.  Initial installs (run as root)
+# may leave files root-owned; the service user needs write access for in-app
+# updates under NoNewPrivileges.  Runs as root (+prefix), safe no-op if already correct.
+ExecStartPre=+/bin/sh -c 'u=@@HELIX_USER@@; g=@@HELIX_GROUP@@; [ "$$u" != "root" ] && chown -Rh "$$u:$$g" "@@INSTALL_DIR@@" 2>/dev/null || true'
+
+# Unbind framebuffer console before starting (requires root, runs before User= drop)
+# vtcon1 is the fbcon driver; vtcon0 is the dummy. Unbinding prevents kernel
+# messages (dmesg, undervoltage) from painting over the UI via fbcon.
+ExecStartPre=+/bin/sh -c 'for f in /sys/class/vtconsole/vtcon*/bind; do echo 0 > "$$f" 2>/dev/null || true; done'
+
+# Use launcher script for splash + main app
+ExecStart=@@INSTALL_DIR@@/bin/helix-launcher.sh
+
+# Re-arm update watcher after main process starts
+ExecStartPost=+/bin/sh -c '/bin/systemctl start helixscreen-update.path 2>/dev/null || true'
+# Re-arm on stop/crash too — prevents watcher staying disabled if service
+# fails before ExecStartPost runs (e.g., startup crash hitting StartLimitBurst)
+ExecStopPost=+/bin/sh -c '/bin/systemctl start helixscreen-update.path 2>/dev/null || true'
+
+# Environment variables
+# Display backend: auto-detected by launcher (DRM if GL libs present, else fbdev).
+# Uncomment to force a specific backend:
+# Environment="HELIX_DISPLAY_BACKEND=drm"
+# Environment="HELIX_DISPLAY_BACKEND=fbdev"
+# Override asset directory if ui_xml/assets/config are not under WorkingDirectory
+# Environment="HELIX_DATA_DIR=/usr/share/helixscreen"
+# Logging: auto-detects journal on systemd systems (can override with HELIX_LOG_DEST)
+# Environment="HELIX_LOG_DEST=journal"
+
+# Restart policy - always restart unless explicitly stopped
+Restart=always
+RestartSec=3
+# Tells helix-watchdog this unit restarts it, so after an update it exits and
+# lets the restart run ExecStartPre instead of respawning the app in place.
+Environment=HELIX_SERVICE_RESTARTS=1
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+
+# Note: niceness (when co-hosted with Klipper/Moonraker) is applied in
+# helix-launcher.sh so the systemd and SysV/BusyBox paths share one rule.
+
+# Security hardening
+# Full INSTALL_DIR + its parent are writable so in-app self-updates can do
+# an atomic directory swap (mv old; mv new) instead of a racy in-place
+# content replacement.  ProtectSystem=strict prevents writes anywhere else;
+# NoNewPrivileges blocks privilege escalation.
+ProtectSystem=strict
+ReadWritePaths=@@INSTALL_DIR@@ @@INSTALL_PARENT@@ /var/log
+StateDirectory=helixscreen
+StateDirectoryMode=0700
+RuntimeDirectory=helixscreen
+RuntimeDirectoryMode=0700
+# PrivateTmp stays off: HelixScreen reads Klipper's shared-/tmp output, e.g.
+# input-shaper CSVs (/tmp/calibration_data_*.csv). Isolated /tmp hides them.
+PrivateTmp=false
+NoNewPrivileges=true
+
+# Allow framebuffer/DRM access plus audio (UI sounds via ALSA).
+# SupplementaryGroups REPLACES the service's group set rather than appending
+# to the user's login groups, so 'audio' must be listed explicitly even when
+# the user (e.g. 'pi'/'raspberry') already belongs to it — otherwise the
+# service cannot open /dev/snd and ALSA fails to find any PCM device.
+SupplementaryGroups=video input render tty audio
+
+# CAP_SYS_TTY_CONFIG: KDSETMODE KD_GRAPHICS prevents kernel messages from
+# bleeding through LVGL's partial framebuffer repaints.
+# CAP_SYS_BOOT: allows watchdog to reboot the system from crash recovery dialog.
+AmbientCapabilities=CAP_SYS_TTY_CONFIG CAP_SYS_BOOT
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=helixscreen
+
+[Install]
+WantedBy=multi-user.target

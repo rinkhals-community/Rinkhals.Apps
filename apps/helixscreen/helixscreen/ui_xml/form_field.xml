@@ -1,0 +1,4 @@
+<?xml version="1.0"?><component><api><prop name="label" type="string" default=""/><prop name="label_tag" type="string" default=""/><prop name="input_name" type="string" default="field_input"/><prop name="placeholder" type="string" default=""/><prop name="placeholder_tag" type="string" default=""/><prop name="password_mode" type="string" default="false"/><prop name="label_style" type="string" default="body"/></api><view extends="lv_obj"
+        width="100%" height="content" style_pad_all="0" flex_flow="column" style_pad_gap="#space_xs" scrollable="false"><text_body text="$label" translation_tag="$label_tag" style_text_align="left"/><text_input name="$input_name"
+                width="100%" height="#input_height" placeholder_text="$placeholder" placeholder_tag="$placeholder_tag"
+                password_mode="$password_mode"/></view></component>

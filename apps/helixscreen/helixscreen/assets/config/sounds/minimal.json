@@ -1,0 +1,78 @@
+{
+  "name": "minimal",
+  "description": "Completion and error sounds only, no UI interaction sounds",
+  "version": 1,
+  "defaults": {
+    "wave": "square",
+    "vel": 0.8,
+    "env": { "a": 5, "d": 40, "s": 0.6, "r": 80 }
+  },
+  "sounds": {
+    "print_complete": {
+      "description": "Triumphant arpeggio",
+      "bpm": 140,
+      "steps": [
+        { "note": "C5", "dur": "8n", "wave": "square", "vel": 0.8,
+          "env": { "a": 5, "d": 40, "s": 0.6, "r": 80 } },
+        { "note": "E5", "dur": "8n" },
+        { "note": "G5", "dur": "8n" },
+        { "note": "C6", "dur": "4n", "vel": 1.0,
+          "env": { "a": 5, "d": 60, "s": 0.8, "r": 200 } }
+      ]
+    },
+    "error_alert": {
+      "description": "Urgent pulsing alert",
+      "steps": [
+        { "freq": 2400, "dur": 150, "wave": "saw",
+          "lfo": { "target": "amplitude", "rate": 8, "depth": 0.5 },
+          "env": { "a": 2, "d": 20, "s": 0.9, "r": 30 } },
+        { "pause": 80 },
+        { "freq": 2400, "dur": 150,
+          "lfo": { "target": "amplitude", "rate": 8, "depth": 0.5 } }
+      ],
+      "repeat": 3
+    },
+    "error_tone": {
+      "description": "Short error feedback for toasts",
+      "steps": [
+        { "freq": 200, "dur": 80, "wave": "square", "vel": 0.7 },
+        { "pause": 40 },
+        { "freq": 150, "dur": 120, "vel": 0.5 }
+      ]
+    },
+    "print_cancelled": {
+      "description": "Descending minor tone",
+      "steps": [
+        { "note": "E5", "dur": 120, "vel": 0.6 },
+        { "note": "C5", "dur": 200, "vel": 0.4,
+          "env": { "a": 5, "d": 50, "s": 0.3, "r": 150 } }
+      ]
+    },
+    "alarm_urgent": {
+      "description": "Continuous alarm for critical failures",
+      "steps": [
+        { "freq": 2500, "dur": 200, "wave": "saw",
+          "lfo": { "target": "freq", "rate": 4, "depth": 300 } },
+        { "pause": 100 },
+        { "freq": 1800, "dur": 200,
+          "lfo": { "target": "freq", "rate": 4, "depth": 300 } },
+        { "pause": 100 }
+      ],
+      "repeat": 5
+    },
+    "test_beep": {
+      "description": "Settings test sound",
+      "steps": [
+        { "freq": 1000, "dur": 100, "vel": 0.8,
+          "env": { "a": 5, "d": 20, "s": 0.6, "r": 30 } }
+      ]
+    },
+    "startup": {
+      "description": "Clean single-tone ready chime",
+      "steps": [
+        { "note": "G5", "dur": 200, "wave": "sine", "vel": 0.7,
+          "env": { "a": 10, "d": 60, "s": 0.5, "r": 120 } }
+      ]
+    }
+  }
+}

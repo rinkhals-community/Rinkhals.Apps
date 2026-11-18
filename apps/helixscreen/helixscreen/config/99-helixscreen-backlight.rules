@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# udev rule: grant video group write access to backlight controls
+# Installed by HelixScreen for non-root service operation
+ACTION=="add|change", SUBSYSTEM=="backlight", RUN+="/bin/chmod g+w /sys%p/brightness /sys%p/bl_power", RUN+="/bin/chgrp video /sys%p/brightness /sys%p/bl_power"
+# Allwinner sunxi display ioctl (SonicPad, etc.) - used by BacklightBackendAllwinner
+KERNEL=="disp", SUBSYSTEM=="disp", GROUP="video", MODE="0660"

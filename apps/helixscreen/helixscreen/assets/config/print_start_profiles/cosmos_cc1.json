@@ -1,0 +1,23 @@
+{
+  "name": "COSMOS (Elegoo Centauri Carbon)",
+  "description": "OpenCentauri COSMOS PRINT_START (macros.cfg, 26.08). Klipper does not echo the macro's own commands, so the stream is sparse: the M190/M109 waits report only 'B:x /t T0:y /t' lines, which match nothing here and leave heating to the collector's temperature detection. The macro narrates through SET_DISPLAY_TEXT (heat soak, chamber wait, mesh choice) and the KAMP/skew macros through RESPOND. The heat soak line is followed by a silent G4 of the minutes it names (cosmos.conf heatsoak, 0-30), which hold_minutes_group declares; the chamber wait (M191, a TEMPERATURE_WAIT on the chamber sensor) has no known duration, so it declares no hold. The skew check is the macro's last narrated step before the first layer, so it completes the pre-print. Weights follow a measured cold start at 105C bed / 260C nozzle: G28 ~23s, M190 ~484s, 60s heat soak, stored mesh load under 1s, M109 ~48s, line purge ~13s.",
+  "progress_mode": "weighted",
+  "adaptive_meshing": true,
+  "signal_formats": [],
+  "response_patterns": [
+    { "pattern": "Heatsoak: ([0-9.]+)m", "phase": "HEATING_BED", "message": "Heat Soak", "weight": 85, "hold_minutes_group": 1 },
+    { "pattern": "Chamber: [0-9]+c", "phase": "HEATING_BED", "message": "Heat Soak", "weight": 85 },
+    { "pattern": "Creating adaptive bed mesh", "phase": "BED_MESH", "message": "Probing Bed Mesh...", "weight": 1 },
+    { "pattern": "Using default bed mesh", "phase": "BED_MESH", "message": "Bed Mesh...", "weight": 1 },
+    { "pattern": "Smart Park location", "phase": "HEATING_NOZZLE", "message": "Heating Nozzle...", "weight": 8 },
+    { "pattern": "KAMP purge starting at", "phase": "PURGING", "message": "Purging...", "weight": 2 },
+    { "pattern": "No skew profile defined|Skew profile '[^']*' found", "phase": "COMPLETE", "message": "Starting Print...", "weight": 0 }
+  ],
+  "phase_weights": {
+    "HOMING": 4,
+    "HEATING_BED": 85,
+    "BED_MESH": 1,
+    "HEATING_NOZZLE": 8,
+    "PURGING": 2
+  }
+}

@@ -1,0 +1,11 @@
+<?xml version="1.0"?><component><view name="panel_widget_camera"
+        extends="ui_card" width="100%" height="100%" style_clip_corner="true" style_pad_all="0" style_border_width="0"><event_cb trigger="clicked" callback="on_camera_clicked"/><lv_image name="camera_image"
+              width="100%" height="100%" style_radius="#border_radius" style_clip_corner="true"
+              style_image_recolor="#screen_bg" style_image_recolor_opa="0" clickable="false" event_bubble="true"/><lv_obj name="camera_overlay"
+            width="100%" height="100%" align="center" style_pad_all="#space_lg" scrollbar_mode="off"
+            style_bg_color="#card_bg" style_bg_opa="cover" style_radius="#border_radius" style_clip_corner="true"
+            flex_flow="column" style_flex_cross_place="center" style_layout="flex" style_flex_main_place="center"
+            style_flex_track_place="center" style_pad_row="#space_sm" clickable="false" event_bubble="true"><icon name="camera_icon"
+            src="video" size="lg" variant="secondary" align="center" clickable="false" event_bubble="true"/><text_body name="camera_status"
+                 width="100%" style_text_color="#text_muted" style_text_align="center" bind_text="camera_status_text"
+                 clickable="false" event_bubble="true"/></lv_obj></view></component>

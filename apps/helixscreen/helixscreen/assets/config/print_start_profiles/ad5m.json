@@ -1,0 +1,79 @@
+{
+  "name": "FlashForge AD5M",
+  "description": "FlashForge Adventurer 5M/5M Pro — supports both Forge-X mod and Klipper Mod firmware",
+  "progress_mode": "weighted",
+  "signal_formats": [
+    {
+      "prefix": "// State: ",
+      "mappings": {
+        "PREPARING...":         { "phase": "INITIALIZING",    "message": "Preparing..." },
+        "MD5 CHECK":            { "phase": "INITIALIZING",    "message": "Verifying file..." },
+        "HOMING...":            { "phase": "HOMING",          "message": "Homing axes..." },
+        "PREPARE CLEANING...":  { "phase": "CLEANING",        "message": "Preparing to clean..." },
+        "HEATING...":           { "phase": "HEATING_BED",     "message": "Heating..." },
+        "CLEANING START SOON":  { "phase": "CLEANING",        "message": "Starting nozzle clean..." },
+        "CLEANING...":          { "phase": "CLEANING",        "message": "Cleaning nozzle..." },
+        "COOLING DOWN...":      { "phase": "CLEANING",        "message": "Cooling for probing..." },
+        "FINISHING CLEANING...":{ "phase": "CLEANING",        "message": "Finishing clean..." },
+        "DONE!":                { "phase": "CLEANING",        "message": "Nozzle clean complete" },
+        "KAMP LEVELING...":     { "phase": "BED_MESH",        "message": "Creating bed mesh..." },
+        "WAIT FOR TEMPERATURE...": { "phase": "HEATING_NOZZLE", "message": "Reheating..." },
+        "KAMP PRIMING...":      { "phase": "PURGING",         "message": "Priming nozzle..." },
+        "PRINTING...":          { "phase": "COMPLETE",         "message": "Starting print..." }
+      }
+    }
+  ],
+  "response_patterns": [
+    {
+      "pattern": "// Wait bed temperature to reach (\\d+)",
+      "phase": "HEATING_BED",
+      "message": "Heating bed to $1\u00b0C...",
+      "weight": 15
+    },
+    {
+      "pattern": "// Wait extruder temperature to reach (\\d+)",
+      "phase": "HEATING_NOZZLE",
+      "message": "Heating nozzle to $1\u00b0C...",
+      "weight": 15
+    },
+    {
+      "pattern": "flashforge_loadcell.*[Tt]are|Result is z=",
+      "phase": "HOMING",
+      "message": "Calibrating Probe...",
+      "weight": 10
+    },
+    {
+      "pattern": "probe at|Probing mesh|generating mesh",
+      "phase": "BED_MESH",
+      "message": "Probing Bed Mesh...",
+      "weight": 20
+    },
+    {
+      "pattern": "Mesh Bed Leveling Complete|Bed Mesh state has been saved",
+      "phase": "BED_MESH",
+      "message": "Bed Mesh Complete",
+      "weight": 20
+    },
+    {
+      "pattern": "G28|Homing|Home All Axes|homing",
+      "phase": "HOMING",
+      "message": "Homing...",
+      "weight": 10
+    },
+    {
+      "pattern": "PRIME_NOZZLE|Prime.?Line|Priming|purge.?line|PURGE",
+      "phase": "PURGING",
+      "message": "Purging...",
+      "weight": 10
+    }
+  ],
+  "phase_weights": {
+    "INITIALIZING": 5,
+    "HOMING": 10,
+    "HEATING_BED": 15,
+    "HEATING_NOZZLE": 15,
+    "CLEANING": 15,
+    "BED_MESH": 20,
+    "PURGING": 10
+  }
+}

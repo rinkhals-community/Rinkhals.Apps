@@ -1,0 +1,140 @@
+{
+  "name": "default",
+  "description": "Balanced, tasteful sound theme",
+  "version": 1,
+  "defaults": {
+    "wave": "square",
+    "vel": 0.8,
+    "env": { "a": 5, "d": 40, "s": 0.6, "r": 80 }
+  },
+  "sounds": {
+    "button_tap": {
+      "description": "Crisp tactile click",
+      "steps": [
+        { "freq": 4000, "dur": 6, "wave": "square", "vel": 0.9,
+          "env": { "a": 1, "d": 5, "s": 0, "r": 1 } }
+      ]
+    },
+    "toggle_on": {
+      "description": "Satisfying two-tone confirmation",
+      "steps": [
+        { "freq": 1200, "dur": 30 },
+        { "freq": 1800, "dur": 40 }
+      ]
+    },
+    "toggle_off": {
+      "steps": [
+        { "freq": 1800, "dur": 30 },
+        { "freq": 1200, "dur": 40 }
+      ]
+    },
+    "nav_forward": {
+      "description": "Ascending chirp with filter sweep",
+      "steps": [
+        { "freq": 600, "dur": 50, "wave": "saw",
+          "sweep": { "target": "freq", "end": 2400 },
+          "filter": { "type": "lowpass", "cutoff": 800, "sweep_to": 4000 },
+          "env": { "a": 2, "d": 10, "s": 0.7, "r": 20 } }
+      ]
+    },
+    "nav_back": {
+      "description": "Descending chirp",
+      "steps": [
+        { "freq": 2400, "dur": 50, "wave": "saw",
+          "sweep": { "target": "freq", "end": 600 },
+          "filter": { "type": "lowpass", "cutoff": 4000, "sweep_to": 800 },
+          "env": { "a": 2, "d": 10, "s": 0.7, "r": 20 } }
+      ]
+    },
+    "dropdown_open": {
+      "description": "Soft pop",
+      "steps": [
+        { "freq": 1800, "dur": 15, "vel": 0.5,
+          "env": { "a": 1, "d": 14, "s": 0, "r": 1 } }
+      ]
+    },
+    "print_complete": {
+      "description": "Triumphant arpeggio",
+      "bpm": 140,
+      "steps": [
+        { "note": "C5", "dur": "8n", "wave": "square", "vel": 0.8,
+          "env": { "a": 5, "d": 40, "s": 0.6, "r": 80 } },
+        { "note": "E5", "dur": "8n" },
+        { "note": "G5", "dur": "8n" },
+        { "note": "C6", "dur": "4n", "vel": 1.0,
+          "env": { "a": 5, "d": 60, "s": 0.8, "r": 200 } }
+      ]
+    },
+    "print_cancelled": {
+      "description": "Descending minor tone",
+      "steps": [
+        { "note": "E5", "dur": 120, "vel": 0.6 },
+        { "note": "C5", "dur": 200, "vel": 0.4,
+          "env": { "a": 5, "d": 50, "s": 0.3, "r": 150 } }
+      ]
+    },
+    "error_alert": {
+      "description": "Urgent pulsing alert",
+      "steps": [
+        { "freq": 2400, "dur": 150, "wave": "saw",
+          "lfo": { "target": "amplitude", "rate": 8, "depth": 0.5 },
+          "env": { "a": 2, "d": 20, "s": 0.9, "r": 30 } },
+        { "pause": 80 },
+        { "freq": 2400, "dur": 150,
+          "lfo": { "target": "amplitude", "rate": 8, "depth": 0.5 } }
+      ],
+      "repeat": 3
+    },
+    "error_tone": {
+      "description": "Short error feedback for toasts",
+      "steps": [
+        { "freq": 200, "dur": 80, "wave": "square", "vel": 0.7 },
+        { "pause": 40 },
+        { "freq": 150, "dur": 120, "vel": 0.5 }
+      ]
+    },
+    "alarm_urgent": {
+      "description": "Continuous alarm for critical failures",
+      "steps": [
+        { "freq": 2500, "dur": 200, "wave": "saw",
+          "lfo": { "target": "freq", "rate": 4, "depth": 300 } },
+        { "pause": 100 },
+        { "freq": 1800, "dur": 200,
+          "lfo": { "target": "freq", "rate": 4, "depth": 300 } },
+        { "pause": 100 }
+      ],
+      "repeat": 5
+    },
+    "test_beep": {
+      "description": "Settings test sound",
+      "steps": [
+        { "freq": 1000, "dur": 100, "vel": 0.8,
+          "env": { "a": 5, "d": 20, "s": 0.6, "r": 30 } }
+      ]
+    },
+    "startup": {
+      "description": "Boot chime — ascending arpeggio with filter bloom",
+      "bpm": 140,
+      "steps": [
+        { "note": "C4", "dur": "16n", "wave": "saw", "vel": 0.5,
+          "filter": { "type": "lowpass", "cutoff": 600, "sweep_to": 3000 },
+          "env": { "a": 3, "d": 30, "s": 0.4, "r": 20 } },
+        { "note": "E4", "dur": "16n", "wave": "saw", "vel": 0.6,
+          "filter": { "type": "lowpass", "cutoff": 800, "sweep_to": 3500 },
+          "env": { "a": 3, "d": 30, "s": 0.4, "r": 20 } },
+        { "note": "G4", "dur": "16n", "wave": "saw", "vel": 0.7,
+          "filter": { "type": "lowpass", "cutoff": 1000, "sweep_to": 4000 },
+          "env": { "a": 3, "d": 30, "s": 0.4, "r": 20 } },
+        { "note": "C5", "dur": "8n", "wave": "saw", "vel": 0.8,
+          "filter": { "type": "lowpass", "cutoff": 1200, "sweep_to": 5000 },
+          "env": { "a": 3, "d": 40, "s": 0.5, "r": 40 } },
+        { "pause": 30 },
+        { "note": "E5", "dur": "8n", "wave": "saw", "vel": 0.85,
+          "filter": { "type": "lowpass", "cutoff": 1500, "sweep_to": 6000 },
+          "env": { "a": 3, "d": 50, "s": 0.6, "r": 60 } },
+        { "note": "G5", "dur": "4n", "vel": 0.9, "wave": "square",
+          "env": { "a": 5, "d": 80, "s": 0.7, "r": 150 } }
+      ]
+    }
+  }
+}

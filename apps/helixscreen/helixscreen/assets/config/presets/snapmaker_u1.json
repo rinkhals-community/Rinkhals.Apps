@@ -1,0 +1,228 @@
+{
+  "preset": "snapmaker_u1",
+  "wizard_completed": false,
+  "display": {
+    "rotate": 0,
+    "rotation_probed": true
+  },
+  "printer": {
+    "heaters": {
+      "bed": "heater_bed",
+      "hotend": "extruder",
+      "hotend1": "extruder1",
+      "hotend2": "extruder2",
+      "hotend3": "extruder3"
+    },
+    "temp_sensors": {
+      "bed": "heater_bed",
+      "hotend": "extruder",
+      "chamber": "temperature_sensor cavity"
+    },
+    "fans": {
+      "chamber": "",
+      "exhaust": "",
+      "hotend": "heater_fan e0_nozzle_fan",
+      "part": "fan",
+      "names": {
+        "fan_generic cavity_fan": "Aux Bed Fan"
+      }
+    },
+    "leds": {
+      "strip": "led cavity_led",
+      "selected_strips": [
+        "led cavity_led"
+      ],
+      "startup_brightness": 80,
+      "led_on_at_start": false
+    },
+    "filament_sensors": {
+      "master_enabled": true,
+      "sensors": [
+        {
+          "enabled": true,
+          "klipper_name": "filament_motion_sensor e0_filament",
+          "role": "runout",
+          "type": "motion"
+        },
+        {
+          "enabled": true,
+          "klipper_name": "filament_motion_sensor e1_filament",
+          "role": "runout",
+          "type": "motion"
+        },
+        {
+          "enabled": true,
+          "klipper_name": "filament_motion_sensor e2_filament",
+          "role": "runout",
+          "type": "motion"
+        },
+        {
+          "enabled": true,
+          "klipper_name": "filament_motion_sensor e3_filament",
+          "role": "runout",
+          "type": "motion"
+        }
+      ]
+    },
+    "hardware": {
+      "expected": [
+        "heater_bed",
+        "extruder",
+        "extruder1",
+        "extruder2",
+        "extruder3",
+        "fan",
+        "heater_fan power_fan",
+        "fan_generic cavity_fan",
+        "heater_fan e0_nozzle_fan",
+        "fan_generic e1_fan",
+        "heater_fan e1_nozzle_fan",
+        "fan_generic e2_fan",
+        "heater_fan e2_nozzle_fan",
+        "fan_generic e3_fan",
+        "heater_fan e3_nozzle_fan",
+        "led cavity_led",
+        "filament_motion_sensor e0_filament",
+        "filament_motion_sensor e1_filament",
+        "filament_motion_sensor e2_filament",
+        "filament_motion_sensor e3_filament"
+      ]
+    },
+    "default_macros": {
+      "cooldown": "SET_HEATER_TEMPERATURE HEATER=extruder TARGET=0\nSET_HEATER_TEMPERATURE HEATER=extruder1 TARGET=0\nSET_HEATER_TEMPERATURE HEATER=extruder2 TARGET=0\nSET_HEATER_TEMPERATURE HEATER=extruder3 TARGET=0\nSET_HEATER_TEMPERATURE HEATER=heater_bed TARGET=0",
+      "load_filament": {
+        "label": "Load",
+        "gcode": "AUTO_FEEDING"
+      },
+      "unload_filament": {
+        "label": "Unload",
+        "gcode": "INNER_FILAMENT_UNLOAD"
+      },
+      "macro_1": {
+        "label": "Clean Nozzle",
+        "gcode": "ROUGHLY_CLEAN_NOZZLE"
+      },
+      "macro_2": {
+        "label": "Bed Mesh",
+        "gcode": "BED_MESH_CALIBRATE"
+      }
+    },
+    "panel_widgets": {
+      "home": {
+        "main_page_index": 0,
+        "next_page_id": 1,
+        "pages": [
+          {
+            "id": "main",
+            "widgets": [
+              {
+                "id": "printer_image",
+                "enabled": true,
+                "col": 0,
+                "row": 0,
+                "colspan": 2,
+                "rowspan": 2
+              },
+              {
+                "id": "print_status",
+                "enabled": true,
+                "col": 2,
+                "row": 0,
+                "colspan": 4,
+                "rowspan": 2
+              },
+              {
+                "id": "nozzle_temps",
+                "enabled": true,
+                "col": 0,
+                "row": 2,
+                "colspan": 2,
+                "rowspan": 2
+              },
+              {
+                "id": "ams",
+                "enabled": true,
+                "col": 2,
+                "row": 2,
+                "colspan": 4,
+                "rowspan": 1
+              },
+              {
+                "id": "tool_switcher",
+                "enabled": true,
+                "col": 2,
+                "row": 3,
+                "colspan": 1,
+                "rowspan": 1
+              },
+              {
+                "id": "fan_stack",
+                "enabled": true,
+                "col": 3,
+                "row": 3,
+                "colspan": 1,
+                "rowspan": 1
+              },
+              {
+                "id": "led",
+                "enabled": true,
+                "col": 4,
+                "row": 3,
+                "colspan": 1,
+                "rowspan": 1
+              },
+              {
+                "id": "notifications",
+                "enabled": true,
+                "col": 5,
+                "row": 3,
+                "colspan": 1,
+                "rowspan": 1
+              },
+              {
+                "id": "tips",
+                "enabled": false,
+                "col": -1,
+                "row": -1,
+                "colspan": 4,
+                "rowspan": 2
+              },
+              {
+                "id": "preheat",
+                "enabled": false,
+                "col": -1,
+                "row": -1,
+                "colspan": 3,
+                "rowspan": 1
+              },
+              {
+                "id": "filament",
+                "enabled": false,
+                "col": -1,
+                "row": -1,
+                "colspan": 1,
+                "rowspan": 1
+              },
+              {
+                "id": "temperature",
+                "enabled": false,
+                "col": -1,
+                "row": -1,
+                "colspan": 1,
+                "rowspan": 1
+              },
+              {
+                "id": "bed_temperature",
+                "enabled": false,
+                "col": -1,
+                "row": -1,
+                "colspan": 1,
+                "rowspan": 1
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

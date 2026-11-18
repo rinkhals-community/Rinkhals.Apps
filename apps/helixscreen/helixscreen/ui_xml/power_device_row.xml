@@ -1,0 +1,5 @@
+<?xml version="1.0"?><component><api><prop name="device_name" type="string" default="Device"/></api><view name="power_device_row"
+        extends="lv_obj" width="100%" height="content" flex_flow="row" style_flex_main_place="space_between"
+        style_flex_cross_place="center" style_bg_opa="0" style_border_width="0" style_pad_left="#space_md"
+        style_pad_right="#space_md" style_pad_top="#space_sm" style_pad_bottom="#space_sm" scrollable="false"><lv_obj flex_grow="1" flex_flow="column" style_pad_gap="#space_xs" scrollable="false"><text_body name="device_label" text="$device_name"/><text_small name="device_status" text="" hidden="true"/></lv_obj><lv_obj height="content"
+            flex_flow="row" style_flex_cross_place="center" style_pad_gap="#space_sm" scrollable="false"><icon name="lock_icon" src="lock" size="sm" variant="secondary" hidden="true"/><ui_switch name="device_toggle" size="small"><event_cb trigger="value_changed" callback="on_power_device_toggle"/></ui_switch></lv_obj></view></component>

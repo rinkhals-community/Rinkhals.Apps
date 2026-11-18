@@ -1,0 +1,1 @@
+<?xml version="1.0"?><component><api><prop name="text" type="string" default=""/><prop name="variant" type="string" default="muted"/></api><view extends="lv_obj"/></component>

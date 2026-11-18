@@ -1,0 +1,78 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# systemd service — restart HelixScreen after Moonraker update
+#
+# Triggered by helixscreen-update.path when release_info.json changes.
+# Waits 10 seconds for Moonraker to finish extracting all files before
+# restarting the service.
+#
+# After restarting, re-arms the path unit's inotify watch.  Moonraker's
+# shutil.rmtree() invalidates watches on the old inode, so we restart
+# the path unit to pick up the new file at its new inode.
+#
+# Workaround for mainsail-crew/mainsail#2444.
+
+[Unit]
+Description=Restart HelixScreen after update
+
+[Service]
+Type=oneshot
+
+# One ExecStart script, so a guard that skips exits 0 and the unit reads as
+# succeeded instead of failed. ExecCondition= would say the same thing, but
+# systemd before 243 (Debian Buster) ignores the key and the guards with it.
+#
+# The guards, in order:
+#
+# 1. Boot grace.  NTP clock sync during early boot can make PathChanged fire
+#    spuriously (#536), and a real Moonraker update can't land within 5 minutes
+#    of power-on.  /proc/uptime is monotonic, immune to clock jumps; 300s
+#    covers systems with many MCUs, where NTP sync arrives 60-120s+ after boot.
+#
+# 2. Wait 10 seconds for Moonraker to finish extracting all files.  It runs
+#    before the self-update check so the app has time to write its sentinel.
+#
+# 3. Self-update.  helix-screen writes a sentinel before _exit(0); the
+#    watchdog then exits too (HELIX_SERVICE_RESTARTS), and helixscreen.service's
+#    Restart=always restarts it, running its ExecStartPre unit refresh.  The
+#    sentinel is NOT deleted here: the path watcher can fire several times
+#    after an atomic directory swap (inotify invalidation + delayed systemd
+#    rescan), so it must persist to block every spurious trigger.  The app
+#    removes it on its next successful startup.  Two locations:
+#      @@INSTALL_PARENT@@/.helixscreen/ - preferred, works with PrivateTmp
+#      /tmp/helixscreen_self_restart - legacy fallback (broken with PrivateTmp)
+#
+# 4. Uninstall in progress.  The uninstaller drops this sentinel before any
+#    destructive work and clean_helix_state_dirs sweeps it at the end; while
+#    it exists helixscreen must not be respawned out from under it.
+#
+# Then refresh the systemd units from the newly extracted install dir.  The
+# template logic lives in a script so Moonraker's extraction updates it, and
+# the installer's sed pass never touches @@placeholder@@ patterns inside it.
+# Runs as root (no User= set).  Finally restart helixscreen and re-arm the path
+# unit's inotify watch: Moonraker's shutil.rmtree() invalidates watches on the
+# old inode, and restarting the path unit picks up the new file.
+ExecStart=/bin/sh -c '\
+  UPTIME_S=$$(cut -d. -f1 /proc/uptime); \
+  if [ "$$UPTIME_S" -lt 300 ]; then \
+    echo "Skipping: system booted $${UPTIME_S}s ago (< 300s grace)"; \
+    exit 0; \
+  fi; \
+  sleep 10; \
+  for f in "@@INSTALL_PARENT@@/.helixscreen/self_restart_sentinel" \
+           /tmp/helixscreen_self_restart; do \
+    if [ -f "$$f" ]; then \
+      echo "Skipping: self-update restart handled by watchdog ($$f)"; \
+      exit 0; \
+    fi; \
+  done; \
+  for f in /var/lib/helixscreen/.uninstalling \
+           "@@INSTALL_PARENT@@/.helixscreen/.uninstalling"; do \
+    if [ -f "$$f" ]; then \
+      echo "Skipping: uninstall in progress ($$f)"; \
+      exit 0; \
+    fi; \
+  done; \
+  @@INSTALL_DIR@@/config/refresh-service-units.sh || exit $$?; \
+  systemctl restart helixscreen || exit $$?; \
+  systemctl restart helixscreen-update.path'

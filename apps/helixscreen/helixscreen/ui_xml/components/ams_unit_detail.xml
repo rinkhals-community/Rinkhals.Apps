@@ -1,0 +1,12 @@
+<?xml version="1.0"?><component><consts><color name="tray_bg" value="#505050"/><color name="tray_border" value="#606060"/><number name="tray_bg_opa" value="100"/><px name="tray_default_height" value="30"/></consts><view name="ams_unit_detail"
+        extends="lv_obj" width="100%" height="content" style_pad_all="0" style_pad_gap="0" flex_flow="row"
+        scrollable="false"><lv_obj name="slot_container" width="1" height="content" flex_grow="1" style_pad_all="0" scrollable="false"><lv_obj name="slot_grid"
+              width="100%" height="content" style_pad_all="0" style_pad_row="0" style_pad_column="0" flex_flow="row"
+              style_flex_main_place="start" style_flex_cross_place="start" scrollable="false"></lv_obj><lv_obj name="labels_layer" width="100%" height="80" style_pad_all="0" scrollable="false" clickable="false"/><lv_obj name="slot_tray"
+              width="100%" height="#tray_default_height" align="bottom_mid" style_bg_opa="0" style_border_width="0"
+              style_pad_all="0" scrollable="false" clickable="false"/><lv_obj name="badge_layer" width="100%" height="100%" style_pad_all="0" scrollable="false" clickable="false"/></lv_obj><ams_environment_indicator name="env_indicator"
+                               temp_text="ams_env_ind_detail_temp_text" humidity_text="ams_env_ind_detail_humidity_text"
+                               humidity_status="ams_env_ind_detail_humidity_status"
+                               humidity_visible="ams_env_ind_detail_humidity_visible"
+                               visible="ams_env_ind_detail_visible" drying_active="ams_env_ind_detail_drying_active"
+                               drying_text="ams_env_ind_detail_drying_text"/></view></component>

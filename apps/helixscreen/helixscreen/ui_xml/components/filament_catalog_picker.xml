@@ -1,0 +1,11 @@
+<?xml version="1.0"?><component><view name="filament_catalog_picker"
+        extends="ui_dialog" width="70%" height="85%" style_min_width="380" align="center" flex_flow="column"
+        style_flex_main_place="start" style_pad_gap="0"><modal_header title="Choose Filament"
+                  title_tag="Choose Filament" hide_icon="true" hide_close="false"
+                  close_callback="catalog_picker_close_cb"/><divider_horizontal/><lv_obj width="100%"
+            height="content" flex_grow="1" style_pad_all="#space_md" flex_flow="column" style_pad_gap="#space_md"
+            scrollable="false"><filament_catalog_selector name="catalog_selector"/></lv_obj><modal_button_row primary_text="Select"
+                      primary_tag="Select" primary_callback="catalog_picker_select_cb" secondary_text="Cancel"
+                      secondary_tag="Cancel" secondary_callback="catalog_picker_close_cb"
+                      tertiary_text="Reset to defaults" tertiary_tag="Reset to defaults"
+                      tertiary_callback="catalog_picker_reset_cb" tertiary_variant="secondary" hide_tertiary="false"/></view></component>

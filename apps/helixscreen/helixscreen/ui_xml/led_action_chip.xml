@@ -1,0 +1,3 @@
+<?xml version="1.0"?><component><api><prop name="label" type="string" default="Action"/></api><px name="chip_height" value="36"/><px name="chip_radius" value="18"/><px name="chip_min_width" value="64"/><view name="led_action_chip"
+        extends="ui_button" height="#chip_height" variant="secondary" text="$label" style_radius="#chip_radius"
+        style_min_width="#chip_min_width"/></component>

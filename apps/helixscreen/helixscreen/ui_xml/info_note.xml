@@ -1,0 +1,3 @@
+<?xml version="1.0"?><component><api><prop name="icon" type="string" default="info_outline"/><prop name="text" type="string" default=""/><prop name="text_tag" type="string" default=""/><prop name="icon_variant" type="string" default="secondary"/></api><view extends="lv_obj"
+        width="100%" height="content" style_pad_all="#space_sm" flex_flow="row" style_flex_cross_place="center"
+        style_pad_gap="#space_sm"><icon src="$icon" size="sm" variant="$icon_variant"/><text_small text="$text" translation_tag="$text_tag" flex_grow="1"/></view></component>

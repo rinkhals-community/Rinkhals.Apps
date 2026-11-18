@@ -1,0 +1,436 @@
+{
+ "printers": [
+  {
+   "id": "anycubic_kobra_s1",
+   "enclosed": true,
+   "name": "Anycubic Kobra S1",
+   "manufacturer": "Anycubic",
+   "image": "anycubic-kobra-s1.png",
+   "preset": "anycubic_kobra_s1",
+   "print_start_profile": "anycubic_kobra_s1",
+   "heuristics": [
+    {
+     "type": "kinematics_match",
+     "field": "kinematics",
+     "pattern": "corexy",
+     "confidence": 40,
+     "reason": "CoreXY kinematics - confirmed via Anycubic Klipper-go printer_s1c.cfg"
+    },
+    {
+     "type": "object_exists",
+     "field": "printer_objects",
+     "pattern": "filament_hub",
+     "confidence": 55,
+     "reason": "ACE multi-material hub (Kobra S1 Combo; GoKlipper [ace] registers as filament_hub)"
+    },
+    {
+     "type": "object_exists",
+     "field": "printer_objects",
+     "pattern": "filament_tracker",
+     "confidence": 45,
+     "reason": "ADC filament_tracker (Kobra S1)"
+    },
+    {
+     "type": "build_volume_range",
+     "field": "bed_mesh",
+     "min_x": 245,
+     "max_x": 285,
+     "min_y": 245,
+     "max_y": 285,
+     "confidence": 55,
+     "reason": "Build volume ~250x250 (Kobra S1, pos_max 265x277)"
+    },
+    {
+     "type": "hostname_match",
+     "field": "hostname",
+     "pattern": "anycubic",
+     "confidence": 80,
+     "reason": "Hostname contains 'anycubic'"
+    },
+    {
+     "type": "hostname_match",
+     "field": "hostname",
+     "pattern": "kobras1",
+     "confidence": 96,
+     "reason": "Hostname contains 'kobras1'"
+    },
+    {
+     "type": "hostname_match",
+     "field": "hostname",
+     "pattern": "kobra-s1",
+     "confidence": 96,
+     "reason": "Hostname contains 'kobra-s1'"
+    },
+    {
+     "type": "mcu_match",
+     "field": "mcu",
+     "pattern": "HC32F460",
+     "confidence": 45,
+     "reason": "HC32F460 MCU (Huada chip - Anycubic signature)"
+    },
+    {
+     "type": "hostname_match",
+     "field": "hostname",
+     "pattern": "kobra-ks1-",
+     "confidence": 99,
+     "reason": "Rinkhals hostname for this model (kobra-ks1-xxxx)"
+    }
+   ]
+  },
+  {
+   "id": "anycubic_kobra_s1_max",
+   "enclosed": true,
+   "name": "Anycubic Kobra S1 Max",
+   "manufacturer": "Anycubic",
+   "image": "anycubic-kobra-s1-max.png",
+   "preset": "anycubic_kobra_s1_max",
+   "print_start_profile": "anycubic_kobra_s1",
+   "heuristics": [
+    {
+     "type": "kinematics_match",
+     "field": "kinematics",
+     "pattern": "corexy",
+     "confidence": 40,
+     "reason": "CoreXY kinematics (enclosed, inherited from Kobra S1)"
+    },
+    {
+     "type": "object_exists",
+     "field": "printer_objects",
+     "pattern": "chamber",
+     "confidence": 50,
+     "reason": "Heated chamber (Kobra S1 Max exclusive)"
+    },
+    {
+     "type": "object_exists",
+     "field": "printer_objects",
+     "pattern": "filament_hub",
+     "confidence": 45,
+     "reason": "ACE multi-material hub (Kobra S1 Max Combo; GoKlipper [ace] registers as filament_hub)"
+    },
+    {
+     "type": "build_volume_range",
+     "field": "bed_mesh",
+     "min_x": 330,
+     "max_x": 470,
+     "min_y": 330,
+     "max_y": 470,
+     "confidence": 65,
+     "reason": "Large CoreXY build volume ~350mm (S1 Max, official config unpublished)"
+    },
+    {
+     "type": "hostname_match",
+     "field": "hostname",
+     "pattern": "anycubic",
+     "confidence": 80,
+     "reason": "Hostname contains 'anycubic'"
+    },
+    {
+     "type": "hostname_match",
+     "field": "hostname",
+     "pattern": "kobras1max",
+     "confidence": 97,
+     "reason": "Hostname contains 'kobras1max'"
+    },
+    {
+     "type": "hostname_match",
+     "field": "hostname",
+     "pattern": "kobra-s1-max",
+     "confidence": 97,
+     "reason": "Hostname contains 'kobra-s1-max'"
+    },
+    {
+     "type": "mcu_match",
+     "field": "mcu",
+     "pattern": "HC32F460",
+     "confidence": 45,
+     "reason": "HC32F460 MCU (Huada chip - Anycubic signature)"
+    },
+    {
+     "type": "hostname_match",
+     "field": "hostname",
+     "pattern": "kobra-ks1m-",
+     "confidence": 99,
+     "reason": "Rinkhals hostname for this model (kobra-ks1m-xxxx)"
+    }
+   ]
+  },
+  {
+   "id": "anycubic_kobra_3",
+   "name": "Anycubic Kobra 3",
+   "manufacturer": "Anycubic",
+   "image": "anycubic-kobra-3.png",
+   "preset": "anycubic_kobra_3",
+   "preset_default": true,
+   "_preset_default_comment": "The anycubic_kobra_3 family's default: a preset install whose detection names no Kobra 3 machine persists this entry, the base model rather than the V2, rather than database order",
+   "print_start_profile": "anycubic_kobra",
+   "heuristics": [
+    {
+     "type": "kinematics_match",
+     "field": "kinematics",
+     "pattern": "cartesian",
+     "confidence": 40,
+     "reason": "Cartesian kinematics (bedslinger) - confirmed via Anycubic Klipper-go printer_k3c_k3v2c.cfg"
+    },
+    {
+     "type": "object_exists",
+     "field": "printer_objects",
+     "pattern": "filament_hub",
+     "confidence": 55,
+     "reason": "ACE multi-material hub (Kobra 3 Combo; GoKlipper [ace] registers as filament_hub)"
+    },
+    {
+     "type": "object_exists",
+     "field": "printer_objects",
+     "pattern": "cs1237",
+     "confidence": 50,
+     "reason": "CS1237 load cell (Kobra 3 nozzle-load leveling)"
+    },
+    {
+     "type": "build_volume_range",
+     "field": "bed_mesh",
+     "min_x": 245,
+     "max_x": 285,
+     "min_y": 245,
+     "max_y": 270,
+     "confidence": 55,
+     "reason": "Build volume ~250x250 (Kobra 3 size, pos_max 278.5x260)"
+    },
+    {
+     "type": "hostname_match",
+     "field": "hostname",
+     "pattern": "anycubic",
+     "confidence": 80,
+     "reason": "Hostname contains 'anycubic'"
+    },
+    {
+     "type": "hostname_match",
+     "field": "hostname",
+     "pattern": "kobra3",
+     "confidence": 95,
+     "reason": "Hostname contains 'kobra3'"
+    },
+    {
+     "type": "hostname_match",
+     "field": "hostname",
+     "pattern": "kobra-3",
+     "confidence": 95,
+     "reason": "Hostname contains 'kobra-3'"
+    },
+    {
+     "type": "hostname_match",
+     "field": "hostname",
+     "pattern": "kobra-k3-",
+     "confidence": 99,
+     "reason": "Rinkhals hostname for this model (kobra-k3-xxxx)"
+    }
+   ]
+  },
+  {
+   "id": "anycubic_kobra_3_max",
+   "name": "Anycubic Kobra 3 Max",
+   "manufacturer": "Anycubic",
+   "image": "anycubic-kobra-3-max.png",
+   "preset": "anycubic_kobra_3_max",
+   "print_start_profile": "anycubic_kobra",
+   "heuristics": [
+    {
+     "type": "kinematics_match",
+     "field": "kinematics",
+     "pattern": "cartesian",
+     "confidence": 40,
+     "reason": "Cartesian kinematics (large bedslinger) - confirmed via printer_k3mc.cfg"
+    },
+    {
+     "type": "object_exists",
+     "field": "printer_objects",
+     "pattern": "stepper_y1",
+     "confidence": 60,
+     "reason": "Dual-Y steppers (Kobra 3 Max signature)"
+    },
+    {
+     "type": "object_exists",
+     "field": "printer_objects",
+     "pattern": "filament_hub",
+     "confidence": 50,
+     "reason": "ACE multi-material hub (Kobra 3 Max Combo; GoKlipper [ace] registers as filament_hub)"
+    },
+    {
+     "type": "object_exists",
+     "field": "printer_objects",
+     "pattern": "filament_tracker",
+     "confidence": 45,
+     "reason": "GPIO filament_tracker (Kobra 3 Max)"
+    },
+    {
+     "type": "build_volume_range",
+     "field": "bed_mesh",
+     "min_x": 410,
+     "max_x": 485,
+     "min_y": 410,
+     "max_y": 445,
+     "confidence": 70,
+     "reason": "Large build volume ~420x420 (Kobra 3 Max, pos_max 478x440)"
+    },
+    {
+     "type": "hostname_match",
+     "field": "hostname",
+     "pattern": "kobra3max",
+     "confidence": 97,
+     "reason": "Hostname contains 'kobra3max'"
+    },
+    {
+     "type": "hostname_match",
+     "field": "hostname",
+     "pattern": "kobra-3-max",
+     "confidence": 97,
+     "reason": "Hostname contains 'kobra-3-max'"
+    },
+    {
+     "type": "hostname_match",
+     "field": "hostname",
+     "pattern": "kobra-k3m-",
+     "confidence": 99,
+     "reason": "Rinkhals hostname for this model (kobra-k3m-xxxx)"
+    }
+   ]
+  },
+  {
+   "id": "anycubic_kobra_3_v2",
+   "name": "Anycubic Kobra 3 V2",
+   "manufacturer": "Anycubic",
+   "image": "anycubic-kobra-3-v2.png",
+   "preset": "anycubic_kobra_3",
+   "print_start_profile": "anycubic_kobra",
+   "heuristics": [
+    {
+     "type": "kinematics_match",
+     "field": "kinematics",
+     "pattern": "cartesian",
+     "confidence": 40,
+     "reason": "Cartesian kinematics (bedslinger) - shares printer_k3c_k3v2c.cfg with Kobra 3"
+    },
+    {
+     "type": "object_exists",
+     "field": "printer_objects",
+     "pattern": "filament_hub",
+     "confidence": 50,
+     "reason": "ACE multi-material hub (Kobra 3 V2 Combo; GoKlipper [ace] registers as filament_hub)"
+    },
+    {
+     "type": "object_exists",
+     "field": "printer_objects",
+     "pattern": "cs1237",
+     "confidence": 45,
+     "reason": "CS1237 load cell (shared Kobra 3 platform)"
+    },
+    {
+     "type": "build_volume_range",
+     "field": "bed_mesh",
+     "min_x": 245,
+     "max_x": 285,
+     "min_y": 245,
+     "max_y": 270,
+     "confidence": 50,
+     "reason": "Build volume ~250x250 (Kobra 3 V2, identical hardware to Kobra 3)"
+    },
+    {
+     "type": "hostname_match",
+     "field": "hostname",
+     "pattern": "kobra3v2",
+     "confidence": 97,
+     "reason": "Hostname contains 'kobra3v2'"
+    },
+    {
+     "type": "hostname_match",
+     "field": "hostname",
+     "pattern": "kobra-3-v2",
+     "confidence": 97,
+     "reason": "Hostname contains 'kobra-3-v2'"
+    },
+    {
+     "type": "hostname_match",
+     "field": "hostname",
+     "pattern": "k3v2",
+     "confidence": 96,
+     "reason": "Hostname contains 'k3v2'"
+    },
+    {
+     "type": "hostname_match",
+     "field": "hostname",
+     "pattern": "anycubic",
+     "confidence": 80,
+     "reason": "Hostname contains 'anycubic'"
+    },
+    {
+     "type": "hostname_match",
+     "field": "hostname",
+     "pattern": "kobra-k3v2-",
+     "confidence": 99,
+     "reason": "Rinkhals hostname for this model (kobra-k3v2-xxxx)"
+    }
+   ]
+  },
+  {
+   "id": "anycubic_kobra_2_pro",
+   "name": "Anycubic Kobra 2 Pro",
+   "manufacturer": "Anycubic",
+   "image": "anycubic-kobra-2-pro.png",
+   "preset": "anycubic_kobra_2_pro",
+   "print_start_profile": "anycubic_kobra",
+   "heuristics": [
+    {
+     "type": "kinematics_match",
+     "field": "kinematics",
+     "pattern": "cartesian",
+     "confidence": 40,
+     "reason": "Cartesian kinematics (bedslinger)"
+    },
+    {
+     "type": "object_exists",
+     "field": "printer_objects",
+     "pattern": "probe",
+     "confidence": 40,
+     "reason": "Probe present (auto-leveling)"
+    },
+    {
+     "type": "build_volume_range",
+     "field": "bed_mesh",
+     "min_x": 205,
+     "max_x": 235,
+     "min_y": 205,
+     "max_y": 235,
+     "confidence": 45,
+     "reason": "Build volume ~220mm (Kobra 2 Pro size, shared with Sovol SV06 - hostname is the discriminator)"
+    },
+    {
+     "type": "hostname_match",
+     "field": "hostname",
+     "pattern": "anycubic",
+     "confidence": 80,
+     "reason": "Hostname contains 'anycubic'"
+    },
+    {
+     "type": "hostname_match",
+     "field": "hostname",
+     "pattern": "kobra2pro",
+     "confidence": 96,
+     "reason": "Hostname contains 'kobra2pro'"
+    },
+    {
+     "type": "hostname_match",
+     "field": "hostname",
+     "pattern": "kobra-2-pro",
+     "confidence": 96,
+     "reason": "Hostname contains 'kobra-2-pro'"
+    },
+    {
+     "type": "hostname_match",
+     "field": "hostname",
+     "pattern": "kobra-k2p-",
+     "confidence": 99,
+     "reason": "Rinkhals hostname for this model (kobra-k2p-xxxx)"
+    }
+   ]
+  }
+ ]
+}

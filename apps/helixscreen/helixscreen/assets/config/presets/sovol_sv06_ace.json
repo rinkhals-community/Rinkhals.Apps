@@ -1,0 +1,51 @@
+{
+  "preset": "sovol_sv06_ace",
+  "_rotation_note": "display.rotate intentionally unset: rotation is unit-dependent on this panel, so it stays a user setting (/display/rotate).",
+  "display": {
+    "_comment": "Slow SBC + software rotation on this panel makes transition animations jerky (#986). Default them off; the user can re-enable in Settings > Display.",
+    "animations_enabled": false
+  },
+  "input": {
+    "calibration": {
+      "_comment": "Known-good matrix from #123; seeded into settings.json at install so the first-run wizard is skipped (wizard math is bad on this panel).",
+      "valid": true,
+      "a": 1.66,
+      "b": 0.0,
+      "c": 0.0,
+      "d": 0.0,
+      "e": 1.76,
+      "f": 0.0
+    }
+  },
+  "printer": {
+    "leds": {
+      "_comment": "Pre-select the camera light (output_pin cameralight).",
+      "selected_strips": ["output_pin cameralight"]
+    },
+    "_hardware_comment": "Confirmed stock Klipper object names (#986); standard names match HelixScreen defaults, so preset-mode hardware-mapping skip is safe.",
+    "heaters": {
+      "bed": "heater_bed",
+      "hotend": "extruder"
+    },
+    "fans": {
+      "part": "fan",
+      "hotend": "heater_fan hotend_fan"
+    },
+    "filament_sensors": {
+      "_comment": "Stock switch-type runout sensor (#986).",
+      "master_enabled": true,
+      "sensors": [
+        {
+          "klipper_name": "filament_switch_sensor filament_sensor",
+          "role": "runout",
+          "enabled": true
+        }
+      ]
+    },
+    "default_macros": {
+      "_comment": "Stock has no public LOAD_FILAMENT; _LOAD_FILAMENT/_UNLOAD_FILAMENT are self-contained and safe to call directly (#986).",
+      "load_filament": { "label": "Load", "gcode": "_LOAD_FILAMENT" },
+      "unload_filament": { "label": "Unload", "gcode": "_UNLOAD_FILAMENT" }
+    }
+  }
+}

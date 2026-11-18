@@ -1,0 +1,2 @@
+<?xml version="1.0"?><component><styles><style name="press_wash" bg_color="#primary" bg_opa="30%" radius="#border_radius"/><style name="metadata_strip"
+           bg_opa="160" radius="#border_radius" pad_left="#space_sm" pad_right="#space_sm" pad_gap="#space_xs"/><style name="invisible" opa="0"/></styles><view extends="lv_obj"/></component>

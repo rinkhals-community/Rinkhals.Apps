@@ -1,0 +1,7 @@
+<?xml version="1.0"?><component><view name="widget_catalog_overlay"
+        extends="overlay_panel" width="70%" title="Add Widget" title_tag="Add Widget" action_button_text="Reset"
+        action_button_text_tag="Reset" action_button_callback="on_catalog_reset" hide_action_button="false"
+        action_button_bg_color="#secondary" bg_color="#screen_bg"><lv_obj name="catalog_scroll"
+            width="100%" flex_grow="1" scrollable="true" flex_flow="column" style_pad_gap="#space_xs"
+            style_pad_left="#space_md" style_pad_right="#space_md" style_pad_top="#space_sm"
+            style_pad_bottom="#space_md"></lv_obj></view></component>

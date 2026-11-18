@@ -1,0 +1,68 @@
+{
+  "preset": "flsun_t1",
+  "wizard_completed": false,
+  "standard_macros": {
+    "_comment": "Stock FLSUN macros have no clean-nozzle or HELIX_* helpers, so the default quick buttons would run missing macros. Bed Level is FLSUN's delta calibration (BED_LEVEL_1, ends in SAVE_CONFIG). bed_mesh is left to detection: the Bed Mesh panel calibrates named profiles through it, which BED_LEVEL_2 cannot do.",
+    "bed_level": "BED_LEVEL_1",
+    "quick_button_1": "bed_level",
+    "quick_button_2": ""
+  },
+  "printer": {
+    "heaters": {
+      "bed": "heater_bed",
+      "hotend": "extruder"
+    },
+    "temp_sensors": {
+      "bed": "heater_bed",
+      "hotend": "extruder"
+    },
+    "fans": {
+      "part": "fan",
+      "hotend": "heater_fan heat_sink_fan"
+    },
+    "leds": {
+      "_comment": "The enclosure light is FLSUN's box_light module, not a Klipper LED object: F106 S1 / F106 S0 switch it (box_light.value follows).",
+      "macro_devices": [
+        {
+          "name": "Enclosure Light",
+          "type": "on_off",
+          "on_macro": "F106 S1",
+          "off_macro": "F106 S0"
+        }
+      ],
+      "selected_strips": ["macro:Enclosure Light"]
+    },
+    "filament_sensors": {
+      "master_enabled": true,
+      "sensors": [
+        {
+          "enabled": true,
+          "klipper_name": "filament_switch_sensor filament_sensor",
+          "role": "runout",
+          "type": "switch"
+        }
+      ]
+    },
+    "hardware": {
+      "expected": [
+        "heater_bed",
+        "extruder",
+        "fan",
+        "heater_fan heat_sink_fan",
+        "probe",
+        "filament_switch_sensor filament_sensor"
+      ]
+    },
+    "default_macros": {
+      "cooldown": "SET_HEATER_TEMPERATURE HEATER=extruder TARGET=0\nSET_HEATER_TEMPERATURE HEATER=heater_bed TARGET=0",
+      "load_filament": {
+        "label": "Load",
+        "gcode": "LOAD_FILAMENT"
+      },
+      "unload_filament": {
+        "label": "Unload",
+        "gcode": "UNLOAD_FILAMENT"
+      }
+    }
+  }
+}

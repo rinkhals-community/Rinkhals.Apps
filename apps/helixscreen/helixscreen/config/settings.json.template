@@ -1,0 +1,353 @@
+{
+  "config_version": 23,
+  "_config_version_comment": "Config schema version. MUST be present and current: Config::init treats a missing version as 0, reads that as a tarball default, and will restore a rolling backup over this file. Pinned by tests/unit/test_settings_template_contract.cpp.",
+  "dark_mode": true,
+  "brightness": 80,
+  "_brightness_comment": "Screen brightness percentage (1-100). Default: 80%.",
+  "sounds_enabled": true,
+  "_sounds_enabled_comment": "Master switch for all sound effects. Default: true.",
+  "ui_sounds_enabled": true,
+  "_ui_sounds_enabled_comment": "Enable UI interaction sounds (button taps, navigation). Independent of event sounds. Default: true.",
+  "sound_theme": "default",
+  "_sound_theme_comment": "Active sound theme. Loads from config/sounds/<name>.json. Options: 'default', 'minimal'. Default: 'default'.",
+  "disable_sound": false,
+  "_disable_sound_comment": "Disable all sound output. Prevents audio backend initialization entirely. Use on hardware where audio causes excessive CPU load (e.g., Artillery M1 Pro). Also available as --no-sound CLI flag. Default: false.",
+  "completion_alert": 1,
+  "_completion_alert_comment": "Print completion alert mode: 0=Off, 1=Notification, 2=Alert. Default: 1.",
+  "wizard_completed": false,
+  "_wizard_completed_comment": "Whether the setup wizard has been completed. Set automatically after first-run wizard.",
+  "wifi_expected": false,
+  "_wifi_expected_comment": "Whether WiFi connectivity is expected. Used to show connection warnings. Set during wizard.",
+  "language": "en",
+  "_language_comment": "UI language code. Options: 'en' (English). Default: 'en'.",
+  "beta_features": false,
+  "_beta_features_comment": "Enable beta features (e.g., HelixPrint plugin install prompt). Default: false. Always enabled in --test mode.",
+  "theme": {
+    "preset": 0,
+    "_preset_comment": "Theme accent preset. 0=Nord. Requires restart."
+  },
+  "log_dest": "auto",
+  "_log_dest_comment": "Log destination: 'auto' (detect best), 'journal' (systemd), 'syslog', 'file', 'console' (disable system log)",
+  "log_path": "",
+  "_log_path_comment": "Log file path when using file destination. Empty = auto (/var/log or ~/.local/share)",
+  "log_level": "info",
+  "_log_level_comment": "Log verbosity: warn (quiet), info (default), debug, trace. CLI -v flags override this.",
+  "network": {
+    "connection_type": "None",
+    "wifi_ssid": "",
+    "eth_ip": ""
+  },
+  "gcode_viewer": {
+    "tube_sides": 4,
+    "_tube_sides_comment": "Number of sides for tube cross-section. Options: 4 (diamond, fastest, default), 8 (octagonal, balanced), 16 (circular, highest quality, matches OrcaSlicer)",
+    "streaming_mode": "auto",
+    "_streaming_mode_comment": "G-code streaming mode for large files. 'auto' (calculate based on RAM), 'on' (always stream), 'off' (always full load). Override with HELIX_GCODE_STREAMING env var.",
+    "streaming_threshold_percent": 40,
+    "_streaming_threshold_percent_comment": "Percent of available RAM that triggers streaming mode (1-90). Lower = stream smaller files. Only used when streaming_mode is 'auto'.",
+    "layers_per_frame": 0,
+    "_layers_per_frame_comment": "Number of layers to render per frame during progressive 2D visualization. 0 = auto (adaptive based on render time, default), 1-100 = fixed value. Higher = faster caching, but may cause UI stutter on slow devices.",
+    "adaptive_layer_target_ms": 16,
+    "_adaptive_layer_target_ms_comment": "Target render time in milliseconds when using adaptive layers_per_frame (only used when layers_per_frame=0). Lower = smoother UI, higher = faster caching. Default 16ms = ~60 FPS."
+  },
+  "input": {
+    "scroll_throw": 25,
+    "scroll_limit": 10,
+    "_scroll_throw_comment": "Scroll momentum decay rate (1-99). Higher = faster decay. Default LVGL is 10, we use 25 for better touchpad feel.",
+    "_scroll_limit_comment": "Pixels of movement before scrolling starts. Lower = more responsive. Default LVGL is 10, we use 10 to match.",
+    "touch_device": "",
+    "_touch_device_comment": "Override touch/pointer input device (e.g., '/dev/input/event1'). Empty string enables auto-detection. Auto-detection finds touch or pointer capable devices.",
+    "device_blacklist": [],
+    "_device_blacklist_comment": "List of USB input devices HelixScreen ignores entirely for keyboard/scanner input, as 'vid:pid' lowercase 4-digit hex strings (e.g. ['002c:261a']). Use this when an external barcode scanner tool (like afc-spool-scan) needs the device and HelixScreen keeps grabbing it. Find a device's VID:PID in the Barcode Scanner settings device list, or in helixscreen.log lines '[InputScanner] Found keyboard:' / 'Found USB HID keyboard device:'. Empty list = no blacklist.",
+    "force_calibration": false,
+    "_force_calibration_comment": "Force touch calibration on next startup. Automatically cleared after calibration completes. Default: false."
+  },
+  "display": {
+    "animations_enabled": true,
+    "_animations_enabled_comment": "Enable UI animations and transitions. Default: auto-detected from platform capabilities (off on embedded/basic hardware, on for standard).",
+    "time_format": 0,
+    "_time_format_comment": "Time display format. 0 = 12-hour (2:30 PM), 1 = 24-hour (14:30). Default is 12-hour.",
+    "timezone": "UTC",
+    "_timezone_comment": "IANA timezone ID (e.g., 'America/New_York', 'Europe/London'). Applied via setenv/tzset so all localtime_r() calls produce correct local times. Default: 'UTC'.",
+    "theme": "helixscreen",
+    "_theme_comment": "Color theme, loaded from assets/config/themes/defaults/<name>.json. Options: ayu, catppuccin, chatgpt, cupertino, dracula, everforest, gruvbox, helixscreen, kanagawa, material-design, midnight, nord, onedark, rose-pine, solarized, tokyonight, yami. Default: 'helixscreen'. Requires restart.",
+    "rotate": 0,
+    "backlight_enable_ioctl": true,
+    "_backlight_enable_ioctl_comment": "Use BACKLIGHT_ENABLE/DISABLE ioctls for Allwinner display control. Some platforms (e.g. Elegoo CC1, AD5X) invert PWM polarity when these are called; set false for brightness-only control. Default: true.",
+    "backlight_floor_percent": 0,
+    "_backlight_floor_percent_comment": "Lowest brightness level (percent of the panel's raw range) the screen may drop to while on. Some panels render lower levels as black; raise this if the panel goes black before the slider minimum. 0 disables. Default: 0 (20 on K2 builds). Requires restart.",
+    "sleep_backlight_off": true,
+    "_sleep_backlight_off_comment": "Power off backlight during display sleep. Set false only on platforms where backlight power-off is verified to prevent wake-on-touch. When false, software overlay + FBIOBLANK make screen appear off while backlight stays powered. Default: true.",
+    "sleep_sec": 1200,
+    "_sleep_sec_comment": "Seconds of inactivity before display turns OFF (0 = never). Default: 1200 (20 minutes).",
+    "sleep_while_printing": true,
+    "_sleep_while_printing_comment": "Allow display to dim and sleep during active prints. When false, display stays on while printing. Default: true.",
+    "dim_sec": 600,
+    "_dim_sec_comment": "Seconds of inactivity before display dims (0 = no dimming). Default: 600 (10 minutes). Must be less than sleep_sec.",
+    "dim_brightness": 30,
+    "_dim_brightness_comment": "Brightness percentage when dimmed (1-100). Default: 30%.",
+    "screensaver_type": 1,
+    "_screensaver_type_comment": "Screensaver during display sleep. 0=Off (blank screen), 1=Flying Toasters, 2=Starfield, 3=3D Pipes. Default: 1, or 0 on low-power hardware. Replaces legacy screensaver_enabled boolean.",
+    "drm_device": "",
+    "_drm_device_comment": "Override DRM device path (e.g., '/dev/dri/card1'). Empty string enables auto-detection. Pi 5 has multiple DRM cards: card0 (v3d, 3D only), card1 (DSI touchscreen), card2 (vc4/HDMI). Auto-detection finds the first with dumb buffer support and a connected display.",
+    "gcode_render_mode": 2,
+    "_gcode_render_mode_comment": "G-code visualization mode. 0=Auto, 1=3D GLES, 2=2D Layer (default). Can also be overridden via HELIX_GCODE_MODE env var (3D/2D).",
+    "bed_mesh_render_mode": 0,
+    "_bed_mesh_render_mode_comment": "Bed mesh visualization mode. 0=3D surface (default), 1=2D heatmap. Default: 0.",
+    "bed_mesh_show_zero_plane": true,
+    "_bed_mesh_show_zero_plane_comment": "Show translucent reference plane at Z=0 in bed mesh 3D view. Helps visualize where nozzle touches bed. Default: true.",
+    "calibration": {
+      "valid": false,
+      "_comment": "Touch calibration coefficients. Set by calibration wizard or manually."
+    }
+  },
+  "output": {
+    "led_on_at_start": false,
+    "_led_on_at_start_comment": "Automatically turn on the configured LED when Klipper becomes ready. Default: false."
+  },
+  "ams": {
+    "spool_style": "3d",
+    "_spool_style_comment": "Filament spool visualization style. Options: '3d' (Bambu-style pseudo-3D canvas with gradients), 'flat' (concentric rings). Default is '3d'."
+  },
+  "appearance": {
+    "show_widget_labels": false,
+    "_show_widget_labels_comment": "Show text labels below home panel widget icons. Default: false."
+  },
+  "safety": {
+    "estop_require_confirmation": true,
+    "_estop_require_confirmation_comment": "Require confirmation dialog before emergency stop. When false, E-Stop triggers immediately. Default: true (confirmation required).",
+    "cancel_escalation_enabled": false,
+    "_cancel_escalation_enabled_comment": "Enable cancel-to-E-Stop escalation. When enabled, rapidly pressing cancel multiple times triggers an emergency stop. Default: false.",
+    "cancel_escalation_timeout_seconds": 30,
+    "_cancel_escalation_timeout_seconds_comment": "Window in seconds for cancel escalation to trigger E-Stop. Default: 30."
+  },
+  "filament_sensors": {
+    "master_enabled": true,
+    "_master_enabled_comment": "Global toggle to enable/disable all filament sensor monitoring. When false, sensor states are ignored.",
+    "sensors": [],
+    "_sensors_comment": "Array of sensor configurations. Each sensor has: klipper_name (full Klipper object name like 'filament_switch_sensor fsensor'), role ('none', 'runout', 'toolhead', 'entry'), enabled (boolean). Sensors are auto-discovered from Moonraker."
+  },
+  "cache": {
+    "thumbnail_max_mb": 20,
+    "_thumbnail_max_mb_comment": "Maximum thumbnail cache size in MB. Auto-sizes to 5% of available disk, clamped to this ceiling. AD5M default: 20",
+    "disk_critical_mb": 5,
+    "_disk_critical_mb_comment": "Stop caching when available disk falls below this (MB). Prevents filling filesystem. AD5M default: 5",
+    "disk_low_mb": 20,
+    "_disk_low_mb_comment": "Evict aggressively when available disk falls below this (MB). Reduces cache to half normal limit. AD5M default: 20"
+  },
+  "streaming": {
+    "threshold_mb": 0,
+    "_threshold_mb_comment": "File size threshold in MB for using streaming (disk-based) operations instead of buffered (in-memory). 0 = auto-detect based on 10% of available RAM. Override with HELIX_FORCE_STREAMING=1 env var to force streaming for all files.",
+    "force_streaming": false,
+    "_force_streaming_comment": "Always use streaming operations regardless of file size. Useful for memory-constrained devices or testing. Can also be set via HELIX_FORCE_STREAMING=1 env var."
+  },
+  "plugins": {
+    "enabled": [],
+    "_enabled_comment": "List of plugin IDs to load. Plugins must be explicitly enabled. Example: [\"led-effects\"]"
+  },
+  "telemetry_enabled": false,
+  "_telemetry_enabled_comment": "Enable anonymous usage telemetry. Opt-in during setup wizard. Default: false.",
+  "upgrade_nudge": {
+    "intensity": "off",
+    "_intensity_comment": "In-app upgrade nudging intensity. 'off' = no in-app prompt beyond the Settings > About entry. 'normal' = red dot on Settings icon when an update is available. 'aggressive' = persistent dismissible top-banner for the 1.0 rollout. Default 'off' until 1.0 ships.",
+    "dismissed_version": "",
+    "_dismissed_version_comment": "Auto-maintained. The version the user dismissed the banner for; resets on each new detected release."
+  },
+  "standard_macros": {
+    "quick_button_1": "clean_nozzle",
+    "quick_button_2": "bed_level",
+    "quick_button_3": "",
+    "quick_button_4": "",
+    "_comment": "Controls panel quick-action button assignments. Built-in options: 'clean_nozzle', 'bed_level', 'heat_soak', 'purge', 'bed_mesh'. Empty string hides the button."
+  },
+  "active_printer_id": "default",
+  "_active_printer_id_comment": "Which entry under 'printers' is live. Must name an existing key there.",
+  "printers": {
+    "default": {
+      "name": "Unnamed Printer",
+      "type": "Unknown",
+      "moonraker_host": "127.0.0.1",
+      "moonraker_port": 7125,
+      "moonraker_api_key": false,
+      "moonraker_connection_timeout_ms": 10000,
+      "moonraker_keepalive_interval_ms": 10000,
+      "moonraker_reconnect_max_delay_ms": 2000,
+      "moonraker_reconnect_min_delay_ms": 200,
+      "moonraker_request_timeout_ms": 30000,
+      "moonraker_timeout_check_interval_ms": 2000,
+      "heaters": {
+        "bed": "heater_bed",
+        "hotend": "extruder",
+        "_hotend_comment": "Primary extruder heater. Additional extruders (extruder1, extruder2, etc.) are auto-discovered from Klipper. Toolchangers and multi-backend AMS systems are also auto-detected. No manual configuration needed for multi-extruder or multi-tool setups."
+      },
+      "temp_sensors": {
+        "bed": "temperature_sensor bed",
+        "hotend": "temperature_sensor extruder"
+      },
+      "fans": {
+        "hotend": "heater_fan hotend_fan",
+        "part": "fan",
+        "chamber": "",
+        "exhaust": ""
+      },
+      "leds": {
+        "strip": "",
+        "_strip_comment": "Legacy single LED strip name. Superseded by selected_strips for multi-strip control.",
+        "selected_strips": [],
+        "_selected_strips_comment": "Klipper LED strip IDs to control (e.g., [\"neopixel caselight\"]). Configured via Settings > LED Settings.",
+        "led_on_at_start": false,
+        "_led_on_at_start_comment": "Automatically turn on selected LED strips when Klipper becomes ready. Default: false.",
+        "startup_brightness": 80,
+        "_startup_brightness_comment": "Brightness percentage (1-100) used when LEDs turn on at startup. Default: 80.",
+        "last_color": "#FFFFFF",
+        "_last_color_comment": "Last used LED color as #RRGGBB hex string (also accepts legacy integer RGB). Remembered between sessions.",
+        "last_brightness": 100,
+        "_last_brightness_comment": "Last used brightness percentage (0-100). Remembered between sessions.",
+        "color_presets": [
+          "#FFFFFF",
+          "#FF0000",
+          "#00FF00",
+          "#0000FF",
+          "#FFFF00",
+          "#FF00FF",
+          "#00FFFF"
+        ],
+        "_color_presets_comment": "Preset colors (#RRGGBB) shown in the color picker. Default: white, red, green, blue, yellow, magenta, cyan.",
+        "auto_state": {
+          "enabled": false,
+          "mappings": {
+            "idle": {
+              "action": "brightness",
+              "brightness": 50,
+              "color": "#000000"
+            },
+            "heating": {
+              "action": "color",
+              "color": "#FF0000",
+              "brightness": 100
+            },
+            "printing": {
+              "action": "brightness",
+              "brightness": 100,
+              "color": "#000000"
+            },
+            "paused": {
+              "action": "off"
+            },
+            "error": {
+              "action": "color",
+              "color": "#FF0000",
+              "brightness": 100
+            },
+            "complete": {
+              "action": "color",
+              "color": "#00FF00",
+              "brightness": 100
+            }
+          },
+          "_comment": "Automatic state-based LED lighting. Actions: off, brightness, color, effect, wled_preset, macro."
+        },
+        "macro_devices": [],
+        "_macro_devices_comment": "Custom LED macro devices shown as cards in LED control overlay. Each: {name, type (on_off|toggle|preset), on_macro, off_macro, toggle_macro, presets}."
+      },
+      "extra_sensors": {},
+      "hardware": {
+        "optional": [],
+        "expected": [],
+        "last_snapshot": {}
+      },
+      "default_macros": {
+        "cooldown": "SET_HEATER_TEMPERATURE HEATER=extruder TARGET=0\nSET_HEATER_TEMPERATURE HEATER=heater_bed TARGET=0",
+        "load_filament": {
+          "label": "Load",
+          "gcode": "LOAD_FILAMENT"
+        },
+        "unload_filament": {
+          "label": "Unload",
+          "gcode": "UNLOAD_FILAMENT"
+        },
+        "macro_1": {
+          "label": "Clean Nozzle",
+          "gcode": "HELIX_CLEAN_NOZZLE"
+        },
+        "macro_2": {
+          "label": "Bed Level",
+          "gcode": "HELIX_BED_LEVEL_IF_NEEDED"
+        }
+      },
+      "safety_limits": {
+        "max_temperature_celsius": 400.0,
+        "min_temperature_celsius": 0.0,
+        "max_fan_speed_percent": 100.0,
+        "min_fan_speed_percent": 0.0,
+        "max_feedrate_mm_min": 50000.0,
+        "min_feedrate_mm_min": 0.0,
+        "max_relative_distance_mm": 1000.0,
+        "min_relative_distance_mm": -1000.0,
+        "max_absolute_position_mm": 1000.0,
+        "min_absolute_position_mm": 0.0,
+        "_comment": "Safety limits for G-code generation. Explicit values override Moonraker auto-detection. Defaults are conservative for most FDM printers. High-temp printers may need max_temperature_celsius > 400. Leave unset to auto-detect from printer.cfg via Moonraker."
+      },
+      "chamber_heater": "auto",
+      "_chamber_heater_comment": "Chamber heater assignment. 'auto' (detect by name heuristics), 'none' (disable), or Klipper object name (e.g., 'heater_generic chamber'). Default: 'auto'.",
+      "chamber_sensor": "auto",
+      "_chamber_sensor_comment": "Chamber temperature sensor assignment. 'auto' (detect by name heuristics), 'none' (disable), or Klipper object name (e.g., 'temperature_sensor enclosure_bme'). Default: 'auto'.",
+      "filament": {
+        "cooldown_delay_seconds": 120,
+        "_cooldown_delay_seconds_comment": "Seconds to wait after a filament operation before turning off the extruder heater. Default: 120 (2 minutes). Set to 0 to disable auto-cooldown. Per-printer: read as printers/<id>/filament/cooldown_delay_seconds."
+      },
+      "capability_overrides": {
+        "bed_mesh": "auto",
+        "qgl": "auto",
+        "z_tilt": "auto",
+        "nozzle_clean": "auto",
+        "heat_soak": "auto",
+        "chamber": "auto",
+        "speaker": "auto",
+        "_comment": "Override auto-detected printer capabilities. Values: 'auto' (use detection), 'enable' (force on), 'disable' (force off). Use 'enable' for features that work but weren't detected (e.g., heat_soak without chamber heater)."
+      }
+    },
+    "show_printer_switcher": false,
+    "_show_printer_switcher_comment": "Show the printer switcher button on the home panel. Default: false.",
+    "_per_printer_comment": "Each configured printer is an object here keyed by id (e.g. 'default', 'printer-2'), holding that machine's own moonraker_host/port, heaters, temp_sensors, fans, leds, hardware, panel_widgets, preset, toolhead_style, and detection/policy_u1. 'active_printer_id' at the root selects which one is live. Keys directly under 'printers' that are not objects (like show_printer_switcher) are install-wide settings, not printers."
+  },
+  "security": {
+    "pin_hash": "",
+    "_pin_hash_comment": "SHA-256 hash of lock screen PIN. Empty = no lock screen. Set via Settings > Security.",
+    "auto_lock": false,
+    "_auto_lock_comment": "Automatically lock screen on sleep/wake. Requires pin_hash to be set. Default: false."
+  },
+  "label_printer": {
+    "type": "network",
+    "_type_comment": "Label printer connection type. Options: 'network', 'usb', 'bluetooth'. Default: 'network'.",
+    "address": "",
+    "_address_comment": "Network address (IP or hostname) for network label printers.",
+    "port": 9100,
+    "_port_comment": "Network port for label printer. Default: 9100 (RAW/JetDirect).",
+    "protocol": "raw",
+    "_protocol_comment": "Network protocol. Options: 'raw' (JetDirect), 'ipp'. Default: 'raw'.",
+    "label_size": 0,
+    "_label_size_comment": "Label size preset index. 0 = default size for printer model.",
+    "preset": 0,
+    "_preset_comment": "Label content preset index.",
+    "label_count": 1,
+    "_label_count_comment": "Number of labels to print per job. Default: 1.",
+    "usb_vid": 0,
+    "usb_pid": 0,
+    "usb_serial": "",
+    "_usb_comment": "USB vendor ID, product ID, and serial for USB label printers. 0 = auto-detect.",
+    "bt_address": "",
+    "bt_name": "",
+    "bt_transport": "spp",
+    "_bt_comment": "Bluetooth address, name, and transport (spp or ble) for Bluetooth label printers."
+  },
+  "sounds": {
+    "volume": 80,
+    "_volume_comment": "Master volume level (0-100). Default: 80."
+  },
+  "update": {
+    "channel": 0,
+    "_channel_comment": "Update channel. 0=Stable, 1=Beta (pre-releases), 2=Dev (custom URL)",
+    "dev_url": "",
+    "_dev_url_comment": "Base URL for dev channel manifest. Set to enable Dev channel option."
+  }
+}

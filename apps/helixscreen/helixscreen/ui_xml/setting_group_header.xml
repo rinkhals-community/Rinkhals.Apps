@@ -1,0 +1,7 @@
+<?xml version="1.0"?><component><api><prop name="title" type="string" default="Section"/><prop name="title_tag" type="string" default=""/><prop name="icon" type="string" default=""/><prop name="hide_icon" type="string" default="true"/><prop name="badge_name" type="string" default=""/><prop name="badge_text" type="string" default=""/><prop name="hide_badge" type="string" default="true"/></api><styles><style name="pad_standard"
+           pad_left="#space_lg" pad_right="#space_lg" pad_top="#space_md" pad_bottom="#space_md" pad_gap="#space_sm"/><style name="pad_micro"
+           pad_left="#space_md" pad_right="#space_md" pad_top="#space_sm" pad_bottom="#space_sm" pad_gap="#space_sm"/></styles><view extends="lv_obj"
+        width="100%" height="content" flex_flow="row" style_flex_cross_place="center"
+        style_flex_main_place="space_between" style_bg_opa="0" style_border_width="0" scrollable="false"><bind_style_if_eq name="pad_micro" subject="ui_breakpoint" ref_value="0"/><bind_style_if_ge name="pad_standard" subject="ui_breakpoint" ref_value="1"/><lv_obj width="content"
+            height="content" style_pad_all="0" style_pad_gap="#space_sm" flex_flow="row" style_flex_cross_place="center"
+            style_bg_opa="0" style_border_width="0" scrollable="false"><icon name="section_icon" src="$icon" size="sm" variant="muted" hidden="$hide_icon"/><text_muted text="$title" translation_tag="$title_tag" style_text_letter_space="1"/></lv_obj><status_pill name="$badge_name" text="$badge_text" variant="muted" hidden="$hide_badge"/></view></component>

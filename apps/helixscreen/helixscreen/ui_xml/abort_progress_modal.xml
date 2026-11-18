@@ -1,0 +1,10 @@
+<?xml version="1.0"?><component><view name="abort_progress_modal"
+        extends="ui_dialog" width="70%" height="content" align="center" flex_flow="column" style_flex_main_place="start"
+        style_pad_gap="0"><lv_obj width="100%"
+            height="content" style_min_height="160" style_pad_left="#space_lg" style_pad_right="#space_lg"
+            style_pad_top="#space_xl" style_pad_bottom="#space_xl" flex_flow="column" style_flex_cross_place="center"
+            style_flex_main_place="center" style_flex_track_place="center" style_pad_gap="#space_lg"><spinner size="lg"/><text_muted name="abort_message_label"
+                  width="100%" bind_text="abort_progress_message" text="Processing..." translation_tag="Processing..."
+                  long_mode="wrap" style_text_align="center"/><ui_button name="abort_estop_btn"
+                 width="100%" height="#button_height_lg" variant="danger" icon="alert_octagon" text="EMERGENCY STOP"
+                 translation_tag="EMERGENCY STOP" style_margin_top="#space_sm"><event_cb trigger="clicked" callback="on_abort_emergency_stop"/></ui_button></lv_obj></view></component>

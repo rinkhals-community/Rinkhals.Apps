@@ -1,0 +1,9 @@
+<?xml version="1.0"?><component><styles><style name="badge_info" bg_color="#info"/><style name="badge_warning" bg_color="#warning"/><style name="badge_error" bg_color="#danger"/></styles><view name="panel_widget_notifications"
+        extends="lv_obj" height="100%" flex_grow="1" style_pad_all="0" flex_flow="column" style_flex_main_place="center"
+        style_flex_cross_place="center" style_flex_track_place="center" scrollable="false"><lv_obj name="status_notification_container" width="content" height="content" style_pad_all="0"><icon name="status_notification_icon"
+            src="notifications" size="#icon_size" variant="secondary" align="center" clickable="true"
+            click_focusable="false"><event_cb trigger="clicked" callback="status_notification_history_clicked"/></icon><notification_badge name="notification_badge"
+                          align="top_right" x="-#space_xxs" y="#space_xxs" hidden="true" clickable="true"
+                          click_focusable="false" bind_text="notification_count_text"><bind_flag_if_eq subject="notification_count" flag="hidden" ref_value="0"/><bind_style name="badge_info" subject="notification_severity" ref_value="0"/><bind_style name="badge_warning" subject="notification_severity" ref_value="1"/><bind_style name="badge_error" subject="notification_severity" ref_value="2"/><event_cb trigger="clicked" callback="status_notification_history_clicked"/></notification_badge></lv_obj><text_tiny text="Alerts"
+               translation_tag="Alerts" style_text_color="#text_muted" style_text_align="center" clickable="false"
+               event_bubble="true"><bind_flag_if_eq subject="show_widget_labels" flag="hidden" ref_value="0"/></text_tiny></view></component>

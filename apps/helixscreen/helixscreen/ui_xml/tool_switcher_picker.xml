@@ -1,0 +1,3 @@
+<?xml version="1.0"?><component><view name="tool_switcher_picker" extends="context_menu_backdrop"><context_menu_card title="Tool" title_tag="Tool" pad_all="#space_xs" pad_gap="#space_xs" hide_divider="true"><lv_obj name="tool_list"
+              width="100%" height="content" flex_flow="column" style_pad_all="0" style_pad_gap="#space_xs"
+              scrollable="true" clickable="false"/></context_menu_card></view></component>

@@ -1,0 +1,8 @@
+<?xml version="1.0"?><component><view name="performance_overlay"
+        extends="overlay_panel" title="Performance" title_tag="Performance" bg_color="#screen_bg"><lv_obj name="overlay_content"
+            width="100%" flex_grow="1" style_pad_top="0" style_pad_left="#space_lg" style_pad_right="#space_lg"
+            style_pad_bottom="#space_lg" scrollable="true" flex_flow="column"><text_small text="HOST" translation_tag="HOST" style_text_color="#text_muted" style_pad_top="#space_md"/><ui_card width="100%" flex_flow="column" style_pad_gap="#space_sm"><perf_metric_row label="CPU"
+                         label_tag="CPU" bind_value="perf_host_cpu_pct" bind_text="perf_host_cpu_pct_text"
+                         bind_present="perf_host_cpu_pct_present" sparkline_source="host_cpu_pct"/><perf_metric_row label="Memory"
+                         label_tag="Memory" bind_value="perf_host_mem_pct_used" bind_text="perf_host_mem_free_text"
+                         bind_present="perf_host_mem_present" sparkline_source="host_mem_pct_used"/><text_muted name="throttle_warning" bind_text="perf_host_throttle_text"><bind_flag_if_eq subject="perf_host_throttle_state" flag="hidden" ref_value="0"/></text_muted></ui_card><text_small text="MCU" translation_tag="MCU" style_text_color="#text_muted" style_pad_top="#space_md"/><ui_card name="mcu_card" width="100%" flex_flow="column" style_pad_gap="#space_sm"/></lv_obj></view></component>

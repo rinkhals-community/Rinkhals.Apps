@@ -1,0 +1,3 @@
+<?xml version="1.0"?><component><view extends="lv_obj"
+        width="content" height="content" style_bg_color="#warning" style_bg_opa="40" style_radius="4"
+        style_pad_left="#space_xs" style_pad_right="#space_xs" style_pad_top="2" style_pad_bottom="2" scrollable="false"><bind_flag_if_eq subject="show_beta_features" flag="hidden" ref_value="0"/><text_small text="BETA" style_text_color="#warning"/></view></component>

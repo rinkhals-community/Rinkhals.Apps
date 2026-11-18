@@ -1,0 +1,6 @@
+<?xml version="1.0"?><component><view name="wizard_header_bar"
+        extends="lv_obj" width="100%" height="content" flex_flow="column" scrollable="false" style_bg_opa="0"
+        style_border_width="0" style_pad_all="#space_lg" style_pad_bottom="#space_sm"><lv_obj width="100%"
+            height="content" flex_flow="row" style_flex_main_place="space_between" style_flex_cross_place="center"
+            style_pad_all="0"><text_heading name="wizard_title" bind_text="wizard_title"/><lv_obj name="wizard_progress"
+              width="content" height="content" flex_flow="row" style_pad_all="0" style_pad_gap="4"><text_small text="Step" translation_tag="Step"/><text_small name="wizard_step_current" bind_text="wizard_step_current"/><text_small text="of" translation_tag="of"/><text_small name="wizard_step_total" bind_text="wizard_step_total"/></lv_obj></lv_obj><text_muted name="wizard_subtitle" width="100%" bind_text="wizard_subtitle"/></view></component>

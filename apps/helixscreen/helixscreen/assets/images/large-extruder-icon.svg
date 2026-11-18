@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 280" width="200" height="280">
+  <!--
+    ACCENT COLOR: #4CAF50 (green)
+    For runtime color changes, search/replace all instances of #4CAF50 with desired color
+  -->
+
+  <!-- PTFE tube (clear) -->
+  <rect fill="none" stroke="#666" stroke-width="1.5" opacity="0.25" x="90" y="0" width="20" height="40" rx="3"/>
+
+  <!-- Filament input at top [ACCENT] -->
+  <rect fill="#4CAF50" x="95" y="0" width="10" height="40" rx="2"/>
+
+  <!-- Main body housing -->
+  <rect fill="#4a4a4a" x="40" y="35" width="120" height="140" rx="15"/>
+
+  <!-- Body highlight/detail -->
+  <rect fill="#5a5a5a" opacity="0.3" x="50" y="45" width="100" height="15" rx="3"/>
+
+  <!-- Cooling fins suggestion -->
+  <rect fill="#5a5a5a" opacity="0.4" x="45" y="70" width="110" height="3"/>
+  <rect fill="#5a5a5a" opacity="0.4" x="45" y="78" width="110" height="3"/>
+  <rect fill="#5a5a5a" opacity="0.4" x="45" y="86" width="110" height="3"/>
+
+  <!-- Nozzle area - darker outer ring -->
+  <circle fill="#3a3a3a" cx="100" cy="130" r="35"/>
+
+  <!-- Nozzle area - medium ring -->
+  <circle fill="#4a4a4a" cx="100" cy="130" r="28"/>
+
+  <!-- Nozzle center - hotend/heating element [ACCENT] -->
+  <circle fill="#4CAF50" cx="100" cy="130" r="18"/>
+
+  <!-- Nozzle tip -->
+  <path fill="#4a4a4a" d="M 85,175 L 95,195 L 105,195 L 115,175 Z"/>
+
+  <!-- Extruded filament [ACCENT] -->
+  <rect fill="#4CAF50" x="97.5" y="195" width="5" height="15" rx="1"/>
+
+  <!-- Filament tip [ACCENT] -->
+  <ellipse fill="#4CAF50" cx="100" cy="213" rx="3" ry="2"/>
+</svg>

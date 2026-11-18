@@ -1,0 +1,12 @@
+<?xml version="1.0"?><component><consts><str name="step_title" value="Multi-Filament System Detected" value_tag="Multi-Filament System Detected"/><str name="step_subtitle"
+         value="Your printer has an automatic filament changer"
+         value_tag="Your printer has an automatic filament changer"/><int name="step_order" value="6"/></consts><view name="wizard_ams_identify_root"
+        extends="lv_obj" width="100%" height="100%" style_bg_opa="0" style_border_width="0" style_pad_all="0"
+        flex_flow="column" style_flex_main_place="start" style_flex_cross_place="center"><ui_card width="100%"
+             flex_grow="1" style_radius="#border_radius" style_pad_all="#space_xl" style_pad_gap="#space_sm"
+             flex_flow="column" style_flex_main_place="center" style_flex_cross_place="center"
+             style_flex_track_place="center"><lv_image name="ams_logo"
+                width="64" height="64" style_min_width="64" style_min_height="64" inner_align="center" hidden="true"/><lv_obj width="1" height="#space_md"/><text_heading name="ams_type_label" bind_text="wizard_ams_type" style_text_align="center"/><text_muted name="ams_details_label" bind_text="wizard_ams_details" style_text_align="center"/><lv_obj width="1" height="#space_lg"/><text_muted width="85%"
+                  style_text_align="center"
+                  text="HelixScreen will integrate with your filament changer for multi-spool/color print operations."
+                  translation_tag="HelixScreen will integrate with your filament changer for multi-spool/color print operations."/></ui_card></view></component>

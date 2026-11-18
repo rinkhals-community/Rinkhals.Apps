@@ -1,0 +1,79 @@
+{
+  "preset": "k2",
+  "wizard_completed": false,
+  "display": {
+    "rotate": 270,
+    "rotation_probed": true,
+    "animations_enabled": false
+  },
+  "printer": {
+    "heaters": {
+      "bed": "heater_bed",
+      "hotend": "extruder",
+      "chamber": "heater_generic chamber_heater"
+    },
+    "temp_sensors": {
+      "bed": "heater_bed",
+      "hotend": "extruder",
+      "chamber": "temperature_sensor chamber_temp"
+    },
+    "fans": {
+      "chamber": "temperature_fan chamber_fan",
+      "hotend": "heater_fan hotend_fan",
+      "part": "output_pin fan0",
+      "aux": "output_pin fan2",
+      "names": {
+        "output_pin fan0": "Part Cooling",
+        "output_pin fan1": "Chamber (manual)",
+        "output_pin fan2": "Auxiliary",
+        "heater_fan chamber_heater_fan": "Chamber Heater Fan",
+        "temperature_fan chamber_fan": "Chamber Circulation"
+      }
+    },
+    "leds": {
+      "strip": "output_pin LED"
+    },
+    "filament_sensors": {
+      "master_enabled": true,
+      "sensors": [
+        {
+          "enabled": true,
+          "klipper_name": "filament_switch_sensor filament_sensor",
+          "role": "runout",
+          "type": "switch"
+        }
+      ]
+    },
+    "hardware": {
+      "expected": [
+        "heater_bed",
+        "extruder",
+        "heater_generic chamber_heater",
+        "temperature_sensor chamber_temp",
+        "temperature_sensor mcu_temp",
+        "heater_fan chamber_heater_fan",
+        "heater_fan hotend_fan",
+        "temperature_fan chamber_fan",
+        "output_pin LED",
+        "output_pin fan0",
+        "output_pin fan1",
+        "output_pin fan2",
+        "output_pin extruder_fan",
+        "output_pin power",
+        "output_pin ptc_power",
+        "filament_switch_sensor filament_sensor",
+        "motor_control",
+        "fan_feedback",
+        "load_ai",
+        "box"
+      ]
+    },
+    "default_macros": {
+      "cooldown": "SET_HEATER_TEMPERATURE HEATER=extruder TARGET=0\nSET_HEATER_TEMPERATURE HEATER=heater_bed TARGET=0\nSET_HEATER_TEMPERATURE HEATER=chamber_heater TARGET=0",
+      "load_filament": { "label": "CFS Load", "gcode": "BOX_LOAD_MATERIAL" },
+      "unload_filament": { "label": "CFS Unload", "gcode": "BOX_QUIT_MATERIAL" },
+      "macro_1": { "label": "Clean Nozzle", "gcode": "BOX_NOZZLE_CLEAN" },
+      "macro_2": { "label": "Bed Mesh", "gcode": "BED_MESH_CALIBRATE" }
+    }
+  }
+}

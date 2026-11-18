@@ -1,0 +1,6 @@
+<?xml version="1.0"?><component><api><prop name="title" type="string" default="All Fans"/></api><view name="fan_control_overlay" extends="overlay_panel" title="$title" bg_color="#screen_bg"><lv_obj name="content_area"
+            width="100%" flex_grow="1" style_pad_left="#space_md" style_pad_right="#space_md" style_pad_top="0"
+            style_pad_bottom="#space_sm" style_pad_row="0" scrollable="false" flex_flow="column"
+            style_flex_main_place="start" style_flex_cross_place="center"><lv_obj name="fans_container"
+              width="100%" flex_grow="1" style_pad_all="0" style_pad_gap="#space_md" scrollable="true"
+              flex_flow="row_wrap" style_flex_main_place="center" style_flex_cross_place="start"></lv_obj></lv_obj></view></component>

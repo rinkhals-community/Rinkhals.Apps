@@ -1,0 +1,4 @@
+<?xml version="1.0"?><component><api><prop name="title" type="string" default="Path"/><prop name="title_tag" type="string" default="Path"/><prop name="freq_subject" type="string" default=""/><prop name="status_subject" type="string" default=""/></api><view name="belt_result_card"
+        extends="lv_obj" width="1" height="content" flex_grow="1" style_bg_color="#screen_bg" style_bg_opa="255"
+        style_radius="#border_radius" style_pad_all="#space_lg" flex_flow="column" style_pad_gap="#space_sm"
+        scrollable="false"><text_body text="$title" translation_tag="$title_tag" style_text_color="#text_muted"/><text_heading bind_text="$freq_subject" style_text_color="#primary"/><text_small bind_text="$status_subject"/></view></component>

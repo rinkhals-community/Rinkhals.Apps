@@ -1,0 +1,202 @@
+{
+  "name": "retro",
+  "description": "8-bit chiptune theme — square waves, fast arpeggios, game-style chirps",
+  "version": 1,
+  "defaults": {
+    "wave": "square",
+    "vel": 0.9,
+    "env": { "a": 2, "d": 15, "s": 0.4, "r": 10 }
+  },
+  "sounds": {
+    "button_tap": {
+      "description": "Fast 3-note arpeggio click",
+      "bpm": 180,
+      "steps": [
+        { "note": "C6", "dur": "16n", "vel": 0.95, "duty": 0.25,
+          "env": { "a": 1, "d": 8, "s": 0, "r": 5 } },
+        { "note": "E6", "dur": "16n", "vel": 0.9, "duty": 0.25,
+          "env": { "a": 1, "d": 8, "s": 0, "r": 5 } },
+        { "note": "G6", "dur": "16n", "vel": 0.85, "duty": 0.25,
+          "env": { "a": 1, "d": 8, "s": 0, "r": 5 } }
+      ]
+    },
+    "toggle_on": {
+      "description": "Quick rising two-note chirp",
+      "steps": [
+        { "note": "C5", "dur": 25, "vel": 0.9, "duty": 0.25,
+          "env": { "a": 1, "d": 10, "s": 0.3, "r": 8 } },
+        { "note": "G5", "dur": 35, "vel": 0.95, "duty": 0.25,
+          "env": { "a": 1, "d": 12, "s": 0.3, "r": 10 } }
+      ]
+    },
+    "toggle_off": {
+      "description": "Quick falling two-note chirp",
+      "steps": [
+        { "note": "G5", "dur": 25, "vel": 0.9, "duty": 0.25,
+          "env": { "a": 1, "d": 10, "s": 0.3, "r": 8 } },
+        { "note": "C5", "dur": 35, "vel": 0.85, "duty": 0.25,
+          "env": { "a": 1, "d": 12, "s": 0.3, "r": 10 } }
+      ]
+    },
+    "nav_forward": {
+      "description": "Classic game-style ascending chirp",
+      "bpm": 170,
+      "steps": [
+        { "note": "C5", "dur": "16n", "vel": 0.9, "duty": 0.5,
+          "env": { "a": 1, "d": 8, "s": 0.2, "r": 5 } },
+        { "note": "E5", "dur": "16n", "vel": 0.9, "duty": 0.5,
+          "env": { "a": 1, "d": 8, "s": 0.2, "r": 5 } },
+        { "note": "G5", "dur": "16n", "vel": 0.95, "duty": 0.5,
+          "env": { "a": 1, "d": 10, "s": 0.3, "r": 8 } },
+        { "note": "C6", "dur": "8n", "vel": 1.0, "duty": 0.5,
+          "env": { "a": 1, "d": 15, "s": 0.2, "r": 12 } }
+      ]
+    },
+    "nav_back": {
+      "description": "Classic game-style descending chirp",
+      "bpm": 170,
+      "steps": [
+        { "note": "C6", "dur": "16n", "vel": 0.9, "duty": 0.5,
+          "env": { "a": 1, "d": 8, "s": 0.2, "r": 5 } },
+        { "note": "G5", "dur": "16n", "vel": 0.9, "duty": 0.5,
+          "env": { "a": 1, "d": 8, "s": 0.2, "r": 5 } },
+        { "note": "E5", "dur": "16n", "vel": 0.9, "duty": 0.5,
+          "env": { "a": 1, "d": 10, "s": 0.3, "r": 8 } },
+        { "note": "C5", "dur": "8n", "vel": 0.85, "duty": 0.5,
+          "env": { "a": 1, "d": 15, "s": 0.2, "r": 12 } }
+      ]
+    },
+    "dropdown_open": {
+      "description": "Snappy 8-bit pop",
+      "steps": [
+        { "freq": 2200, "dur": 8, "vel": 0.85, "duty": 0.25,
+          "env": { "a": 1, "d": 7, "s": 0, "r": 3 } },
+        { "freq": 3300, "dur": 12, "vel": 0.7, "duty": 0.25,
+          "env": { "a": 1, "d": 10, "s": 0, "r": 5 } }
+      ]
+    },
+    "print_complete": {
+      "description": "Triumphant chiptune victory fanfare — Mario-style ascending melody",
+      "bpm": 170,
+      "steps": [
+        { "note": "C5", "dur": "8n", "vel": 0.9, "duty": 0.5,
+          "env": { "a": 2, "d": 15, "s": 0.6, "r": 10 } },
+        { "note": "E5", "dur": "8n", "vel": 0.9, "duty": 0.5,
+          "env": { "a": 2, "d": 15, "s": 0.6, "r": 10 } },
+        { "note": "G5", "dur": "8n", "vel": 0.95, "duty": 0.5,
+          "env": { "a": 2, "d": 15, "s": 0.6, "r": 10 } },
+        { "pause": 30 },
+        { "note": "C5", "dur": "8n", "vel": 0.9, "duty": 0.5,
+          "env": { "a": 2, "d": 15, "s": 0.6, "r": 10 } },
+        { "note": "E5", "dur": "8n", "vel": 0.9, "duty": 0.5,
+          "env": { "a": 2, "d": 15, "s": 0.6, "r": 10 } },
+        { "note": "G5", "dur": "8n", "vel": 0.95, "duty": 0.5,
+          "env": { "a": 2, "d": 15, "s": 0.6, "r": 10 } },
+        { "pause": 30 },
+        { "note": "A5", "dur": "8n", "vel": 0.95, "duty": 0.5,
+          "env": { "a": 2, "d": 18, "s": 0.7, "r": 12 } },
+        { "note": "B5", "dur": "8n", "vel": 0.95, "duty": 0.5,
+          "env": { "a": 2, "d": 18, "s": 0.7, "r": 12 } },
+        { "note": "C6", "dur": "4n.", "vel": 1.0, "duty": 0.5,
+          "env": { "a": 2, "d": 60, "s": 0.8, "r": 80 } }
+      ]
+    },
+    "print_cancelled": {
+      "description": "Game over — descending minor arpeggio",
+      "bpm": 160,
+      "steps": [
+        { "note": "E5", "dur": "8n", "vel": 0.9, "duty": 0.5,
+          "env": { "a": 2, "d": 20, "s": 0.5, "r": 15 } },
+        { "note": "C5", "dur": "8n", "vel": 0.85, "duty": 0.5,
+          "env": { "a": 2, "d": 20, "s": 0.5, "r": 15 } },
+        { "note": "A4", "dur": "8n", "vel": 0.8, "duty": 0.5,
+          "env": { "a": 2, "d": 25, "s": 0.4, "r": 20 } },
+        { "pause": 40 },
+        { "note": "G4", "dur": "8n", "vel": 0.7, "duty": 0.5,
+          "env": { "a": 2, "d": 30, "s": 0.3, "r": 25 } },
+        { "note": "E4", "dur": "4n", "vel": 0.6, "duty": 0.5,
+          "env": { "a": 3, "d": 50, "s": 0.2, "r": 60 } }
+      ]
+    },
+    "error_alert": {
+      "description": "Harsh buzzy 8-bit alarm with rapid tremolo",
+      "steps": [
+        { "freq": 880, "dur": 100, "wave": "square", "vel": 1.0, "duty": 0.15,
+          "lfo": { "target": "amplitude", "rate": 20, "depth": 0.6 },
+          "env": { "a": 1, "d": 10, "s": 0.9, "r": 10 } },
+        { "pause": 50 },
+        { "freq": 660, "dur": 100, "wave": "square", "vel": 1.0, "duty": 0.15,
+          "lfo": { "target": "amplitude", "rate": 20, "depth": 0.6 },
+          "env": { "a": 1, "d": 10, "s": 0.9, "r": 10 } },
+        { "pause": 50 },
+        { "freq": 880, "dur": 100, "wave": "square", "vel": 1.0, "duty": 0.15,
+          "lfo": { "target": "amplitude", "rate": 20, "depth": 0.6 },
+          "env": { "a": 1, "d": 10, "s": 0.9, "r": 10 } }
+      ],
+      "repeat": 2
+    },
+    "error_tone": {
+      "description": "Short buzzy error beep — wrong answer sound",
+      "steps": [
+        { "note": "E4", "dur": 60, "vel": 0.85, "duty": 0.15,
+          "env": { "a": 1, "d": 15, "s": 0.5, "r": 10 } },
+        { "pause": 30 },
+        { "note": "C4", "dur": 90, "vel": 0.75, "duty": 0.15,
+          "env": { "a": 1, "d": 20, "s": 0.3, "r": 15 } }
+      ]
+    },
+    "alarm_urgent": {
+      "description": "Aggressive saw alarm with rapid pitch wobble",
+      "steps": [
+        { "freq": 1760, "dur": 150, "wave": "saw", "vel": 1.0,
+          "lfo": { "target": "freq", "rate": 12, "depth": 400 },
+          "env": { "a": 1, "d": 10, "s": 0.95, "r": 10 } },
+        { "pause": 60 },
+        { "freq": 1320, "dur": 150, "wave": "saw", "vel": 1.0,
+          "lfo": { "target": "freq", "rate": 12, "depth": 400 },
+          "env": { "a": 1, "d": 10, "s": 0.95, "r": 10 } },
+        { "pause": 60 }
+      ],
+      "repeat": 5
+    },
+    "test_beep": {
+      "description": "Classic 8-bit test tone arpeggio",
+      "bpm": 170,
+      "steps": [
+        { "note": "C5", "dur": "16n", "vel": 0.9, "duty": 0.5,
+          "env": { "a": 1, "d": 10, "s": 0.4, "r": 8 } },
+        { "note": "E5", "dur": "16n", "vel": 0.9, "duty": 0.5,
+          "env": { "a": 1, "d": 10, "s": 0.4, "r": 8 } },
+        { "note": "G5", "dur": "16n", "vel": 0.95, "duty": 0.5,
+          "env": { "a": 1, "d": 10, "s": 0.4, "r": 8 } },
+        { "note": "C6", "dur": "8n", "vel": 1.0, "duty": 0.5,
+          "env": { "a": 2, "d": 20, "s": 0.5, "r": 15 } }
+      ]
+    },
+    "startup": {
+      "description": "8-bit power-on — NES-style boot sweep into victory arpeggio",
+      "bpm": 200,
+      "steps": [
+        { "freq": 100, "dur": 60, "wave": "square", "vel": 0.8, "duty": 0.5,
+          "sweep": { "target": "freq", "end": 1200 },
+          "env": { "a": 1, "d": 50, "s": 0.3, "r": 10 } },
+        { "pause": 20 },
+        { "note": "C5", "dur": "16n", "vel": 0.9, "duty": 0.25,
+          "env": { "a": 1, "d": 8, "s": 0.3, "r": 5 } },
+        { "note": "E5", "dur": "16n", "vel": 0.9, "duty": 0.25,
+          "env": { "a": 1, "d": 8, "s": 0.3, "r": 5 } },
+        { "note": "G5", "dur": "16n", "vel": 0.95, "duty": 0.25,
+          "env": { "a": 1, "d": 8, "s": 0.3, "r": 5 } },
+        { "note": "C6", "dur": "16n", "vel": 1.0, "duty": 0.5,
+          "env": { "a": 1, "d": 10, "s": 0.4, "r": 8 } },
+        { "pause": 30 },
+        { "note": "G5", "dur": "16n", "vel": 0.85, "duty": 0.5,
+          "env": { "a": 1, "d": 8, "s": 0.3, "r": 5 } },
+        { "note": "C6", "dur": "16n", "vel": 0.9, "duty": 0.5,
+          "env": { "a": 1, "d": 8, "s": 0.3, "r": 5 } },
+        { "note": "E6", "dur": "8n", "vel": 1.0, "duty": 0.5,
+          "env": { "a": 1, "d": 30, "s": 0.5, "r": 20 } }
+      ]
+    }
+  }
+}

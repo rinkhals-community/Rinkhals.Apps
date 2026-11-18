@@ -1,0 +1,23 @@
+{
+  "preset": "anycubic_kobra_3",
+  "wizard_completed": false,
+  "printer": {
+    "heaters": {
+      "bed": "heater_bed",
+      "hotend": "extruder"
+    },
+    "temp_sensors": {
+      "bed": "heater_bed",
+      "hotend": "extruder"
+    },
+    "hardware": {
+      "expected": [
+        "heater_bed",
+        "extruder"
+      ]
+    },
+    "default_macros": {
+      "cooldown": "SET_HEATER_TEMPERATURE HEATER=extruder TARGET=0\nSET_HEATER_TEMPERATURE HEATER=heater_bed TARGET=0"
+    }
+  }
+}

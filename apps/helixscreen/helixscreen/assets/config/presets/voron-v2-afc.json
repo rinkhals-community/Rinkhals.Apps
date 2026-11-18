@@ -1,0 +1,209 @@
+{
+  "dark_mode": true,
+  "display_rotate": 0,
+  "display_sleep_sec": 600,
+  "gcode_viewer": {
+    "shading_model": "phong",
+    "tube_sides": 4
+  },
+  "input": {
+    "scroll_limit": 10,
+    "scroll_throw": 25
+  },
+  "log_level": "warn",
+  "log_path": "/tmp/helixscreen.log",
+  "printer": {
+    "default_macros": {
+      "cooldown": "SET_HEATER_TEMPERATURE HEATER=extruder TARGET=0\nSET_HEATER_TEMPERATURE HEATER=heater_bed TARGET=0",
+      "load_filament": {
+        "gcode": "LOAD_FILAMENT",
+        "label": "Load"
+      },
+      "macro_1": {
+        "gcode": "HELIX_CLEAN_NOZZLE",
+        "label": "Clean Nozzle"
+      },
+      "macro_2": {
+        "gcode": "HELIX_BED_MESH_IF_NEEDED",
+        "label": "Bed Level"
+      },
+      "unload_filament": {
+        "gcode": "UNLOAD_FILAMENT",
+        "label": "Unload"
+      }
+    },
+    "extra_sensors": {},
+    "fans": {
+      "chamber": "fan_generic bed_fans",
+      "exhaust": "None",
+      "hotend": "heater_fan hotend_fan",
+      "part": "fan"
+    },
+    "filament_sensors": {
+      "master_enabled": true,
+      "sensors": [
+        {
+          "enabled": true,
+          "klipper_name": "filament_switch_sensor tool_start",
+          "role": "runout",
+          "type": "switch"
+        },
+        {
+          "enabled": true,
+          "klipper_name": "filament_switch_sensor tool_end",
+          "role": "none",
+          "type": "switch"
+        },
+        {
+          "enabled": true,
+          "klipper_name": "filament_switch_sensor Turtle_1_expanded",
+          "role": "none",
+          "type": "switch"
+        },
+        {
+          "enabled": true,
+          "klipper_name": "filament_switch_sensor Turtle_1_compressed",
+          "role": "none",
+          "type": "switch"
+        },
+        {
+          "enabled": true,
+          "klipper_name": "filament_switch_sensor lane1_prep",
+          "role": "none",
+          "type": "switch"
+        },
+        {
+          "enabled": true,
+          "klipper_name": "filament_switch_sensor lane1_load",
+          "role": "none",
+          "type": "switch"
+        },
+        {
+          "enabled": true,
+          "klipper_name": "filament_switch_sensor lane2_prep",
+          "role": "none",
+          "type": "switch"
+        },
+        {
+          "enabled": true,
+          "klipper_name": "filament_switch_sensor lane2_load",
+          "role": "none",
+          "type": "switch"
+        },
+        {
+          "enabled": true,
+          "klipper_name": "filament_switch_sensor lane3_prep",
+          "role": "none",
+          "type": "switch"
+        },
+        {
+          "enabled": true,
+          "klipper_name": "filament_switch_sensor lane3_load",
+          "role": "none",
+          "type": "switch"
+        },
+        {
+          "enabled": true,
+          "klipper_name": "filament_switch_sensor lane4_prep",
+          "role": "none",
+          "type": "switch"
+        },
+        {
+          "enabled": true,
+          "klipper_name": "filament_switch_sensor lane4_load",
+          "role": "none",
+          "type": "switch"
+        },
+        {
+          "enabled": true,
+          "klipper_name": "filament_switch_sensor Turtle_1_Hub",
+          "role": "none",
+          "type": "switch"
+        },
+        {
+          "enabled": true,
+          "klipper_name": "filament_switch_sensor virtual_bypass",
+          "role": "none",
+          "type": "switch"
+        },
+        {
+          "enabled": true,
+          "klipper_name": "filament_switch_sensor quiet_mode",
+          "role": "none",
+          "type": "switch"
+        }
+      ]
+    },
+    "hardware": {
+      "expected": [
+        "heater_bed",
+        "extruder",
+        "fan",
+        "heater_fan hotend_fan",
+        "neopixel case_lights",
+        "filament_switch_sensor tool_start",
+        "AFC"
+      ],
+      "last_snapshot": {
+        "fans": [
+          "fan_generic bed_fans",
+          "fan",
+          "heater_fan hotend_fan",
+          "heater_fan skirt_fan",
+          "heater_fan skirt_fan_2",
+          "temperature_fan btt_pi"
+        ],
+        "filament_sensors": [
+          "filament_switch_sensor tool_start",
+          "filament_switch_sensor tool_end",
+          "filament_switch_sensor Turtle_1_expanded",
+          "filament_switch_sensor Turtle_1_compressed",
+          "filament_switch_sensor lane1_prep",
+          "filament_switch_sensor lane1_load",
+          "filament_switch_sensor lane2_prep",
+          "filament_switch_sensor lane2_load",
+          "filament_switch_sensor lane3_prep",
+          "filament_switch_sensor lane3_load",
+          "filament_switch_sensor lane4_prep",
+          "filament_switch_sensor lane4_load",
+          "filament_switch_sensor Turtle_1_Hub",
+          "filament_switch_sensor virtual_bypass",
+          "filament_switch_sensor quiet_mode"
+        ],
+        "heaters": [
+          "heater_bed",
+          "extruder"
+        ],
+        "leds": [
+          "neopixel Turtle_Corner_Indicators",
+          "neopixel sb_leds",
+          "neopixel case_lights"
+        ],
+        "sensors": [
+          "temperature_sensor Turtle_1",
+          "temperature_sensor chamber",
+          "temperature_sensor EBB_NTC",
+          "temperature_sensor BTT-MCU",
+          "temperature_sensor BTT-PI",
+          "temperature_fan btt_pi"
+        ],
+        "timestamp": "2026-01-06T12:49:02Z"
+      },
+      "optional": []
+    },
+    "heaters": {
+      "bed": "heater_bed",
+      "hotend": "extruder"
+    },
+    "leds": {
+      "strip": "neopixel case_lights"
+    },
+    "name": "voronv2",
+    "temp_sensors": {
+      "bed": "heater_bed",
+      "hotend": "extruder"
+    },
+    "type": "Voron 2.4"
+  },
+  "wizard_completed": true
+}

@@ -1,0 +1,4 @@
+<?xml version="1.0"?><component><api><prop name="hide_when_healthy" type="int" default="0"/></api><view extends="lv_obj"
+        width="100%" height="content" style_pad_all="0" style_pad_gap="#space_xs" scrollable="false" clickable="false"
+        flex_flow="row" style_flex_main_place="start" style_flex_cross_place="start"><bind_flag_if flag="hidden" cond="ams_endless_state eq 0 or (${hide_when_healthy} and ams_endless_state eq 1)"/><icon src="infinity" size="xs" variant="secondary"/><text_small name="endless_status_text"
+                bind_text="ams_endless_text" flex_grow="1" long_mode="wrap" style_text_color="#text_muted"/></view></component>

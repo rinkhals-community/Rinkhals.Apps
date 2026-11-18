@@ -1,0 +1,5 @@
+<?xml version="1.0"?><component><api><prop name="label_text" type="string" default=""/><prop name="callback" type="string" default=""/></api><styles><style name="checked_style"
+           border_width="#space_xs" border_side="left" border_color="#primary" bg_color="#elevated_bg"/><style name="disabled_style" opa="100"/></styles><view name="image_list_item"
+        extends="lv_button" width="100%" scrollable="false" clickable="true" style_bg_opa="0" style_border_width="0"
+        style_shadow_width="0" style_pad_ver="#space_xs" style_pad_hor="#space_md" flex_flow="row"
+        style_flex_cross_place="center" style_radius="0"><style name="checked_style" selector="checked"/><style name="disabled_style" selector="disabled"/><text_body name="item_label" text="$label_text" clickable="false" event_bubble="true"/><event_cb trigger="clicked" callback="$callback"/></view></component>

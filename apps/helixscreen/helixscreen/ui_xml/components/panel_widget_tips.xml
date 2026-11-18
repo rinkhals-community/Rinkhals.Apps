@@ -1,0 +1,9 @@
+<?xml version="1.0"?><component><consts><px name="accent_bar_width" value="4"/><px name="accent_bar_gap" value="18"/></consts><view extends="lv_obj"
+        width="100%" height="100%" style_pad_all="0" style_pad_gap="0" style_bg_opa="0%" scrollable="false"
+        flex_flow="column" style_flex_main_place="center" style_flex_cross_place="center"><lv_obj name="tip_container"
+            width="100%" height="content" flex_flow="row" style_bg_opa="0%" style_radius="0"
+            style_border_width="#accent_bar_width" style_border_side="left" style_border_color="#primary"
+            style_pad_top="#space_sm" style_pad_bottom="#space_sm" style_pad_left="#accent_bar_gap" style_pad_right="0"
+            style_pad_gap="#space_sm" style_flex_track_place="center" style_flex_main_place="center"
+            style_flex_cross_place="center" clickable="true"><event_cb trigger="clicked" callback="tip_text_clicked_cb"/><text_heading text="Tip:" translation_tag="Tip:" style_text_color="#text"/><text_heading name="status_text_label"
+                    bind_text="status_text" flex_grow="1" long_mode="wrap" style_text_color="#text"/><icon src="help_circle" size="lg" variant="muted"/></lv_obj></view></component>

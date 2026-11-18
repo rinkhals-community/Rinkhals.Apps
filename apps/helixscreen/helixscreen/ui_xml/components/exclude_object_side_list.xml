@@ -1,0 +1,12 @@
+<?xml version="1.0"?><component><view name="exclude_object_side_list"
+        style_bg_color="#screen_bg" style_bg_opa="255" style_radius="8" style_pad_all="#space_sm" flex_flow="column"
+        style_pad_gap="#space_xs" style_border_width="0" scrollable="false"><lv_obj name="header_row"
+            width="100%" height="content" flex_flow="row" style_flex_cross_place="center" style_pad_all="0"
+            style_pad_gap="#space_sm" style_bg_opa="0" style_border_width="0" scrollable="false"><text_small name="header_title"
+                  flex_grow="1" text="Objects" translation_tag="Objects" style_text_color="#text_muted"/><lv_obj name="close_btn"
+              style_width="32" style_height="32" style_bg_color="#card_bg" style_bg_opa="180" style_radius="16"
+              style_border_width="0" style_pad_all="0" clickable="true" scrollable="false"><event_cb trigger="clicked" callback="on_exclude_side_list_close"/><icon src="close" size="sm" style_text_color="#text_muted" align="center" clickable="false" event_bubble="true"/></lv_obj></lv_obj><lv_obj name="rows_container"
+            width="100%" flex_grow="1" flex_flow="column" style_pad_gap="#space_xs" style_pad_all="0" style_bg_opa="0"
+            style_border_width="0" scrollable="true" scrollbar_mode="auto"/><text_muted name="empty_state"
+                width="100%" text="No objects defined for this print"
+                translation_tag="No objects defined for this print" style_text_align="center" hidden="true"/></view></component>
