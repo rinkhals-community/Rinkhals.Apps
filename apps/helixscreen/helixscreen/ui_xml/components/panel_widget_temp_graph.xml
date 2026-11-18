@@ -1,0 +1,2 @@
+<?xml version="1.0"?><component><view name="panel_widget_temp_graph"
+        extends="lv_obj" height="100%" flex_grow="1" style_pad_all="0" scrollable="false" clickable="true"><bind_state_if_not_eq subject="printer_connection_state" state="disabled" ref_value="2"/><event_cb trigger="clicked" callback="on_temp_graph_widget_clicked"/></view></component>

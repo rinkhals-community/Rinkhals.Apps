@@ -1,0 +1,52 @@
+{
+  "name": "Anycubic Kobra S1",
+  "description": "Print start patterns for Anycubic Kobra S1 / S1 Max (enclosed CoreXY, heated chamber on S1 Max) running Rinkhals/Klipper",
+  "progress_mode": "weighted",
+  "signal_formats": [],
+  "response_patterns": [
+    {
+      "pattern": "G28|Homing|Home All|homing axes|homing all",
+      "phase": "HOMING",
+      "message": "Homing...",
+      "weight": 10
+    },
+    {
+      "pattern": "M190|M140\\s+S[1-9]|Heating bed|Heat Bed|BED_TEMP|bed.*heat",
+      "phase": "HEATING_BED",
+      "message": "Heating Bed...",
+      "weight": 20
+    },
+    {
+      "pattern": "M109|M104\\s+S[1-9]|Heating (nozzle|hotend|extruder)|EXTRUDER_TEMP",
+      "phase": "HEATING_NOZZLE",
+      "message": "Heating Nozzle...",
+      "weight": 20
+    },
+    {
+      "pattern": "BED_MESH_CALIBRATE|Probing mesh|generating mesh|Auto.?Level|leveling",
+      "phase": "BED_MESH",
+      "message": "Probing Bed Mesh...",
+      "weight": 15
+    },
+    {
+      "pattern": "CLEAN_NOZZLE|NOZZLE_CLEAN|NOZZLE_CLEAR|WIPE_NOZZLE|clean.?nozzle",
+      "phase": "CLEANING",
+      "message": "Cleaning Nozzle...",
+      "weight": 5
+    },
+    {
+      "pattern": "PURGE|PRIME|Prime.?Line|Priming|prime.?nozzle|FEED_FILAMENT|flush",
+      "phase": "PURGING",
+      "message": "Purging...",
+      "weight": 5
+    }
+  ],
+  "phase_weights": {
+    "HOMING": 10,
+    "HEATING_BED": 20,
+    "HEATING_NOZZLE": 20,
+    "BED_MESH": 15,
+    "CLEANING": 5,
+    "PURGING": 5
+  }
+}

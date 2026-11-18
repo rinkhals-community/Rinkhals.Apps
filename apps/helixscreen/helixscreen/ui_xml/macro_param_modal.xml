@@ -1,0 +1,11 @@
+<?xml version="1.0"?><component><view name="macro_param_modal"
+        extends="ui_dialog" width="70%" height="90%" style_max_width="400" align="center" flex_flow="column"
+        style_flex_main_place="start" style_pad_gap="0" scrollable="false"><lv_obj width="100%"
+            height="content" style_pad_left="#space_lg" style_pad_right="#space_md" style_pad_top="#space_lg"
+            style_pad_bottom="#space_sm" flex_flow="row" style_flex_main_place="space_between"
+            style_flex_cross_place="center" scrollable="false"><lv_obj height="content"
+              flex_flow="column" style_pad_all="0" style_pad_gap="#space_xs" scrollable="false" flex_grow="1"><text_heading name="modal_title" text="Run Macro" translation_tag="Run Macro"/><text_muted name="modal_subtitle" text=""/></lv_obj><ui_button name="btn_close" width="40" height="40" icon="close" variant="ghost" focusable="false"><event_cb trigger="clicked" callback="macro_param_modal_cancel_cb"/></ui_button></lv_obj><divider_horizontal/><lv_obj name="param_list"
+            width="100%" flex_grow="1" flex_flow="column" style_pad_all="#space_lg" style_pad_gap="#space_sm"
+            scrollable="true"/><modal_button_row primary_text="Run"
+                      primary_callback="macro_param_modal_run_cb" secondary_text="Cancel"
+                      secondary_callback="macro_param_modal_cancel_cb"/></view></component>

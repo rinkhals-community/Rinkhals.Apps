@@ -1,0 +1,7 @@
+<?xml version="1.0"?><component><styles><style name="arc_w_4" arc_width="4"/><style name="arc_w_6" arc_width="6"/><style name="arc_w_8" arc_width="8"/><style name="arc_w_10" arc_width="10"/><style name="arc_w_12" arc_width="12"/></styles><api><prop name="bind_value" type="string" default=""/><prop name="min_value" type="number" default="0"/><prop name="max_value" type="number" default="100"/><prop name="value" type="number" default="0"/><prop name="bg_start_angle" type="number" default="135"/><prop name="bg_end_angle" type="number" default="45"/><prop name="start_angle" type="number" default="135"/><prop name="end_angle" type="number" default="135"/></api><view extends="lv_arc"
+        min_value="$min_value" max_value="$max_value" value="$value" bind_value="$bind_value"
+        bg_start_angle="$bg_start_angle" bg_end_angle="$bg_end_angle" start_angle="$start_angle" end_angle="$end_angle"
+        rotation="0" mode="normal" style_arc_color="#border" style_arc_color-indicator="#primary"
+        style_arc_rounded="true" style_arc_rounded-indicator="true" style_bg_opa="0" style_border_width="0"
+        style_bg_opa-knob="0" style_shadow_width-knob="0" style_outline_width-knob="0" style_pad_all-knob="0"
+        clickable="false"/></component>

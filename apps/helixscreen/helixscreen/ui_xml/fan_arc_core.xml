@@ -1,0 +1,6 @@
+<?xml version="1.0"?><component><api><prop name="initial_value" type="number" default="0"/></api><view name="dial_container"
+        extends="lv_obj" width="#fan_arc_size" height="#fan_arc_size" style_pad_all="0" style_pad_top="#space_sm"
+        scrollable="false" style_flex_main_place="center" style_flex_cross_place="center" event_bubble="true"><helix_progress_arc name="dial_arc" align="center" value="$initial_value"/><lv_obj name="center_content"
+            width="content" height="content" align="center" style_pad_all="0" scrollable="false" flex_flow="column"
+            style_flex_main_place="center" style_flex_cross_place="center" style_pad_gap="0" clickable="false"
+            event_bubble="true"><icon name="fan_icon" src="fan" size="sm" variant="secondary" clickable="false" event_bubble="true"/><text_heading name="speed_label" text="Off" translation_tag="Off" clickable="false" event_bubble="true"/></lv_obj></view></component>

@@ -1,0 +1,12 @@
+<?xml version="1.0"?><component><view name="ipp_print_modal"
+        extends="ui_dialog" width="70%" height="content" style_min_width="320" style_max_width="420" align="center"
+        flex_flow="column" style_flex_main_place="start" style_pad_gap="0"><modal_header icon_src="printer" icon_variant="accent" title="Sheet Label Print" title_tag="Sheet Label Print"/><lv_obj name="modal_content"
+            width="100%" height="content" flex_flow="column" style_pad_left="#space_lg" style_pad_right="#space_lg"
+            style_pad_top="#space_sm" style_pad_bottom="#space_lg" style_pad_gap="#space_md" style_bg_opa="0"
+            style_border_width="0" scrollable="false"><lv_obj width="100%"
+              height="content" flex_flow="row" style_pad_all="0" style_bg_opa="0" style_border_width="0"
+              scrollable="false" style_flex_cross_place="center" style_pad_gap="#space_md"><text_body width="content" text="Template" translation_tag="Template"/><text_body name="template_name" flex_grow="1" style_text_align="right" text=""/></lv_obj><lv_obj width="100%"
+              height="content" flex_flow="row" style_pad_all="0" style_bg_opa="0" style_border_width="0"
+              scrollable="false" style_flex_cross_place="center" style_pad_gap="#space_md"><text_body width="content" text="Labels" translation_tag="Labels"/><lv_dropdown name="dropdown_count" flex_grow="1"/></lv_obj><lv_obj width="100%"
+              height="content" flex_flow="row" style_pad_all="0" style_bg_opa="0" style_border_width="0"
+              scrollable="false" style_flex_cross_place="center" style_pad_gap="#space_md"><text_body width="content" text="Start at" translation_tag="Start at"/><lv_dropdown name="dropdown_start" flex_grow="1"/></lv_obj></lv_obj><modal_button_row primary_text="Print" primary_tag="Print" secondary_text="Cancel" secondary_tag="Cancel"/></view></component>

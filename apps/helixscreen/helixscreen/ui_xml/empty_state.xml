@@ -1,0 +1,3 @@
+<?xml version="1.0"?><component><api><prop name="icon" type="string" default="inbox_outline"/><prop name="text" type="string" default="No items"/><prop name="text_tag" type="string" default=""/><prop name="icon_size" type="string" default="lg"/><prop name="icon_variant" type="string" default="secondary"/></api><view extends="lv_obj"
+        width="100%" height="100%" flex_flow="column" style_flex_main_place="center" style_flex_cross_place="center"
+        style_flex_track_place="center" style_pad_gap="#space_md" scrollable="false"><icon src="$icon" size="$icon_size" variant="$icon_variant"/><text_muted text="$text" translation_tag="$text_tag" style_text_align="center"/></view></component>

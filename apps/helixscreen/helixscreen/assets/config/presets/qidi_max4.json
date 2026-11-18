@@ -1,0 +1,86 @@
+{
+  "preset": "qidi_max4",
+  "wizard_completed": false,
+  "display": {
+    "rotate": 0,
+    "rotation_probed": true
+  },
+  "printer": {
+    "heaters": {
+      "bed": "heater_bed",
+      "hotend": "extruder",
+      "chamber": "heater_generic chamber"
+    },
+    "temp_sensors": {
+      "bed": "heater_bed",
+      "hotend": "extruder",
+      "chamber": "heater_generic chamber"
+    },
+    "fans": {
+      "part": "fan_generic cooling_fan",
+      "hotend": "heater_fan hotend_fan",
+      "chamber": "controller_fan chamber_fan",
+      "exhaust": "fan_generic chamber_circulation_fan",
+      "aux": "fan_generic auxiliary_cooling_fan",
+      "names": {
+        "fan_generic cooling_fan": "Part Cooling",
+        "fan_generic auxiliary_cooling_fan": "Auxiliary Left",
+        "fan_generic auxiliary_cooling_fan2": "Auxiliary Right",
+        "fan_generic chamber_circulation_fan": "Chamber Exhaust",
+        "controller_fan chamber_fan": "Chamber Heater Fan",
+        "controller_fan board_fan": "Board Fan"
+      }
+    },
+    "leds": {
+      "strip": "output_pin caselight",
+      "selected_strips": [
+        "output_pin caselight"
+      ],
+      "startup_brightness": 100,
+      "led_on_at_start": true
+    },
+    "filament_sensors": {
+      "master_enabled": true,
+      "sensors": [
+        {
+          "enabled": true,
+          "klipper_name": "filament_switch_sensor filament_switch_sensor",
+          "role": "runout",
+          "type": "switch"
+        }
+      ]
+    },
+    "hardware": {
+      "expected": [
+        "heater_bed",
+        "extruder",
+        "heater_generic chamber",
+        "temperature_sensor Chamber_Thermal_Protection_Sensor",
+        "fan_generic cooling_fan",
+        "heater_fan hotend_fan",
+        "controller_fan chamber_fan",
+        "controller_fan board_fan",
+        "fan_generic chamber_circulation_fan",
+        "fan_generic auxiliary_cooling_fan",
+        "fan_generic auxiliary_cooling_fan2",
+        "output_pin caselight",
+        "neopixel RGB",
+        "filament_switch_sensor filament_switch_sensor",
+        "probe_air",
+        "z_tilt",
+        "multi_color_controller"
+      ]
+    },
+    "default_macros": {
+      "cooldown": "SET_HEATER_TEMPERATURE HEATER=extruder TARGET=0\nSET_HEATER_TEMPERATURE HEATER=heater_bed TARGET=0\nSET_HEATER_TEMPERATURE HEATER=chamber TARGET=0",
+      "macro_1": {
+        "gcode": "CLEAR_NOZZLE",
+        "label": "Clean Nozzle"
+      },
+      "macro_2": {
+        "gcode": "M4029 R=0",
+        "label": "Bed Level"
+      }
+    }
+  }
+}

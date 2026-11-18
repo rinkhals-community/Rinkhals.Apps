@@ -1,0 +1,7 @@
+<?xml version="1.0"?><component><api><prop name="icon_src" type="string" default=""/><prop name="icon_variant" type="string" default="accent"/><prop name="hide_icon" type="string" default="false"/><prop name="title" type="string" default=""/><prop name="title_tag" type="string" default=""/><prop name="title_subject" type="string"/><prop name="hide_close" type="string" default="true"/><prop name="close_callback" type="string" default=""/></api><styles><style name="mh_pad_std" pad_left="#space_lg" pad_right="#space_md" pad_top="#space_lg" pad_bottom="#space_sm"/><style name="mh_pad_micro" pad_left="#space_md" pad_right="#space_sm" pad_top="#space_xs" pad_bottom="#space_xs"/></styles><view extends="lv_obj"
+        width="100%" height="content" flex_flow="row" style_flex_cross_place="center" style_pad_gap="#space_sm"
+        scrollable="false"><bind_style_if_eq name="mh_pad_micro" subject="ui_breakpoint" ref_value="0"/><bind_style_if_ge name="mh_pad_std" subject="ui_breakpoint" ref_value="1"/><icon name="header_icon" src="$icon_src" size="md" variant="$icon_variant" hidden="$hide_icon"/><text_heading name="header_title"
+                  text="$title" translation_tag="$title_tag" bind_text="$title_subject" style_text_align="left"
+                  flex_grow="1"/><ui_button name="btn_close"
+               width="#button_height_sm" height="#button_height_sm" hidden="$hide_close" icon="close" variant="ghost"
+               focusable="false"><event_cb trigger="clicked" callback="$close_callback"/></ui_button></view></component>

@@ -1,0 +1,8 @@
+<?xml version="1.0"?><component><view extends="lv_obj"
+        width="#button_height" height="content" style_bg_opa="0" style_border_width="0" style_pad_all="0"
+        flex_flow="column" style_pad_row="#space_2xl" style_flex_main_place="center" style_flex_cross_place="center"
+        scrollable="false" floating="true" align="right_mid"><ui_button name="up"
+               width="#button_height" height="#button_height_lg" style_radius="9999" variant="secondary"
+               focusable="false" style_opa="170"><icon src="chevron_up" size="md" variant="text" align="center" clickable="false" event_bubble="true"/></ui_button><ui_button name="down"
+               width="#button_height" height="#button_height_lg" style_radius="9999" variant="secondary"
+               focusable="false" style_opa="170"><icon src="chevron_down" size="md" variant="text" align="center" clickable="false" event_bubble="true"/></ui_button></view></component>

@@ -1,0 +1,8 @@
+<?xml version="1.0"?><component><view name="catalog_add_row"
+        extends="lv_obj" width="100%" height="content" flex_flow="row" style_flex_cross_place="center"
+        style_pad_hor="#space_md" style_pad_ver="#space_sm" style_pad_gap="#space_sm" style_radius="#border_radius"
+        style_bg_opa="0" scrollable="false" clickable="true"><style name="styles.press_wash" selector="pressed"/><event_cb trigger="clicked" callback="catalog_add_custom_cb"/><lv_label name="add_plus"
+              text="#icon_plus" style_text_font="#icon_font_xs" style_text_color="#primary" style_min_width="16"
+              clickable="false" event_bubble="true"/><lv_label name="add_label"
+              text="Add custom filament" translation_tag="Add custom filament" flex_grow="1"
+              style_text_font="#font_body" style_text_color="#primary" clickable="false" event_bubble="true"/></view></component>

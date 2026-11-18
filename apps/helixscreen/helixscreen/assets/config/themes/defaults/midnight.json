@@ -1,0 +1,29 @@
+{
+  "name": "Midnight",
+  "dark": {
+    "screen_bg": "#02040b",
+    "overlay_bg": "#0a0c18",
+    "card_bg": "#0e1122",
+    "elevated_bg": "#1e1e26",
+    "border": "#1a1d2e",
+    "text": "#feffff",
+    "text_muted": "#5a5e67",
+    "text_subtle": "#3d4150",
+    "primary": "#1e2f5c",
+    "secondary": "#6080a7",
+    "tertiary": "#f19a0c",
+    "info": "#6080a7",
+    "success": "#69c27e",
+    "warning": "#f19a0c",
+    "danger": "#d94848",
+    "focus": "#6080a7"
+  },
+  "border_radius_size": 4,
+  "border_width": 1,
+  "border_opacity": 40,
+  "shadow_intensity": 0,
+  "shadow_opa": 0,
+  "shadow_offset_y": 2,
+  "handle_style": "bar",
+  "handle_color": "text"
+}

@@ -1,0 +1,5 @@
+<?xml version="1.0"?><component><api><prop name="label" type="string" default="Info"/><prop name="label_tag" type="string" default=""/><prop name="icon" type="string" default=""/><prop name="value" type="string" default=""/><prop name="value_tag" type="string" default=""/></api><view name="info_row"
+        extends="lv_obj" width="100%" height="content" flex_flow="row" style_flex_main_place="start"
+        style_flex_cross_place="center" style_bg_opa="0" style_border_width="0" style_pad_left="#space_lg"
+        style_pad_right="#space_lg" style_pad_top="#space_md" style_pad_bottom="#space_md" style_pad_gap="#space_sm"
+        scrollable="false"><icon name="row_icon" src="$icon" size="sm" variant="secondary"/><text_body name="label" text="$label" translation_tag="$label_tag" flex_grow="1"/><text_muted name="value" text="$value" translation_tag="$value_tag"/></view></component>

@@ -1,0 +1,3 @@
+<?xml version="1.0"?><component><api><prop name="wrap" type="string" default="true"/><prop name="auto_scroll_ms" type="string" default="0"/><prop name="show_indicators" type="string" default="true"/><prop name="current_page_subject" type="subject" default=""/></api><view extends="ui_carousel"
+        width="100%" height="100%" wrap="$wrap" auto_scroll_ms="$auto_scroll_ms" show_indicators="$show_indicators"
+        current_page_subject="$current_page_subject"/></component>

@@ -1,0 +1,8 @@
+# HelixScreen USB Label Printer access rules
+# Allows non-root users in the 'lp' group to access supported USB label printers
+
+# Phomemo M110S (Jieli Technology / STM32 VID:PID)
+SUBSYSTEM=="usb", ATTR{idVendor}=="0483", ATTR{idProduct}=="5740", MODE="0666", GROUP="lp"
+
+# Phomemo M110 (original VID:PID)
+SUBSYSTEM=="usb", ATTR{idVendor}=="0493", ATTR{idProduct}=="8760", MODE="0666", GROUP="lp"

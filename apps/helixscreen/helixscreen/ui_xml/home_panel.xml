@@ -1,0 +1,5 @@
+<?xml version="1.0"?><component><view extends="lv_obj"
+        width="100%" height="100%" style_pad_all="0" style_pad_gap="0" style_border_width="0"
+        style_bg_color="#screen_bg" scrollable="false"><lv_obj name="carousel_host" width="100%" height="100%" style_bg_opa="0" style_border_width="0" style_pad_all="0"><event_cb trigger="pressed" callback="on_home_grid_pressed"/><event_cb trigger="long_pressed" callback="on_home_grid_long_press"/><event_cb trigger="clicked" callback="on_home_grid_clicked"/><event_cb trigger="pressing" callback="on_home_grid_pressing"/><event_cb trigger="released" callback="on_home_grid_released"/></lv_obj><ui_button name="estop_fab"
+               width="#button_height" height="#button_height" align="top_right" floating="true" style_radius="9999"
+               variant="danger" focusable="false" style_translate_x="-20" style_translate_y="20" hidden="true"><bind_flag_if_eq subject="estop_visible" flag="hidden" ref_value="0"/><icon src="alert_octagon" size="sm" variant="text" align="center" clickable="false" event_bubble="true"/><event_cb trigger="clicked" callback="emergency_stop_clicked"/></ui_button></view></component>

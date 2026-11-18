@@ -1,0 +1,1149 @@
+{
+  "_comment": "3D Printing Tips Database for GuppyScreen/HelixScreen - Licensed under GPL v3",
+  "version": "2.1.0",
+  "description": "Comprehensive 3D printing tips and tricks for Klipper-based FDM printers with OrcaSlicer, plus HelixScreen feature tips",
+  "last_updated": "2026-04-02",
+  "total_tips": 122,
+
+  "categories": {
+    "klipper_features": {
+      "name": "Klipper-Specific Features",
+      "description": "Advanced Klipper firmware capabilities for improved printing",
+      "tips": [
+        {
+          "id": "tip-001",
+          "title": "Run Input Shaping Calibration",
+          "content": "Ringing artifacts (ghosting/echoing near corners and edges) become increasingly visible at speeds above 80mm/s.\n\nMount an ADXL345 accelerometer on your toolhead and run TEST_RESONANCES AXIS=X and TEST_RESONANCES AXIS=Y to measure your printer's resonant frequencies. Klipper generates CSV data that you process with calibrate_shaper.py to determine optimal shaper type (usually MZV or EI) and frequency.\n\nAfter adding the [input_shaper] config, your printer can maintain 150-300mm/s speeds without ringing. Re-run calibration whenever you change toolhead mass (new hotend, fan shroud, etc.).",
+          "tags": ["calibration", "speed", "quality", "resonance"],
+          "difficulty": "intermediate",
+          "priority": "high",
+          "related_settings": ["[input_shaper]", "TEST_RESONANCES", "[adxl345]"]
+        },
+        {
+          "id": "tip-002",
+          "title": "Enable Pressure Advance",
+          "content": "Without pressure advance, corners bulge outward (extruder pressure continues after direction change) and gaps appear when accelerating (pressure takes time to build).\n\nUse SET_VELOCITY_LIMIT SQUARE_CORNER_VELOCITY=1 ACCEL=500 for testing, then print a tuning tower with TUNING_TOWER COMMAND=SET_PRESSURE_ADVANCE PARAMETER=ADVANCE START=0 FACTOR=.005 (direct drive) or FACTOR=.020 (Bowden). Measure where corners look sharpest without gaps.\n\nTypical values: 0.02-0.08 for direct drive, 0.3-0.9 for Bowden. Each filament type may need slight adjustment. Add pressure_advance: 0.XXX to your [extruder] section.",
+          "tags": ["calibration", "quality", "extrusion"],
+          "difficulty": "intermediate",
+          "priority": "high",
+          "related_settings": ["[extruder]", "pressure_advance", "TUNING_TOWER"]
+        },
+        {
+          "id": "tip-003",
+          "title": "Use Adaptive Bed Meshing",
+          "content": "A full bed mesh with 5x5 probe points can take 2-3 minutes, which is wasteful for small prints that only use 10% of the bed.\n\nAdaptive meshing probes only the area where the print will occur, plus a small margin. Enable it in your PRINT_START macro by passing the print bounds from the slicer (PRINT_MIN and PRINT_MAX parameters).\n\nThe mesh adjusts dynamically based on print size - a small calibration cube might need only 3x3 points while a full-plate print gets the full mesh. This can save 30-90 seconds per print.",
+          "tags": ["speed", "optimization", "leveling"],
+          "difficulty": "beginner",
+          "priority": "medium",
+          "related_settings": ["[bed_mesh]", "adaptive_bed_mesh"]
+        },
+        {
+          "id": "tip-004",
+          "title": "Leverage Firmware Retraction",
+          "content": "Instead of hardcoding retraction in gcode (G1 E-0.8 F2100), firmware retraction lets Klipper handle it via G10/G11 commands.\n\nConfigure [firmware_retraction] with retract_length, retract_speed, and unretract_extra_length in printer.cfg. The major advantage: you can tune retraction on-the-fly during a print using SET_RETRACTION without re-slicing.\n\nIn your slicer, enable 'Use firmware retraction' and it will output G10/G11 instead of E moves. Start with 0.4-0.8mm at 35mm/s for direct drive, 1.5-3.0mm at 25-35mm/s for Bowden.",
+          "tags": ["configuration", "quality", "extrusion"],
+          "difficulty": "beginner",
+          "priority": "medium",
+          "related_settings": ["[firmware_retraction]", "SET_RETRACTION"]
+        },
+        {
+          "id": "tip-005",
+          "title": "Enable Square Corner Velocity",
+          "content": "Square corner velocity (SCV) determines the maximum instantaneous velocity change the printer can make at corners. Higher values mean faster corners but more stress on the frame and potential ringing.\n\nThe default 5mm/s is conservative. After running input shaping calibration, many printers can handle 8-10mm/s without quality loss. Test by printing a cube at different SCV values (SET_VELOCITY_LIMIT SQUARE_CORNER_VELOCITY=X).\n\nThe sweet spot is where corners stay sharp without visible ringing. CoreXY printers often tolerate higher values than bed-slingers due to lower moving mass.",
+          "tags": ["speed", "quality", "motion"],
+          "difficulty": "intermediate",
+          "priority": "medium",
+          "related_settings": ["[printer]", "square_corner_velocity"]
+        },
+        {
+          "id": "tip-006",
+          "title": "Use PRINT_START Macros",
+          "content": "A well-structured PRINT_START macro automates your entire pre-print routine and accepts parameters from the slicer (BED_TEMP, EXTRUDER_TEMP, PRINT_MIN/MAX for adaptive mesh).\n\nA typical sequence: G28 (home), heat bed to target, QUAD_GANTRY_LEVEL or Z_TILT_ADJUST, BED_MESH_CALIBRATE, move to purge position while heating nozzle, then purge line.\n\nPass slicer variables via start gcode like: PRINT_START BED_TEMP=[first_layer_bed_temperature] EXTRUDER_TEMP=[first_layer_temperature]. This lets you tweak the entire workflow by editing one macro instead of re-slicing all your projects.",
+          "tags": ["automation", "workflow", "macros"],
+          "difficulty": "intermediate",
+          "priority": "medium",
+          "related_settings": ["[gcode_macro PRINT_START]", "[gcode_macro PRINT_END]"]
+        },
+        {
+          "id": "tip-007",
+          "title": "Monitor with Exclude Object",
+          "content": "When printing multiple objects, one failure (knocked over, spaghetti, poor adhesion) traditionally ruins the entire plate.\n\nWith [exclude_object] enabled in Klipper and 'Label objects' in your slicer, you can cancel individual objects mid-print through Mainsail/Fluidd/KlipperScreen while the rest continue normally.\n\nDuring a print, simply click the failed object in the UI and select exclude - the toolhead will skip all moves for that object. Especially valuable for overnight batch prints where you can't immediately restart.",
+          "tags": ["troubleshooting", "workflow", "recovery"],
+          "difficulty": "beginner",
+          "priority": "low",
+          "related_settings": ["[exclude_object]", "EXCLUDE_OBJECT"]
+        },
+        {
+          "id": "tip-008",
+          "title": "Tune Max Accel Per Feature",
+          "content": "Outer perimeters need smooth motion for surface quality, while infill can be aggressive since it's hidden inside the part.\n\nOrcaSlicer sends SET_VELOCITY_LIMIT commands to Klipper when per-feature acceleration is configured. Set outer walls to 1500-3000mm/s² for clean surfaces, inner walls to 3000-5000mm/s², and infill to 5000-10000mm/s².\n\nKlipper's max_accel in printer.cfg acts as a ceiling - the slicer can request lower values but never higher, so set your config to the maximum your printer can handle reliably.",
+          "tags": ["speed", "quality", "motion"],
+          "difficulty": "intermediate",
+          "priority": "medium",
+          "related_settings": ["[printer]", "max_accel", "max_accel_to_decel"]
+        },
+        {
+          "id": "tip-009",
+          "title": "Use Velocity Limits",
+          "content": "Your printer might physically move at 500mm/s, but that doesn't mean it should. Input shaping calibration reveals the 'recommended max accel' where quality remains acceptable.\n\nFor a typical 300mm bed, you need ~100mm to accelerate to 300mm/s at 5000mm/s² - so setting 500mm/s as max_velocity is pointless since you'll never reach it.\n\nConservative starting points: 300mm/s velocity, 3000-5000mm/s² acceleration for well-tuned printers. Monitor for skipped steps, layer shifts, or resonance artifacts when pushing limits.",
+          "tags": ["configuration", "speed", "safety"],
+          "difficulty": "intermediate",
+          "priority": "high",
+          "related_settings": ["[printer]", "max_velocity", "max_accel"]
+        },
+        {
+          "id": "tip-010",
+          "title": "Enable Stepper Timeout",
+          "content": "After a print completes, you typically want to remove the part while the bed is still warm for easier release - but fighting against locked steppers is frustrating.\n\nConfigure [idle_timeout] with a timeout of 600-900 seconds (10-15 minutes) and a gcode sequence that turns off motors (M84) but keeps the bed heater on temporarily.\n\nThis balances convenience (easy part removal) with safety (printer doesn't sit energized indefinitely). Consider adding M84 to your PRINT_END macro with a delayed bed-off command.",
+          "tags": ["configuration", "workflow", "safety"],
+          "difficulty": "beginner",
+          "priority": "low",
+          "related_settings": ["[idle_timeout]", "timeout"]
+        },
+        {
+          "id": "tip-051",
+          "title": "Calibrate Max Volumetric Flow",
+          "content": "Your hotend has a maximum rate it can reliably melt plastic, measured in cubic millimeters per second (mm³/s). Exceed this limit and you get under-extrusion regardless of other settings.\n\nOrcaSlicer's flow rate calibration includes a volumetric flow test that prints at increasing speeds until quality degrades. Typical maximums: 12-15 mm³/s for stock hotends, 25-35 mm³/s with CHT (high-flow) nozzles, 40+ mm³/s with dedicated high-flow hotends like Rapido or Dragon HF.\n\nSet this limit per-filament in your filament profile. OrcaSlicer then automatically caps speeds to stay within the limit. This is the key to reliable high-speed printing - without it, fast prints randomly under-extrude.",
+          "tags": ["calibration", "speed", "extrusion", "high-flow"],
+          "difficulty": "intermediate",
+          "priority": "high",
+          "related_settings": ["filament_max_volumetric_speed", "Calibration -> Flow rate"]
+        },
+        {
+          "id": "tip-052",
+          "title": "Use SCREWS_TILT_CALCULATE",
+          "content": "Manual bed leveling with paper is tedious and imprecise. Klipper's SCREWS_TILT_CALCULATE command probes each bed screw location and tells you exactly how much to adjust.\n\nOutput like 'CW 00:15' means turn that screw 15 minutes clockwise (like a clock face). 'CCW 00:30' means 30 minutes counter-clockwise. Adjust one screw at a time and re-run until all show 'base' or near-zero adjustments.\n\nConfigure [screws_tilt_adjust] in printer.cfg with your screw coordinates. This is faster than iterative paper tests and more precise than eyeballing. Run after removing/reinstalling the bed or after any maintenance that might affect levelness.",
+          "tags": ["leveling", "calibration", "maintenance"],
+          "difficulty": "beginner",
+          "priority": "medium",
+          "related_settings": ["[screws_tilt_adjust]", "SCREWS_TILT_CALCULATE"]
+        },
+        {
+          "id": "tip-053",
+          "title": "Configure TMC Driver Current",
+          "content": "Stepper driver current directly affects motor torque, heat generation, noise, and longevity. TMC drivers (2209, 5160, etc.) let you configure this in software.\n\nStart at 60-70% of your motor's rated current. For a 2A motor, try 1.2-1.4A (run_current in printer.cfg). Too low causes skipped steps and layer shifts; too high causes overheating, premature wear, and potential thermal shutdown.\n\nUse DUMP_TMC STEPPER=stepper_x to check for driver errors or warnings. If motors run too hot to touch, reduce current by 10% increments. If you get skipped steps under load, increase carefully. Balance is key.",
+          "tags": ["configuration", "hardware", "stepper"],
+          "difficulty": "advanced",
+          "priority": "low",
+          "related_settings": ["[tmc2209 stepper_x]", "run_current", "DUMP_TMC"]
+        },
+        {
+          "id": "tip-054",
+          "title": "Leverage Klipper Macros with Jinja2",
+          "content": "Klipper macros aren't just static gcode sequences - they support full Jinja2 templating for dynamic, intelligent behavior.\n\nAccess printer state: printer.extruder.temperature, printer.toolhead.position.z, printer.bed_mesh.profile_name. Use conditionals: {% if printer.extruder.temperature > 180 %}...{% endif %}. Do math: { (BED_TEMP * 0.9) | int }.\n\nExample: A PRINT_START that skips homing if already homed, adjusts soak time based on temperature delta, or only runs QGL if not done recently. This transforms simple macros into smart automation that adapts to conditions.",
+          "tags": ["macros", "automation", "advanced"],
+          "difficulty": "advanced",
+          "priority": "low",
+          "related_settings": ["[gcode_macro]", "variable_*"]
+        },
+        {
+          "id": "tip-055",
+          "title": "Set Max Extrude Cross Section",
+          "content": "Klipper includes a safety limit that blocks unusually large extrusions - preventing accidents where misconfigured gcode tries to push impossible amounts of plastic.\n\nThe default allows extrusions up to 4× your nozzle's cross-sectional area (about 0.5mm² for a 0.4mm nozzle). This blocks things like purge lines with 1mm+ widths or thick first layers.\n\nIf you get 'Move exceeds maximum extrusion' errors during purge routines or when using high-flow settings, increase max_extrude_cross_section in your [extruder] section. A value of 5 accommodates most scenarios while still catching genuine errors.",
+          "tags": ["configuration", "safety", "extrusion"],
+          "difficulty": "intermediate",
+          "priority": "low",
+          "related_settings": ["[extruder]", "max_extrude_cross_section", "max_extrude_only_distance"]
+        },
+        {
+          "id": "tip-056",
+          "title": "Use Timelapse Integration",
+          "content": "Moonraker-timelapse captures a frame at each layer change, creating smooth time-lapse videos of your prints without the artifacts of external cameras.\n\nConfigure in moonraker.conf with a park position where the toolhead moves during capture. OrcaSlicer can insert TIMELAPSE_TAKE_FRAME in layer-change gcode automatically. The result is professional-looking videos where the print magically grows without visible toolhead movement.\n\nPrint time impact is minimal with proper park positioning. Videos are stored and accessible through your web interface. Great for documentation, troubleshooting (spot exactly which layer failed), and sharing.",
+          "tags": ["workflow", "visualization", "moonraker"],
+          "difficulty": "beginner",
+          "priority": "low",
+          "related_settings": ["[timelapse]", "TIMELAPSE_TAKE_FRAME"]
+        },
+        {
+          "id": "tip-057",
+          "title": "Configure Bed Fans for Chamber Heating",
+          "content": "Passive enclosures around printers with heated beds eventually warm up, but dedicated bed fans dramatically accelerate this and reach higher stable temperatures.\n\nBed fans blow air across the heated bed surface and recirculate it through the enclosure. Configure as [heater_fan bed_fans] that activates when the bed reaches a threshold temperature. This transforms a 30-minute heat soak into 10 minutes and can push chamber temps to 50-60°C.\n\nEssential for ABS/ASA on larger prints where corner warping otherwise ruins parts. Some users add controllable exhaust to fine-tune chamber temperature during different print phases.",
+          "tags": ["temperature", "enclosure", "configuration"],
+          "difficulty": "intermediate",
+          "priority": "medium",
+          "related_settings": ["[heater_fan]", "[temperature_sensor chamber]"]
+        },
+        {
+          "id": "tip-058",
+          "title": "Use QUAD_GANTRY_LEVEL Effectively",
+          "content": "QUAD_GANTRY_LEVEL (QGL) uses four independent Z motors to make the gantry perfectly parallel to the bed - common on Voron and similar CoreXY designs.\n\nAlways run QGL after the printer reaches operating temperature since thermal expansion changes alignment. Configure retry_tolerance (try 0.0075mm) to automatically re-probe if results are inconsistent. Follow QGL with BED_MESH_CALIBRATE for complete compensation.\n\nInclude QGL in your PRINT_START macro after heatup. For printers that maintain temperature between prints, you can skip QGL if bed temp hasn't changed (use Jinja2 conditionals). Well-tuned QGL plus mesh compensation enables perfect first layers across the entire bed.",
+          "tags": ["leveling", "calibration", "voron"],
+          "difficulty": "intermediate",
+          "priority": "medium",
+          "related_settings": ["[quad_gantry_level]", "QUAD_GANTRY_LEVEL", "retry_tolerance"]
+        }
+      ]
+    },
+
+    "orcaslicer_features": {
+      "name": "OrcaSlicer Calibration & Features",
+      "description": "OrcaSlicer-specific tools and settings for optimal slicing",
+      "tips": [
+        {
+          "id": "tip-011",
+          "title": "Run Flow Rate Calibration",
+          "content": "Flow rate directly affects dimensional accuracy, layer adhesion, and surface quality. OrcaSlicer's two-pass flow calibration (Calibration -> Flow rate) prints a series of patches at different flow percentages.\n\nPass 1 uses large increments to find the ballpark, Pass 2 uses finer steps to dial it in precisely. Examine each patch for the smoothest top surface - under-extrusion shows gaps, over-extrusion shows bulging.\n\nTypical values range from 0.92 to 1.05 depending on filament. Save the calibrated value to your filament profile. Re-calibrate when switching brands or colors.",
+          "tags": ["calibration", "quality", "extrusion"],
+          "difficulty": "beginner",
+          "priority": "high",
+          "related_settings": ["Calibration -> Flow rate", "filament_flow_ratio"]
+        },
+        {
+          "id": "tip-012",
+          "title": "Calibrate Temperature Towers",
+          "content": "Manufacturer temperature ranges (e.g., '190-230°C') are guidelines, not prescriptions - the optimal temp varies by your specific hotend, cooling setup, and print speed.\n\nOrcaSlicer's temperature tower (Calibration -> Temperature) prints sections at decreasing temperatures with features that reveal issues: bridges test stringing, overhangs show cooling performance, and text reveals layer adhesion.\n\nLook for the temperature where bridges are clean, overhangs are crisp, and stringing is minimal. Different colors of the same brand can need 5-10°C adjustments due to pigments.",
+          "tags": ["calibration", "quality", "temperature"],
+          "difficulty": "beginner",
+          "priority": "high",
+          "related_settings": ["Calibration -> Temperature", "temperature"]
+        },
+        {
+          "id": "tip-013",
+          "title": "Use Filament Profiles",
+          "content": "Each filament spool has unique characteristics that affect print quality. Create dedicated profiles in OrcaSlicer (Filament Settings -> Save As) that capture calibrated values.\n\nInclude: temperature, flow ratio, retraction distance/speed, pressure advance, max volumetric speed, and cooling fan behavior. Name them descriptively (e.g., 'Polymaker PLA Pro - Black - 0.4 nozzle').\n\nWhen you run calibration tests, save results directly to the profile. This eliminates guesswork when switching materials - just select the profile and settings load automatically.",
+          "tags": ["workflow", "organization", "quality"],
+          "difficulty": "beginner",
+          "priority": "medium",
+          "related_settings": ["Filament Settings", "filament_settings_id"]
+        },
+        {
+          "id": "tip-014",
+          "title": "Enable Arachne Perimeter Generator",
+          "content": "The classic perimeter generator uses fixed-width extrusion lines, which can leave gaps in thin walls or create unnecessary overlap in slightly-too-thick sections.\n\nArachne (Print Settings -> Quality -> Precision -> Wall generator) dynamically varies line width to fill geometry exactly, eliminating gaps and creating stronger parts. Especially beneficial for organic shapes, text, and thin-walled models.\n\nThe result is better surface finish, stronger layer bonding, and more accurate dimensions on thin features. There's virtually no downside - it's the default in OrcaSlicer for good reason.",
+          "tags": ["quality", "strength", "slicing"],
+          "difficulty": "beginner",
+          "priority": "high",
+          "related_settings": ["Print Settings -> Quality -> Precision", "wall_generator"]
+        },
+        {
+          "id": "tip-015",
+          "title": "Use Adaptive Layer Heights",
+          "content": "Flat vertical walls print fine at 0.3mm layers, but curved surfaces show obvious stair-stepping.\n\nAdaptive layer height analyzes your model's geometry and automatically uses thin layers (0.1-0.15mm) where curves occur and thicker layers (0.2-0.3mm) on flat sections. Enable via Print Settings -> Quality -> Adaptive layer height.\n\nThis gives you near-resin-quality curves while maintaining fast print times on structural areas. Check the preview to see where layer heights change. Combine with ironing for even smoother top surfaces.",
+          "tags": ["speed", "quality", "optimization"],
+          "difficulty": "intermediate",
+          "priority": "medium",
+          "related_settings": ["Print Settings -> Quality -> Layer height", "adaptive_layer_height"]
+        },
+        {
+          "id": "tip-016",
+          "title": "Leverage Arc Fitting",
+          "content": "STL files approximate curves with many short line segments, which slicers typically output as individual G1 moves.\n\nArc fitting (Print Settings -> Others -> G-code) detects when consecutive segments form a curve and replaces them with single G2/G3 arc commands. Benefits: gcode files shrink 20-50%, smoother motion on curves, reduced communication overhead.\n\nKlipper supports arcs natively. Set the fitting tolerance appropriately - the default 0.05mm works well for most prints.",
+          "tags": ["quality", "optimization", "gcode"],
+          "difficulty": "intermediate",
+          "priority": "medium",
+          "related_settings": ["Print Settings -> Others -> G-code", "arc_fitting"]
+        },
+        {
+          "id": "tip-017",
+          "title": "Use Auto-Arranged Printing",
+          "content": "Normal slicing prints all objects layer-by-layer together, so one failure affects everything.\n\n'Print by object' mode (Print Settings -> Others -> Sequential print) completes each object entirely before starting the next - if part 3 of 10 fails, you still get parts 1-2 fully completed.\n\nThe tradeoff: your toolhead needs Z-clearance over completed objects. OrcaSlicer checks this automatically. Works best for shorter objects spaced apart. Also reduces stringing between objects.",
+          "tags": ["workflow", "reliability", "multi-object"],
+          "difficulty": "intermediate",
+          "priority": "medium",
+          "related_settings": ["Print Settings -> Others -> Sequential printing"]
+        },
+        {
+          "id": "tip-018",
+          "title": "Enable Ironing",
+          "content": "Ironing passes the hot nozzle over completed top surfaces with minimal extrusion, remelting and smoothing the plastic for a near-glassy finish.\n\nEnable via Print Settings -> Quality -> Ironing. The nozzle moves in a tight zigzag pattern at reduced speed (15-20mm/s). Keep flow rate low (10-15%) - too much causes buildup, too little leaves lines.\n\nResults are impressive on flat tops but roughly doubles time for top layers. Best for presentation pieces, boxes with lids, or functional surfaces where friction matters.",
+          "tags": ["quality", "surface-finish", "speed"],
+          "difficulty": "beginner",
+          "priority": "low",
+          "related_settings": ["Print Settings -> Quality -> Ironing"]
+        },
+        {
+          "id": "tip-019",
+          "title": "Tune Retraction with Calibration",
+          "content": "Stringing (hairy filament between travel moves) is solved by retraction - pulling filament back before moving and pushing it forward again when printing resumes.\n\nOrcaSlicer's retraction calibration (Calibration -> Retraction test) prints towers with increasing retraction distances. For direct drive, test 0.2-1.0mm; for Bowden, test 2-6mm.\n\nOnce you find the minimum distance that eliminates stringing, test retraction speed (25-45mm/s). Too much causes jams; too little leaves strings. Save optimal values to your filament profile.",
+          "tags": ["calibration", "quality", "extrusion"],
+          "difficulty": "beginner",
+          "priority": "high",
+          "related_settings": ["Calibration -> Retraction", "retraction_length", "retract_speed"]
+        },
+        {
+          "id": "tip-020",
+          "title": "Use Seam Position Control",
+          "content": "Every closed perimeter loop has a start/end point where a small bump or line appears - the seam.\n\nOrcaSlicer offers several positioning strategies (Print Settings -> Quality -> Seam): 'Nearest' minimizes travel but scatters seams; 'Aligned' creates a neat vertical line; 'Rear' places seams on the back; 'Random' distributes seams everywhere.\n\nFor cylindrical objects, 'rear' or 'hidden' works best. You can also use seam painting to manually place seams. Well-tuned pressure advance also minimizes seam visibility.",
+          "tags": ["quality", "surface-finish", "aesthetics"],
+          "difficulty": "beginner",
+          "priority": "medium",
+          "related_settings": ["Print Settings -> Quality -> Seam", "seam_position"]
+        },
+        {
+          "id": "tip-059",
+          "title": "Configure Dynamic Overhang Speed",
+          "content": "Overhangs print in mid-air with no support beneath - they need special treatment. OrcaSlicer's dynamic overhang speed automatically slows outer walls based on overhang angle.\n\nGradual slowdown: 0-25° runs at normal speed, 25-50° moderately reduced, 50-75° significantly slower, 75°+ very slow. This gives overhangs time to cool and solidify before the next layer while maintaining speed on supported sections.\n\nFind it in Print Settings -> Speed -> Overhang speed. Combined with aggressive cooling, this enables clean 60-70° overhangs without supports. Much better than globally reducing outer wall speed.",
+          "tags": ["speed", "quality", "overhangs"],
+          "difficulty": "beginner",
+          "priority": "high",
+          "related_settings": ["enable_overhang_speed", "overhang_speed_0", "overhang_speed_1"]
+        },
+        {
+          "id": "tip-060",
+          "title": "Use Elephant Foot Compensation",
+          "content": "The first layer gets squished into the bed for adhesion, which makes it spread outward slightly. On the finished part, this appears as a bulge at the base - the 'elephant foot.'\n\nElephant foot compensation shrinks the first layer's outer perimeter inward by a set amount, counteracting the squish. Typical values: 0.1-0.2mm depending on your Z-offset and first layer squish.\n\nIn OrcaSlicer: Print Settings -> Quality -> Elephant foot compensation. Critical for parts that need accurate base dimensions, like boxes that must fit together or parts that mount into slots. Too much compensation creates gaps at the base instead.",
+          "tags": ["quality", "first-layer", "dimensional-accuracy"],
+          "difficulty": "beginner",
+          "priority": "medium",
+          "related_settings": ["elefant_foot_compensation", "first_layer_height"]
+        },
+        {
+          "id": "tip-061",
+          "title": "Master Bridge Settings",
+          "content": "Bridges span horizontal gaps without support - the plastic stretches across the void and solidifies mid-air. Getting them right requires counterintuitive settings.\n\nReduce bridge flow to 85-95% so there's less material to sag. Increase bridge speed to 30-50mm/s so the plastic stretches rather than droops - slow bridges actually perform worse. Max cooling (100% fan) solidifies the span immediately.\n\nOrcaSlicer has dedicated bridge settings under Print Settings -> Quality -> Bridge. For internal bridges (inside the model), you can use different settings since appearance doesn't matter. Klipper's pressure advance also helps bridge starts.",
+          "tags": ["quality", "bridges", "cooling"],
+          "difficulty": "intermediate",
+          "priority": "medium",
+          "related_settings": ["bridge_speed", "bridge_flow", "bridge_fan_speed"]
+        },
+        {
+          "id": "tip-062",
+          "title": "Use Support Painting",
+          "content": "Automatic support detection sometimes misses areas that need support or adds support where it's not wanted. Support painting gives you manual control.\n\nIn OrcaSlicer's prepare view, use the paint tool to add support enforcers (force support here) or blockers (never support here) directly on the model surface. These combine with automatic supports - paint enforcers for tricky spots the algorithm missed, blockers for areas that can bridge or where support removal would damage the surface.\n\nEssential for articulated prints (print-in-place hinges), organic shapes with complex overhangs, and minimizing post-processing on visible surfaces.",
+          "tags": ["supports", "workflow", "manual"],
+          "difficulty": "beginner",
+          "priority": "medium",
+          "related_settings": ["support_type", "Support painting tool"]
+        },
+        {
+          "id": "tip-063",
+          "title": "Apply Process Profiles (Per-Object Settings)",
+          "content": "Different parts of a print have different requirements - structural bases need strength, decorative tops need detail. Process profiles let you apply different settings to height ranges or specific objects.\n\nIn OrcaSlicer, right-click an object and choose 'Add modifier' or 'Add height range modifier.' Apply thicker layers (0.28mm) to plain sections and fine layers (0.12mm) to detailed sections. Or use more walls for structural bases and fewer for decorative upper portions.\n\nThis avoids splitting models into multiple files and manually aligning them. Great for busts (detailed face, simple base), functional parts with integrated decoration, or varying strength requirements within a single print.",
+          "tags": ["workflow", "optimization", "advanced"],
+          "difficulty": "intermediate",
+          "priority": "low",
+          "related_settings": ["Height range modifier", "Per-object settings"]
+        },
+        {
+          "id": "tip-064",
+          "title": "Choose Tree vs Classic Supports",
+          "content": "Support strategy dramatically affects print time, material usage, and surface finish. Choose wisely based on your model's geometry.\n\nTree supports: Branch-like structures that reach up from the bed to support overhangs. Use less material, easier removal, leave smaller contact points. Best for organic shapes, figurines, and angled overhangs. Weakness: can't easily reach internal overhangs.\n\nClassic supports: Vertical columns directly under overhangs. Stronger, better for large flat overhangs and heavy parts. More material, harder removal, more witness marks.\n\nOrcaSlicer's organic supports blend both approaches. Experiment with your specific geometries.",
+          "tags": ["supports", "material-usage", "workflow"],
+          "difficulty": "beginner",
+          "priority": "medium",
+          "related_settings": ["support_style", "support_type"]
+        },
+        {
+          "id": "tip-065",
+          "title": "Configure Wall Ordering",
+          "content": "Wall printing order affects both dimensional accuracy and surface appearance. There are two strategies:\n\nOuter wall first: Prints visible surface before inner walls. Better dimensional accuracy since the outer wall isn't pushed by inner walls. Shows seams more visibly. Use for tight-tolerance mechanical parts.\n\nInner wall first (default): Inner walls print first, outer wall last. Inner wall imperfections are hidden by the outer wall. Stronger bond between walls. Slightly less accurate dimensions. Better surface finish overall.\n\nIn OrcaSlicer: Print Settings -> Quality -> Wall -> Wall sequence. Most users stick with inner-first for the quality benefits.",
+          "tags": ["quality", "dimensional-accuracy", "strength"],
+          "difficulty": "beginner",
+          "priority": "low",
+          "related_settings": ["wall_sequence", "outer_wall_first"]
+        },
+        {
+          "id": "tip-066",
+          "title": "Set Wipe Before Retract",
+          "content": "Retraction prevents stringing by pulling filament back before travel moves. But abrupt retraction can leave blobs at the retraction point. Wiping helps.\n\nWith wipe enabled, the nozzle drags along the just-printed perimeter before retracting, smearing any excess material along the wall rather than leaving a blob. This reduces zits and improves surface finish, especially on stringy materials like PETG.\n\n'Wipe into infill' takes this further by routing the wipe into internal areas where marks are invisible. Set wipe distance to 1-2mm - too much wastes time, too little doesn't help. Particularly effective combined with careful retraction tuning.",
+          "tags": ["quality", "retraction", "stringing"],
+          "difficulty": "beginner",
+          "priority": "medium",
+          "related_settings": ["wipe", "wipe_distance", "wipe_on_retract"]
+        }
+      ]
+    },
+
+    "speed_quality": {
+      "name": "Speed vs Quality Optimization",
+      "description": "Techniques to balance printing speed with output quality",
+      "tips": [
+        {
+          "id": "tip-021",
+          "title": "Separate Outer/Inner Perimeter Speeds",
+          "content": "Outer perimeters form visible surfaces where quality matters; inner perimeters are hidden inside the part and can be printed faster.\n\nSet outer wall speed to 40-60% of inner wall speed - for example, 50mm/s outer vs 100mm/s inner. This preserves surface finish while minimizing time impact.\n\nThe outer perimeter benefits from slower speeds because it allows better cooling and reduces vibration artifacts. Many users run inner walls at 200mm/s+ while keeping outer walls at 60-80mm/s.",
+          "tags": ["speed", "quality", "surface-finish"],
+          "difficulty": "beginner",
+          "priority": "high",
+          "related_settings": ["outer_wall_speed", "inner_wall_speed"]
+        },
+        {
+          "id": "tip-022",
+          "title": "Use Layer Time Minimums",
+          "content": "Small layers (like the tip of a cone or thin spire) print so quickly that plastic doesn't have time to solidify before the next layer, causing deformation and blobbing.\n\nSet a minimum layer time (Filament Settings -> Cooling) of 10-15 seconds for PLA, 8-12 seconds for PETG. When a layer would complete faster, the printer automatically slows down.\n\nYou can also set a minimum print speed (15-20mm/s). For extremely small layers, print multiple copies so the printer alternates between them.",
+          "tags": ["cooling", "quality", "small-parts"],
+          "difficulty": "beginner",
+          "priority": "medium",
+          "related_settings": ["slow_down_layer_time", "fan_min_speed"]
+        },
+        {
+          "id": "tip-023",
+          "title": "Enable Dynamic Acceleration",
+          "content": "Acceleration determines how quickly the print head reaches target speed. High acceleration saves time but causes more vibration.\n\nOrcaSlicer lets you set different acceleration per feature type. Strategy: outer walls at 1500-3000mm/s² for smooth surfaces, inner walls at 3000-5000mm/s², infill at 5000-10000mm/s².\n\nThis minimizes print time while preserving visible quality. Monitor for ringing on outer walls - if you see ghosting near corners, lower acceleration or run input shaping.",
+          "tags": ["speed", "quality", "motion"],
+          "difficulty": "intermediate",
+          "priority": "medium",
+          "related_settings": ["outer_wall_acceleration", "inner_wall_acceleration", "infill_acceleration"]
+        },
+        {
+          "id": "tip-024",
+          "title": "Optimize Infill Percentage",
+          "content": "Higher infill doesn't always mean stronger parts - strength increases have diminishing returns above 20-25%.\n\nFor most functional prints, 10-20% gyroid or cubic infill provides excellent strength-to-weight ratio. Gyroid is particularly efficient: 3D-continuous (no weak planes), supports top surfaces well, prints quickly.\n\nFor maximum strength, add more perimeters instead of infill - 4-5 walls often beat 50% infill. For display models, 5-10% is often sufficient.",
+          "tags": ["speed", "strength", "material-usage"],
+          "difficulty": "beginner",
+          "priority": "medium",
+          "related_settings": ["sparse_infill_density", "sparse_infill_pattern"]
+        },
+        {
+          "id": "tip-025",
+          "title": "Use Draft Shield Sparingly",
+          "content": "Draft shields create a thin wall around your print to block air currents and retain heat - useful for ABS/ASA which warp from temperature gradients.\n\nOnly enable for high-temp materials on open-frame printers without enclosures. The shield adds significant material and time, so consider an enclosure instead.\n\nFor tall ABS parts, a partial draft shield protects critical lower layers while allowing the top to cool. Never use with PLA or PETG - they'll overheat.",
+          "tags": ["temperature", "warping", "material-specific"],
+          "difficulty": "beginner",
+          "priority": "low",
+          "related_settings": ["draft_shield", "chamber_temperature"]
+        },
+        {
+          "id": "tip-026",
+          "title": "Tune Travel Speed High",
+          "content": "Travel moves (non-printing repositioning) are pure time loss - make them as fast as possible. Klipper handles 250-350mm/s travel speeds easily on most printers.\n\nSet high travel speed in the slicer and ensure your Klipper max_velocity accommodates it. Travel acceleration can also be maxed out since surface quality doesn't matter.\n\nOn complex prints with many islands, fast travel saves minutes to hours. If you hear concerning noises, dial it back. Ensure Z-hop is enabled to avoid crashes.",
+          "tags": ["speed", "optimization", "motion"],
+          "difficulty": "beginner",
+          "priority": "medium",
+          "related_settings": ["travel_speed", "max_travel_detour_distance"]
+        },
+        {
+          "id": "tip-027",
+          "title": "Use Thick Top/Bottom Layers",
+          "content": "Top surfaces can show infill pattern telegraphing (shadows of the pattern beneath) if you don't have enough solid layers.\n\nUse at least 4-6 top layers (or ~0.8-1.2mm solid thickness) to create an opaque, smooth surface. Bottom layers need fewer (3-4) since they're against a flat plate.\n\nMore top layers are needed with lower infill percentages. If you still see patterns, increase to 7-8 layers or use monotonic infill. Combine with ironing for best results.",
+          "tags": ["quality", "surface-finish", "optimization"],
+          "difficulty": "beginner",
+          "priority": "medium",
+          "related_settings": ["top_shell_layers", "bottom_shell_layers"]
+        },
+        {
+          "id": "tip-028",
+          "title": "Enable Support Interface Layers",
+          "content": "Support interface layers are dense regions between the loose support structure and your part, creating a smooth surface for overhangs.\n\nWithout interfaces, sparse support patterns leave rough surfaces. Enable 2-3 interface layers (Print Settings -> Support) with a tight pattern and small gap (0.1-0.2mm).\n\nThe interface creates a flat bridge for your overhang, dramatically improving finish. For best results, use soluble support material if available; otherwise interfaces still pop off cleaner.",
+          "tags": ["supports", "quality", "post-processing"],
+          "difficulty": "beginner",
+          "priority": "medium",
+          "related_settings": ["support_interface_top_layers", "support_interface_bottom_layers"]
+        },
+        {
+          "id": "tip-029",
+          "title": "Adjust Line Width for Strength",
+          "content": "Wider extrusion lines squash more firmly into each other and the layer below, improving layer adhesion and overall part strength.\n\nA 0.4mm nozzle can comfortably extrude 0.4-0.55mm wide lines (100-140% of nozzle diameter). For strength-critical parts, try 0.5-0.55mm line width.\n\nGoing too wide causes rough surfaces and potential under-extrusion. Use different widths per feature - wider internal perimeters for strength, standard width outer perimeters for finish.",
+          "tags": ["strength", "quality", "extrusion"],
+          "difficulty": "intermediate",
+          "priority": "medium",
+          "related_settings": ["line_width", "outer_wall_line_width", "inner_wall_line_width"]
+        },
+        {
+          "id": "tip-030",
+          "title": "Use Sequential Printing for Speed",
+          "content": "When printing multiple small objects, sequential/by-object printing reduces total travel distance since the nozzle doesn't jump between objects on every layer.\n\nThis minimizes stringing, reduces oozing, and often saves time. The key limitation: your toolhead needs clearance over completed objects, so works best for short parts.\n\nSequential printing also improves quality since each object cools fully before the next starts, and if one fails, earlier objects are complete. Enable via Print Settings -> Others -> Print sequence.",
+          "tags": ["speed", "quality", "multi-object"],
+          "difficulty": "intermediate",
+          "priority": "low",
+          "related_settings": ["complete_individual_objects", "extruder_clearance_radius"]
+        },
+        {
+          "id": "tip-067",
+          "title": "Understand Volumetric Flow Limits",
+          "content": "Speed settings in mm/s are misleading because they don't account for how much plastic actually flows. The true limit is volumetric flow: mm³/s.\n\nCalculate it: layer_height × line_width × speed. Example: 0.2mm × 0.4mm × 300mm/s = 24 mm³/s. Most stock hotends max out at 12-15 mm³/s - that 300mm/s setting is physically impossible!\n\nKlipper will command 300mm/s moves, but under-extrusion occurs because plastic can't melt fast enough. Set max_volumetric_speed in your slicer's filament profile. The slicer then automatically reduces speed to stay within the limit. This is why fast printers need high-flow hotends.",
+          "tags": ["speed", "extrusion", "theory"],
+          "difficulty": "intermediate",
+          "priority": "high",
+          "related_settings": ["filament_max_volumetric_speed", "max_flow_rate"]
+        },
+        {
+          "id": "tip-068",
+          "title": "Tune First Layer Speed Carefully",
+          "content": "First layer speed affects adhesion more than almost any other setting. Slower is almost always better here - the time investment pays off in reliability.\n\nUse 20-30mm/s for first layer walls and 40-60mm/s for first layer infill. This ensures proper squish and bed contact. Combine with slightly higher first layer height (0.25-0.3mm for a 0.2mm layer height print) for more forgiving bed leveling.\n\nFirst layer flow can be set 1.0-1.05× (5% extra) to compensate for squish variance. But proper Z-offset is better than flow compensation. Separate first layer settings exist specifically because this layer has unique requirements.",
+          "tags": ["first-layer", "adhesion", "speed"],
+          "difficulty": "beginner",
+          "priority": "high",
+          "related_settings": ["first_layer_speed", "first_layer_height", "first_layer_flow_ratio"]
+        },
+        {
+          "id": "tip-069",
+          "title": "Configure Acceleration for Small Features",
+          "content": "Small features like thin walls, small holes, and fine text suffer disproportionately from high acceleration. The toolhead never reaches target speed before needing to change direction, creating vibration and dimensional errors.\n\nOrcaSlicer's 'small perimeters threshold' triggers reduced speed and acceleration for features below a length threshold. Set this to catch bolt holes, snap-fit features, and delicate text.\n\nFor Klipper users: the slicer sends SET_VELOCITY_LIMIT commands, so ensure your printer.cfg max values allow the reduction. Small feature acceleration of 1000-2000mm/s² often improves accuracy significantly versus 5000+mm/s² general acceleration.",
+          "tags": ["speed", "quality", "dimensional-accuracy"],
+          "difficulty": "intermediate",
+          "priority": "medium",
+          "related_settings": ["small_perimeter_threshold", "small_perimeter_speed"]
+        },
+        {
+          "id": "tip-070",
+          "title": "Balance Infill Speed vs Pattern",
+          "content": "Infill pattern choice matters more than infill percentage for strength - and some patterns print faster than others at the same quality.\n\nGyroid and cubic infill distribute force in 3D, making them strong in all directions. Fast gyroid (150-200mm/s) at 15% often beats slow rectilinear at 30% for overall strength. Rectilinear has weak layer planes where layers meet.\n\nLightning infill uses minimal material to support top surfaces only - not for structural parts but excellent for display models. Honeycomb is strong but slow. For functional parts, gyroid at moderate density (15-20%) hits the sweet spot of speed, strength, and material usage.",
+          "tags": ["speed", "strength", "infill"],
+          "difficulty": "beginner",
+          "priority": "medium",
+          "related_settings": ["sparse_infill_pattern", "sparse_infill_speed"]
+        },
+        {
+          "id": "tip-071",
+          "title": "Set Appropriate Z-Hop Height",
+          "content": "Z-hop lifts the nozzle during travel moves, preventing collisions with printed parts and reducing scratches on top surfaces. But it has tradeoffs.\n\nToo low (under 0.2mm): still catches warped edges and high spots. Too high (over 0.5mm): wastes significant time on thousands of travel moves, can increase stringing as ooze has more time to form.\n\nTypical values: 0.2-0.4mm. Match to your layer height - hop should clear at least one layer plus some margin. For very fast printing with good ooze control (low PA, well-tuned retraction), consider disabling Z-hop entirely to save time. Enable it for PETG and other oozy materials.",
+          "tags": ["speed", "travel", "quality"],
+          "difficulty": "beginner",
+          "priority": "low",
+          "related_settings": ["retract_lift", "lift_height"]
+        },
+        {
+          "id": "tip-072",
+          "title": "Choose Sparse Infill Pattern Wisely",
+          "content": "Different infill patterns excel at different things. Choose based on your part's requirements:\n\nGyroid: Strong in all directions, good top surface support, prints without direction changes (reduces vibration). Best general-purpose choice for functional parts.\n\nCubic: Strong but has some weak planes. Fast to print. Good for large structural parts.\n\nGrid/Lines: Fastest to print but weakest - only strong along the line direction. Fine for non-structural parts.\n\nLightning: Minimum material to support top surfaces. Zero structural contribution. Only for display models or parts with thick walls providing all strength.",
+          "tags": ["infill", "strength", "material-usage"],
+          "difficulty": "beginner",
+          "priority": "medium",
+          "related_settings": ["sparse_infill_pattern", "sparse_infill_density"]
+        },
+        {
+          "id": "tip-073",
+          "title": "Enable Avoid Crossing Perimeters",
+          "content": "Travel moves that cross outer walls can leave marks - either ooze deposits or drag lines where the nozzle touches already-printed plastic. This degrades surface finish.\n\n'Avoid crossing perimeters' routes travel moves through infill regions instead of straight-line paths. The travel distance increases but the nozzle never crosses visible surfaces. Result: cleaner outer walls with no travel marks.\n\nParticularly useful for PETG and other oozy materials. The time cost is usually minimal. Disable only when you're confident in your ooze control and prioritizing speed. In OrcaSlicer: Print Settings -> Quality -> Travel.",
+          "tags": ["quality", "travel", "surface-finish"],
+          "difficulty": "beginner",
+          "priority": "low",
+          "related_settings": ["avoid_crossing_perimeters", "avoid_crossing_curled_overhangs"]
+        },
+        {
+          "id": "tip-074",
+          "title": "Configure Cooling for High Speed",
+          "content": "Faster printing means plastic has less time to cool before the next layer arrives. Compensate with more aggressive cooling strategies.\n\nIncrease minimum fan speed for higher speed prints. Use the 'fan speed ramp' feature to boost cooling as speed increases. Start bridge cooling at 100% regardless of other settings - bridges need maximum solidification.\n\nFor enclosed printers, balance part cooling against chamber temperature for ABS/ASA. Some users add auxiliary part cooling fans specifically for high-speed PLA printing. Monitor for cooling-related defects: curling overhangs, droopy bridges, and blobby small features all indicate insufficient cooling.",
+          "tags": ["cooling", "speed", "quality"],
+          "difficulty": "intermediate",
+          "priority": "medium",
+          "related_settings": ["fan_min_speed", "fan_max_speed", "bridge_fan_speed"]
+        }
+      ]
+    },
+
+    "print_quality": {
+      "name": "Print Quality Improvements",
+      "description": "Tips focused specifically on improving final print quality",
+      "tips": [
+        {
+          "id": "tip-031",
+          "title": "Dry Your Filament",
+          "content": "Filament hygroscopy is commonly underestimated - even factory-sealed spools absorb moisture during storage and shipping. Wet filament causes bubbling/popping at the nozzle, excessive stringing, poor layer adhesion, and a rough/matte surface finish.\n\nDrying temperatures: PLA at 45-50°C for 4-6 hours, PETG at 60-65°C for 6-8 hours, nylon at 70-80°C for 12+ hours, TPU at 50-55°C for 4-6 hours. Use a food dehydrator, dedicated filament dryer, or oven (verify temperature accuracy first).\n\nStore dried filament in vacuum bags with desiccant packs, or print from a dry box with active dehumidification. Signs of wet filament: hissing during extrusion, steam/vapor visible, inconsistent extrusion width, and parts that snap easily along layer lines.",
+          "tags": ["filament", "quality", "preparation"],
+          "difficulty": "beginner",
+          "priority": "high",
+          "related_settings": ["filament_type", "temperature"]
+        },
+        {
+          "id": "tip-032",
+          "title": "Tune Z-Offset Precisely",
+          "content": "Z-offset determines the gap between nozzle and bed at Z=0 - get this wrong and nothing else matters. Too high causes poor adhesion and rounded first layer lines; too low causes elephants foot, blocked extrusion, and bed damage.\n\nFor probed systems, run PROBE_CALIBRATE in Klipper: it positions the nozzle over the probe point and you adjust until paper drags slightly (about 0.1mm friction). For manual mesh, home and adjust with SET_GCODE_OFFSET Z_ADJUST=-0.01 in small increments while watching the first layer.\n\nPerfect first layer: lines slightly squished together with no gaps, smooth top surface, and good adhesion when cool. Save with SAVE_CONFIG after finding optimal value. Temperature affects Z-offset - calibrate with bed at print temperature since thermal expansion changes dimensions.",
+          "tags": ["calibration", "first-layer", "adhesion"],
+          "difficulty": "beginner",
+          "priority": "high",
+          "related_settings": ["[probe]", "z_offset", "PROBE_CALIBRATE"]
+        },
+        {
+          "id": "tip-033",
+          "title": "Use Textured Build Plates",
+          "content": "Modern PEI sheets (smooth or textured) provide excellent adhesion when hot and release easily when cooled - no more glue sticks or tape. Smooth PEI gives glossy bottoms and maximum adhesion (sometimes too much for PETG). Textured PEI sheets give a matte finish and easier release, better for PETG which can bond permanently to smooth PEI.\n\nKeep PEI clean with isopropyl alcohol (90%+) between prints. For stubborn adhesion issues, occasionally wash with dish soap to remove oil buildup.\n\nDifferent materials prefer different surfaces: PLA works on anything, PETG prefers textured or needs glue stick barrier on smooth, ABS needs enclosed heat plus PEI. Spring steel magnetic systems let you swap surfaces quickly between materials.",
+          "tags": ["adhesion", "workflow", "hardware"],
+          "difficulty": "beginner",
+          "priority": "medium",
+          "related_settings": ["bed_temperature", "build_plate_type"]
+        },
+        {
+          "id": "tip-034",
+          "title": "Clean Build Surface Properly",
+          "content": "Fingerprints and oils are the most common cause of adhesion problems. For routine cleaning between prints, wipe with 90%+ isopropyl alcohol on a lint-free cloth - paper towels can leave fibers.\n\nFor deep cleaning when IPA stops working, wash the plate with dish soap and warm water, then dry completely. Avoid touching the print surface with bare hands after cleaning. Some materials like ABS leave residue that builds up over time - acetone can help but use sparingly as it can damage some surfaces.\n\nIf adhesion suddenly degrades, the surface is likely contaminated. Consider wearing gloves when handling plates. Replace consumable surfaces (PEI, BuildTak) when cleaning no longer restores adhesion.",
+          "tags": ["adhesion", "preparation", "maintenance"],
+          "difficulty": "beginner",
+          "priority": "high",
+          "related_settings": ["bed_temperature", "first_layer_temperature"]
+        },
+        {
+          "id": "tip-035",
+          "title": "Enable Monotonic Top Fill",
+          "content": "Standard rectilinear top fill creates visible lines where the print direction changes, causing inconsistent light reflection and a striped appearance.\n\nMonotonic infill (Print Settings -> Quality -> Top surface pattern) ensures all lines are printed in the same direction across the entire surface, creating uniform light reflection and eliminating the zebra-stripe effect. This is purely aesthetic - it doesn't affect strength or print time significantly.\n\nThe result is a professional-looking top surface with consistent sheen when viewed from any angle. Particularly noticeable on large flat tops and in photos. Combine with ironing for the smoothest possible finish.",
+          "tags": ["quality", "surface-finish", "aesthetics"],
+          "difficulty": "beginner",
+          "priority": "medium",
+          "related_settings": ["top_surface_pattern", "monotonic_internal_solid_infill"]
+        },
+        {
+          "id": "tip-036",
+          "title": "Reduce Outer Perimeter Count",
+          "content": "Perimeters form the outer shell of your print and contribute most to strength. However, strength gains diminish rapidly after 3-4 perimeters.\n\nFor most functional parts, 2-3 perimeters (0.8-1.2mm wall thickness with 0.4mm nozzle) provide good strength while saving print time. More perimeters increase rigidity but add time proportionally. If you need maximum strength, increasing perimeters to 4-5 is more effective than increasing infill.\n\nFor purely decorative prints, even 2 perimeters may be fine. Wall thickness in mm is often a better target than perimeter count - aim for 1.2mm+ for functional parts.",
+          "tags": ["speed", "optimization", "strength"],
+          "difficulty": "beginner",
+          "priority": "low",
+          "related_settings": ["wall_loops"]
+        },
+        {
+          "id": "tip-037",
+          "title": "Use Fuzzy Skin Wisely",
+          "content": "Fuzzy skin adds random tiny deviations to outer perimeter paths, creating a textured matte finish that effectively hides layer lines. Enable via Print Settings -> Others -> Fuzzy skin.\n\nAdjust 'point distance' (how often it deviates, ~0.8mm) and 'thickness' (how far it deviates, ~0.3mm) to control the texture coarseness. Works excellently on organic models like sculptures, rocks, tree bark, or fabric textures where the randomness looks natural.\n\nAvoid on mechanical parts requiring dimensional accuracy or smooth mating surfaces. You can apply fuzzy skin selectively using modifier meshes in OrcaSlicer to texture only specific regions of a model.",
+          "tags": ["surface-finish", "aesthetics", "specialty"],
+          "difficulty": "beginner",
+          "priority": "low",
+          "related_settings": ["fuzzy_skin", "fuzzy_skin_thickness"]
+        },
+        {
+          "id": "tip-038",
+          "title": "Calibrate Extrusion Multiplier Per Material",
+          "content": "Even with perfectly calibrated e-steps, different filaments extrude differently due to varying densities, pigment loads, and melt characteristics. The extrusion multiplier (flow ratio) compensates for these material-specific variations.\n\nCalibrate using OrcaSlicer's flow test or a single-wall cube: measure actual wall thickness vs expected (e.g., if expecting 0.45mm and measuring 0.47mm, reduce flow to 0.45/0.47 ≈ 0.96). Typical values range 0.92-1.05 - anything outside this range suggests other issues.\n\nSigns of over-extrusion: rough surfaces, bulging corners, layer lines too visible; under-extrusion: gaps, weak layer adhesion, visible infill through walls. Save calibrated values to filament profiles. Recalibrate when switching brands, colors, or after long storage.",
+          "tags": ["calibration", "extrusion", "quality"],
+          "difficulty": "beginner",
+          "priority": "high",
+          "related_settings": ["filament_flow_ratio", "extrusion_multiplier"]
+        },
+        {
+          "id": "tip-039",
+          "title": "Enable Detect Thin Walls",
+          "content": "Models with features thinner than your nozzle or line width can be skipped entirely during slicing, leaving holes where geometry should exist.\n\nEnable 'Detect thin walls' (Print Settings -> Quality -> Precision) to force the slicer to print these features using a single extrusion pass. This is crucial for text, fine details, and models with thin connecting features.\n\nWithout it, you might discover missing walls only after printing. Preview your sliced model and toggle through layers to verify all expected features are present. Arachne wall generator also helps by automatically varying line width to fill thin gaps.",
+          "tags": ["quality", "slicing", "geometry"],
+          "difficulty": "beginner",
+          "priority": "medium",
+          "related_settings": ["detect_thin_wall"]
+        },
+        {
+          "id": "tip-040",
+          "title": "Use Variable Layer Heights",
+          "content": "Different parts of a model have different quality requirements - base structures can use thick layers for speed while detailed sections need thin layers for resolution.\n\nOrcaSlicer's variable layer height tool lets you paint layer heights directly onto your model or use automatic adaptive heights. In the prepare view, select 'Height range modifier' to manually specify regions for different layer heights.\n\nExample: 0.28mm layers for a plain cylindrical body, transitioning to 0.12mm layers for a detailed face or text region. Combined with different speeds per feature, you can achieve near-resin detail on specific areas while keeping overall print times reasonable.",
+          "tags": ["speed", "quality", "optimization"],
+          "difficulty": "intermediate",
+          "priority": "medium",
+          "related_settings": ["layer_height", "adaptive_layer_height"]
+        },
+        {
+          "id": "tip-075",
+          "title": "Diagnose VFA (Vertical Fine Artifacts)",
+          "content": "Vertical Fine Artifacts appear as subtle, regular vertical lines or ripples on flat surfaces - distinct from ringing which appears near corners. VFA is much harder to eliminate.\n\nCommon causes: extruder gear tooth marks (the gear imprints a pattern on the filament), stepper motor resonance at certain speeds, low-quality filament with diameter inconsistency, or vibration from other sources.\n\nFixes: Increase microstepping (if your drivers support it), use quality filament with tight diameter tolerance, try different speeds to avoid resonance, upgrade to a geared extruder with higher gear ratios. Input shaping doesn't help VFA since it's not acceleration-induced.",
+          "tags": ["troubleshooting", "quality", "surface-finish"],
+          "difficulty": "advanced",
+          "priority": "low",
+          "related_settings": ["microsteps", "rotation_distance"]
+        },
+        {
+          "id": "tip-076",
+          "title": "Fix Salmon Skin Texture",
+          "content": "Salmon skin is a specific surface defect: tiny regular bumps creating a texture that looks like fish skin. It differs from VFA in its scale and appearance.\n\nThe primary cause is TMC stepper driver resonance interacting with the stepper motors at specific speeds or accelerations. The driver's chopper frequency creates micro-vibrations that translate to surface texture.\n\nFixes: Adjust stealthchop_threshold in Klipper to change the speed at which spreadcycle activates. Try Klipper's TMC autotune module. Slightly varying speeds can move the resonance to a different pattern. Some users find specific acceleration/jerk values trigger it.",
+          "tags": ["troubleshooting", "quality", "stepper"],
+          "difficulty": "advanced",
+          "priority": "low",
+          "related_settings": ["[tmc2209]", "stealthchop_threshold", "driver_TPFD"]
+        },
+        {
+          "id": "tip-077",
+          "title": "Control First Layer Width",
+          "content": "A wider first layer line creates more contact area with the bed, improving adhesion and making leveling more forgiving. It's separate from first layer height.\n\nFor a 0.4mm nozzle, try 0.5-0.6mm first layer line width (120-150% of nozzle diameter). The plastic spreads wider, gripping the bed better and bridging small gaps from imperfect leveling.\n\nSet this in Print Settings -> Quality -> Line width -> First layer. Too wide and you risk elephant foot or dragging through already-printed lines. Balance with first layer flow - wider lines at normal flow usually work better than normal width at increased flow.",
+          "tags": ["first-layer", "adhesion", "dimensional-accuracy"],
+          "difficulty": "beginner",
+          "priority": "medium",
+          "related_settings": ["first_layer_line_width", "first_layer_height"]
+        },
+        {
+          "id": "tip-078",
+          "title": "Use External Perimeter First for Holes",
+          "content": "Holes printed with the standard inner-first wall order end up slightly smaller than designed. The inner walls push outward slightly, and the outer wall has to fit around them.\n\nPrinting outer perimeter first for holes gives better dimensional accuracy. The outer wall prints to exact dimensions, and inner walls fill in behind it. Some slicers have an 'only for holes' option that applies this selectively.\n\nCritical for bearing fits, bolt holes, and press-fit features where 0.1-0.2mm matters. Test with calibration holes (M3, M4, M5) to dial in your settings. Combine with XY hole compensation for even tighter tolerances.",
+          "tags": ["quality", "dimensional-accuracy", "mechanical"],
+          "difficulty": "intermediate",
+          "priority": "medium",
+          "related_settings": ["outer_wall_first_for_holes", "wall_sequence"]
+        },
+        {
+          "id": "tip-079",
+          "title": "Apply XY Hole Compensation",
+          "content": "Holes always print slightly smaller than designed due to plastic shrink, nozzle geometry, and printing dynamics. XY hole compensation enlarges holes in the slicing to compensate.\n\nTypical values: -0.1 to -0.2mm (negative because you're making the hole larger). Calibrate by printing test holes at known sizes (print an M3 hole, measure it, calculate the difference).\n\nThis is separate from overall XY compensation which affects external dimensions. Apply hole compensation specifically to improve fit of bolts, bearings, and press-fit components. Some materials (ABS especially) shrink more and need larger compensation.",
+          "tags": ["quality", "dimensional-accuracy", "calibration"],
+          "difficulty": "intermediate",
+          "priority": "medium",
+          "related_settings": ["hole_to_polyhole_conversion", "xy_hole_compensation"]
+        },
+        {
+          "id": "tip-080",
+          "title": "Configure Scarf Joint Seams",
+          "content": "Traditional seams create a visible line where each layer starts and stops abruptly. Scarf joint seams gradually ramp extrusion up and down at the seam, blending the start and end together.\n\nThe result is significantly less visible seams - the gradual transition hides the discontinuity. In OrcaSlicer: Print Settings -> Quality -> Seam -> Scarf joint seam.\n\nWorks best with aligned seam positioning so the scarf joints stack vertically. Random seams with scarf joints still help but the effect is distributed across the surface. Combine with well-tuned pressure advance for the best results - PA handles the extrusion dynamics during the ramp.",
+          "tags": ["quality", "seams", "surface-finish"],
+          "difficulty": "intermediate",
+          "priority": "medium",
+          "related_settings": ["seam_slope_type", "scarf_joint_seam"]
+        },
+        {
+          "id": "tip-081",
+          "title": "Tune Perimeter Overlap Control",
+          "content": "Where perimeters meet infill, they overlap slightly to ensure a solid bond. Too little overlap creates gaps and weakness; too much creates bulging and over-extrusion artifacts.\n\nDefault values (15-25%) work for most cases. Increase for functional parts where strength matters more than appearance - up to 35-40% for maximum layer bonding. Decrease for appearance-critical parts where surface finish matters - down to 10-15%.\n\nThis is also called 'infill overlap' in some slicers. Test by printing thin-walled boxes and checking the perimeter-infill junction. Visible gaps mean increase overlap; bulging seams mean decrease it.",
+          "tags": ["quality", "strength", "extrusion"],
+          "difficulty": "intermediate",
+          "priority": "low",
+          "related_settings": ["infill_wall_overlap", "infill_overlap"]
+        },
+        {
+          "id": "tip-082",
+          "title": "Reduce Solid Infill Density",
+          "content": "Top and bottom solid layers don't always need to be 100% filled. Slight under-extrusion (95-98%) on solid fills can actually improve appearance by reducing pillowing and bulging.\n\nPillowing occurs when top layers have too much material and create bumps between infill lines below. Reducing solid infill density (or flow) gives excess material somewhere to go instead of pushing upward.\n\nThis only applies to solid infill areas, not perimeters. In OrcaSlicer, look for 'top surface flow ratio' or similar settings. Start at 0.97-0.98 and adjust based on results. Don't go too low or you'll see gaps.",
+          "tags": ["quality", "surface-finish", "optimization"],
+          "difficulty": "intermediate",
+          "priority": "low",
+          "related_settings": ["top_surface_flow_ratio", "solid_infill_density"]
+        }
+      ]
+    },
+
+    "troubleshooting": {
+      "name": "Troubleshooting",
+      "description": "Common issues and how to diagnose/fix them",
+      "tips": [
+        {
+          "id": "tip-041",
+          "title": "Check Belt Tension",
+          "content": "Loose belts cause layer shifts, backlash (visible as inconsistent perimeter alignment), and poor input shaper performance. Proper tension prevents skipped steps during rapid direction changes.\n\nCheck tension using a phone app that measures audio frequency when you pluck the belt like a guitar string - aim for 100-130Hz for typical GT2 belts (consult your printer's documentation). Both X and Y belts should have similar tension for consistent behavior.\n\nToo tight causes premature bearing wear and motor strain; too loose causes the issues above. After adjusting tension, re-run input shaping calibration since belt tension affects resonant frequencies. Check monthly or after major maintenance.",
+          "tags": ["hardware", "maintenance", "quality"],
+          "difficulty": "beginner",
+          "priority": "high",
+          "related_settings": ["max_velocity", "max_accel"]
+        },
+        {
+          "id": "tip-042",
+          "title": "Verify E-Steps Calibration",
+          "content": "E-steps (or rotation_distance in Klipper) controls how much filament the extruder feeds per motor step. Miscalibration causes consistent over- or under-extrusion.\n\nTo calibrate: mark filament 120mm from extruder entrance, heat to printing temp, extrude 100mm (G1 E100 F100), measure remaining distance and calculate actual extruded amount. If you requested 100mm but got 95mm, adjust rotation_distance proportionally: new_rotation_distance = current_rotation_distance * (100 / actual_extruded).\n\nThis calibration is typically done once per extruder and rarely changes unless you modify the extruder mechanism. Do NOT compensate for material-specific variations here - that's what the flow multiplier is for. Save to printer.cfg with SAVE_CONFIG.",
+          "tags": ["calibration", "extrusion", "hardware"],
+          "difficulty": "beginner",
+          "priority": "high",
+          "related_settings": ["[extruder]", "rotation_distance"]
+        },
+        {
+          "id": "tip-043",
+          "title": "Monitor Part Cooling",
+          "content": "Part cooling solidifies plastic quickly after extrusion, critical for overhangs, bridges, and fine details. PLA loves aggressive cooling (70-100% fan), while PETG needs moderate cooling (30-50% max - too much causes layer adhesion issues), and ABS generally needs minimal or no cooling.\n\nRun Klipper's M106 S255 to verify fan at 100% works, then M106 S127 for 50%. Check that airflow points at the nozzle tip, not the heater block. Upgrade to dual-sided or 360° cooling ducts if your printer has cooling dead zones.\n\nFor bridges, temporarily boost fan to 100% (OrcaSlicer has bridge-specific fan settings). Inadequate cooling manifests as curling overhangs, droopy bridges, and blobby small features.",
+          "tags": ["cooling", "quality", "material-specific"],
+          "difficulty": "beginner",
+          "priority": "medium",
+          "related_settings": ["fan_max_speed", "fan_min_speed", "overhang_fan_speed"]
+        },
+        {
+          "id": "tip-044",
+          "title": "Check for Partial Clogs",
+          "content": "Partial clogs restrict filament flow without completely blocking it - symptoms include inconsistent extrusion width, under-extrusion at higher speeds, and clicking/grinding from the extruder.\n\nPerform a cold pull: heat nozzle to 250°C, insert nylon or cleaning filament, push through, then cool to 90-100°C and pull firmly. The filament should come out with debris attached in the shape of the nozzle's internal path. Repeat until pulls come out clean.\n\nFor stubborn clogs, use acupuncture needles through the nozzle tip (with nozzle hot). Prevention: avoid retracting excessively, keep PTFE tubes trimmed flush, and avoid mixing materials without thorough purging. Replace nozzles periodically.",
+          "tags": ["maintenance", "extrusion", "troubleshooting"],
+          "difficulty": "intermediate",
+          "priority": "high",
+          "related_settings": ["temperature", "retraction_length"]
+        },
+        {
+          "id": "tip-045",
+          "title": "Verify Frame Rigidity",
+          "content": "A rigid frame is the foundation of print quality - loose components cause vibration, resonance, and inconsistent dimensions. Systematically check all frame bolts, especially corner brackets on aluminum extrusion frames.\n\nGantry bolts often loosen from repeated motion. The bed carriage and Z-axis components deserve special attention. Try to wiggle each axis by hand - there should be zero play.\n\nLoose frames show up in input shaper graphs as multiple resonant peaks or unusually low recommended accelerations. Consider frame braces for tall printers or adding corner brackets. Use threadlocker on critical bolts.",
+          "tags": ["hardware", "maintenance", "quality"],
+          "difficulty": "beginner",
+          "priority": "medium",
+          "related_settings": ["max_accel", "[input_shaper]"]
+        },
+        {
+          "id": "tip-046",
+          "title": "Use Klipper's Graph Tool",
+          "content": "Klipper's resonance test generates CSV data that you process with the calibrate_shaper.py script to create frequency response graphs. These graphs reveal more than just optimal shaper settings - they diagnose mechanical problems.\n\nA healthy printer shows a single clean peak per axis; multiple peaks or broad humps indicate loose components, worn bearings, or frame flex. Asymmetric X vs Y graphs suggest axis-specific issues. Very low resonant frequencies (<30Hz) indicate something loose or heavy.\n\nCompare graphs over time - degrading results signal developing problems before they cause print failures. The recommended max acceleration correlates directly with mechanical quality. Use TEST_RESONANCES AXIS=X OUTPUT=raw_data for detailed analysis.",
+          "tags": ["calibration", "troubleshooting", "advanced"],
+          "difficulty": "advanced",
+          "priority": "medium",
+          "related_settings": ["TEST_RESONANCES", "[input_shaper]"]
+        },
+        {
+          "id": "tip-047",
+          "title": "Monitor Filament Path",
+          "content": "Filament feeding problems cause inconsistent extrusion even when everything else is calibrated. Watch filament during printing - it should feed smoothly without jerking.\n\nCheck for: sharp bends in the path (use gentle curves), friction against frame or cables, tangled spools, and spool holder resistance. The spool should rotate freely with minimal force. For Bowden setups, ensure PTFE tube ends are cut square and seated firmly.\n\nIf your extruder clicks or grinds intermittently, suspect the filament path before the extruder itself. Test by manually pushing filament through - any resistance will be amplified during fast printing.",
+          "tags": ["hardware", "extrusion", "maintenance"],
+          "difficulty": "beginner",
+          "priority": "medium",
+          "related_settings": ["retraction_length", "retract_speed"]
+        },
+        {
+          "id": "tip-048",
+          "title": "Check Nozzle Wear",
+          "content": "Brass nozzles are excellent thermal conductors but soft - they wear rapidly with abrasive filaments like carbon fiber, glass fiber, glow-in-the-dark, or even some metallic filaments.\n\nA worn nozzle has an enlarged, uneven orifice causing inconsistent extrusion width and poor fine detail. Signs: gradual quality degradation, first layer gaps that weren't there before, or needing to increase flow to compensate. Inspect nozzles by looking at the tip - a worn orifice is visibly larger or oval-shaped.\n\nReplace brass nozzles after ~500g of abrasive filament or when quality degrades. For regular abrasive printing, upgrade to hardened steel or ruby-tipped nozzles. Keep spare nozzles on hand - they're cheap insurance.",
+          "tags": ["hardware", "maintenance", "material-specific"],
+          "difficulty": "beginner",
+          "priority": "low",
+          "related_settings": ["nozzle_diameter", "filament_type"]
+        },
+        {
+          "id": "tip-049",
+          "title": "Verify Thermistor Accuracy",
+          "content": "Thermistors can drift over time or report inaccurate temperatures if damaged, poorly seated, or using wrong sensor_type configuration. Symptoms: filament behaves differently than expected at 'normal' temps, adhesion issues, stringing at supposedly low temps.\n\nVerify by comparing Klipper's reported temperature against an infrared thermometer or thermocouple pointed at the heater block (not nozzle tip, which is cooler). Expect 5-10°C variance due to measurement location differences, but consistent offsets beyond this suggest problems.\n\nEnsure sensor_type in printer.cfg matches your actual thermistor. For persistent issues, re-run PID_CALIBRATE HEATER=extruder TARGET=XXX. Thermistors are cheap - if accuracy is questionable, replace it rather than guessing with temperature offsets.",
+          "tags": ["calibration", "temperature", "safety"],
+          "difficulty": "intermediate",
+          "priority": "medium",
+          "related_settings": ["[extruder]", "sensor_type", "PID_CALIBRATE"]
+        },
+        {
+          "id": "tip-050",
+          "title": "Review G-code with Previewer",
+          "content": "The preview is your last line of defense before committing hours to a potentially failed print. After slicing, scrub through layers looking for: missing features (thin walls dropped), inadequate supports, unexpected retractions, poor seam placement, and infill reaching all top surfaces.\n\nUse OrcaSlicer's color modes to visualize feature types, speeds, or flow rates. Check first and last layers especially - first layer adhesion issues are visible in preview as gaps or strange patterns.\n\nLook for long travel moves across finished surfaces that might leave marks. Verify support structures actually reach overhangs that need them. The few minutes spent previewing saves hours of wasted filament and time.",
+          "tags": ["workflow", "quality", "prevention"],
+          "difficulty": "beginner",
+          "priority": "high",
+          "related_settings": ["Preview Tab", "Support visualization"]
+        },
+        {
+          "id": "tip-083",
+          "title": "Diagnose Layer Shifts",
+          "content": "Layer shifts appear as sudden horizontal misalignment partway through a print - the top portion is offset from the bottom. This is a mechanical or electrical issue, not a slicing problem.\n\nCommon causes: loose belts (most common), overheating stepper motors or drivers, toolhead collision with the print or clips, skipped steps from too-high acceleration, or loose pulley set screws.\n\nDebug process: Check belt tension first (see belt tension tip). Feel stepper motors during a long print - hot to touch means current is too high or cooling is inadequate. Reduce acceleration temporarily to test. Check all pulley set screws for tightness. Use Klipper's DUMP_TMC to check for driver errors.",
+          "tags": ["troubleshooting", "hardware", "motion"],
+          "difficulty": "beginner",
+          "priority": "high",
+          "related_settings": ["max_accel", "run_current", "DUMP_TMC"]
+        },
+        {
+          "id": "tip-084",
+          "title": "Fix Z-Banding (Horizontal Lines)",
+          "content": "Z-banding appears as regular horizontal lines wrapping around prints at consistent intervals. Each line represents a Z-axis positioning error that repeats at the same height.\n\nCauses: Z-axis binding or inconsistent resistance (dirty or bent lead screw), loose Z motor coupling, temperature fluctuations causing expansion/contraction cycles (especially bed heater PID issues), or vibration from external sources.\n\nFixes: Clean and lubricate lead screws with appropriate grease. Check Z motor coupling set screws. Verify PID tuning is stable (run PID_CALIBRATE). Ensure the printer is on a stable surface. For lead screw issues, anti-backlash nuts can help.",
+          "tags": ["troubleshooting", "z-axis", "surface-finish"],
+          "difficulty": "intermediate",
+          "priority": "medium",
+          "related_settings": ["[stepper_z]", "PID_CALIBRATE", "rotation_distance"]
+        },
+        {
+          "id": "tip-085",
+          "title": "Resolve Heat Creep",
+          "content": "Heat creep occurs when heat travels up from the hot zone into the cold zone of your hotend, softening filament too early. Symptoms: jams that develop after extended printing (30+ minutes), especially at lower speeds or during pauses.\n\nThe heatsink fan is critical - it MUST run at 100% continuously whenever the hotend is hot. Never PWM-control the heatsink fan. Check that the fan actually spins and moves air through the heatsink fins.\n\nOther factors: thermal paste between heat break and heatsink may need replacement, all-metal heat breaks are more prone to heat creep than PTFE-lined ones, and ambient temperature matters (enclosed printers run hotter).",
+          "tags": ["troubleshooting", "temperature", "hardware"],
+          "difficulty": "intermediate",
+          "priority": "medium",
+          "related_settings": ["[heater_fan hotend_fan]", "heater_temp"]
+        },
+        {
+          "id": "tip-086",
+          "title": "Clean Extruder Gears Regularly",
+          "content": "Extruder drive gears accumulate filament dust, debris, and worn plastic particles over time. This buildup fills the gear teeth, reducing grip and causing inconsistent extrusion.\n\nSymptoms: gradual decline in print quality, occasional under-extrusion, clicking/skipping sounds from the extruder when it shouldn't be struggling, visible debris in the gear teeth.\n\nClean monthly (more often with abrasive filaments like CF or GF): remove filament, use a brass brush or stiff toothbrush to clean teeth, blow out debris with compressed air. Some extruders allow gear removal for thorough cleaning. Inspect for worn teeth while cleaning.",
+          "tags": ["maintenance", "extrusion", "hardware"],
+          "difficulty": "beginner",
+          "priority": "medium",
+          "related_settings": ["rotation_distance", "[extruder]"]
+        },
+        {
+          "id": "tip-087",
+          "title": "Test for Axis Binding",
+          "content": "Binding in any axis causes inconsistent motion, motor strain, and potential missed steps. It's one of the most common causes of quality issues on both new and used printers.\n\nTest: With motors disabled (M84), manually move each axis through its full range of motion. Movement should be smooth and consistent with no catches, grinding, or spots of increased resistance.\n\nCommon binding causes: debris on linear rails (clean with IPA), over-tightened eccentric nuts on V-wheels, bent or dirty lead screws, misaligned rails, or overtightened anti-backlash nuts. Fix the binding before adjusting anything else - it masks the true performance of your printer.",
+          "tags": ["troubleshooting", "hardware", "maintenance"],
+          "difficulty": "beginner",
+          "priority": "medium",
+          "related_settings": ["M84", "max_velocity"]
+        },
+        {
+          "id": "tip-088",
+          "title": "Monitor Stepper Motor Temperatures",
+          "content": "Stepper motors generate heat during operation. Excessive heat reduces torque, can cause thermal shutdown of drivers, and may lead to missed steps and layer shifts.\n\nCheck temperatures during long prints by carefully touching motor housings. Warm (up to 50-60°C) is normal and fine. Hot to the point of discomfort indicates a problem. Too hot to touch briefly (70°C+) needs immediate attention.\n\nFixes: Reduce motor current (run_current in Klipper) - many users run motors hotter than necessary. Add cooling fans directed at motors. Ensure driver heatsinks are properly attached. Check that motor ventilation isn't blocked.",
+          "tags": ["hardware", "temperature", "troubleshooting"],
+          "difficulty": "beginner",
+          "priority": "low",
+          "related_settings": ["run_current", "[tmc2209]", "hold_current"]
+        },
+        {
+          "id": "tip-089",
+          "title": "Verify Slicer vs Klipper Limits",
+          "content": "The slicer specifies speeds and accelerations in gcode, but Klipper enforces hard limits from printer.cfg. Understanding this interaction prevents confusion and wasted troubleshooting time.\n\nKlipper's max_velocity, max_accel, and max_z_velocity are ceilings - the slicer can request lower values, but never higher. If your slicer says 300mm/s but printer.cfg has max_velocity: 200, you get 200mm/s.\n\nCheck for 'Move exceeds maximum' warnings in Klipper logs. If you've tuned your printer for higher speeds, update printer.cfg limits to match. Conversely, use slicer limits to request lower speeds for specific features even if the printer could go faster.",
+          "tags": ["configuration", "speed", "troubleshooting"],
+          "difficulty": "beginner",
+          "priority": "medium",
+          "related_settings": ["[printer]", "max_velocity", "max_accel"]
+        },
+        {
+          "id": "tip-090",
+          "title": "Use RESPOND for Macro Debugging",
+          "content": "Complex Klipper macros can fail silently or behave unexpectedly. The RESPOND command outputs messages to the console during macro execution, enabling print-statement debugging.\n\nUsage: RESPOND TYPE=command MSG=\"Reached checkpoint 1\" or RESPOND MSG=\"Temperature is {printer.extruder.temperature}\". Messages appear in Mainsail/Fluidd/KlipperScreen consoles and logs.\n\nAdd RESPOND checkpoints throughout PRINT_START, PRINT_END, and other complex macros. When something fails, you can see exactly where execution stopped. M118 also works for console output. Remove or comment out debug lines once issues are resolved to reduce log noise.",
+          "tags": ["macros", "troubleshooting", "debugging"],
+          "difficulty": "intermediate",
+          "priority": "low",
+          "related_settings": ["RESPOND", "[respond]", "M118"]
+        }
+      ]
+    },
+
+    "helixscreen_features": {
+      "name": "HelixScreen Features",
+      "description": "Tips for getting the most out of HelixScreen's touchscreen interface",
+      "tips": [
+        {
+          "id": "tip-101",
+          "title": "Customize Your Dashboard",
+          "content": "Long-press anywhere on the home panel to enter Edit Mode. From there you can drag widgets to reposition them, resize them by dragging their edges, remove widgets with the X button, or add new ones with the + button.\n\nYour layout is saved automatically when you exit Edit Mode by tapping the checkmark.",
+          "tags": ["home", "widgets", "customization", "gestures"],
+          "difficulty": "beginner",
+          "priority": "high",
+          "related_settings": []
+        },
+        {
+          "id": "tip-102",
+          "title": "Multiple Home Pages",
+          "content": "Your home panel can have multiple pages of widgets, just like a phone home screen. Swipe left and right on the widget area to navigate between pages.\n\nDot indicators at the bottom show which page you're on and how many pages you have. You can create up to 8 pages to organize your widgets however you like.",
+          "tags": ["home", "widgets", "navigation", "gestures"],
+          "difficulty": "beginner",
+          "priority": "high",
+          "related_settings": []
+        },
+        {
+          "id": "tip-103",
+          "title": "Add a New Home Page",
+          "content": "Want more room for widgets? Enter Edit Mode by long-pressing the home panel, then swipe to the very last page. You'll see a + tile — tap it to create a new empty page.\n\nYou can have up to 8 pages total. Delete empty pages from the page options in Edit Mode.",
+          "tags": ["home", "widgets", "customization"],
+          "difficulty": "beginner",
+          "priority": "medium",
+          "related_settings": []
+        },
+        {
+          "id": "tip-104",
+          "title": "Resize Your Widgets",
+          "content": "In Edit Mode, widgets aren't limited to one size. Drag the edges of any widget to make it larger or smaller on the grid.\n\nSome widgets like Temperature Graph or Camera look best at 2x2 or larger. Experiment with different sizes to find what works for your workflow.",
+          "tags": ["home", "widgets", "customization"],
+          "difficulty": "beginner",
+          "priority": "medium",
+          "related_settings": []
+        },
+        {
+          "id": "tip-105",
+          "title": "38 Widgets to Choose From",
+          "content": "HelixScreen has 38 different widgets you can place on your home panel. Tap the + button in Edit Mode to browse the full catalog.\n\nOptions include temperature displays, fan controls, camera feeds, macro buttons, print status, network info, LED controls, sensor readouts, and more.",
+          "tags": ["home", "widgets", "customization"],
+          "difficulty": "beginner",
+          "priority": "medium",
+          "related_settings": []
+        },
+        {
+          "id": "tip-106",
+          "title": "Favorite Macro Buttons",
+          "content": "Add Favorite Macro widgets to your home panel for one-tap access to your most-used Klipper macros — things like Load Filament, Clean Nozzle, or Bed Level.\n\nIn Edit Mode, add a Favorite Macro widget, then tap its gear icon to choose which macro it runs. You can also pick a custom icon for each one. All your macros are also available in the Macros widget or the Controls panel.",
+          "tags": ["home", "widgets", "macros"],
+          "difficulty": "beginner",
+          "priority": "high",
+          "related_settings": []
+        },
+        {
+          "id": "tip-107",
+          "title": "Widget Display Modes",
+          "content": "Some widgets have multiple display modes. The Temperature, Fan, and Thermistor widgets can switch between stack view (all items in rows), carousel view (swipeable full-page cards), and single-item view.\n\nIn Edit Mode, tap the gear icon on a widget to change its display mode. The carousel mode includes an arc slider for direct fan speed control.",
+          "tags": ["home", "widgets", "customization"],
+          "difficulty": "intermediate",
+          "priority": "medium",
+          "related_settings": []
+        },
+        {
+          "id": "tip-108",
+          "title": "Tap Temperature Readings",
+          "content": "Temperature displays on the home panel aren't just for show — tap any temperature reading to jump straight to the full temperature control panel where you can set exact targets, use presets, or view the temperature graph.",
+          "tags": ["temperature", "navigation", "gestures"],
+          "difficulty": "beginner",
+          "priority": "high",
+          "related_settings": []
+        },
+        {
+          "id": "tip-109",
+          "title": "Quick Preheat Presets",
+          "content": "Use the preheat widget or the preset buttons in the temperature controls to quickly set nozzle and bed temperatures for common materials like PLA, PETG, ABS, and TPU.\n\nEach preset sets both nozzle and bed to the recommended temperatures for that material in one tap.",
+          "tags": ["temperature", "materials", "workflow"],
+          "difficulty": "beginner",
+          "priority": "medium",
+          "related_settings": []
+        },
+        {
+          "id": "tip-110",
+          "title": "Custom Material Presets",
+          "content": "The default temperature presets cover common materials, but you can create your own for specialty filaments. Go to Settings > Material Temps to add custom presets with your preferred nozzle and bed temperatures.\n\nGreat for dialing in exotic materials like PC, PA-CF, or your favorite brand's specific recommendations.",
+          "tags": ["temperature", "materials", "settings"],
+          "difficulty": "beginner",
+          "priority": "medium",
+          "related_settings": []
+        },
+        {
+          "id": "tip-111",
+          "title": "Live Speed and Flow Adjustment",
+          "content": "During a print, you can adjust speed and flow multipliers in real-time from the Controls panel. No need to pause — changes take effect immediately on the next move.\n\nThis is great for fine-tuning on the fly: slow down for tricky overhangs, speed up for infill, or bump flow slightly if you see gaps.",
+          "tags": ["printing", "controls", "speed"],
+          "difficulty": "beginner",
+          "priority": "high",
+          "related_settings": []
+        },
+        {
+          "id": "tip-112",
+          "title": "Live Z-Offset Tuning",
+          "content": "You can adjust your Z-offset in real-time during the first layer from the Controls panel. Watch the nozzle height change as you tap the adjustment buttons — the change takes effect immediately.\n\nThis is the fastest way to dial in first layer squish without re-running a calibration print.",
+          "tags": ["printing", "controls", "calibration"],
+          "difficulty": "beginner",
+          "priority": "high",
+          "related_settings": []
+        },
+        {
+          "id": "tip-113",
+          "title": "Exclude Failed Objects Mid-Print",
+          "content": "If one object on your build plate fails while others are printing fine, you don't have to cancel the whole print. Tap the Exclude Objects button during printing to skip the failed object.\n\nThis requires your slicer to label individual objects (enabled by default in OrcaSlicer and SuperSlicer). The button only appears when object labels are detected in the G-code.",
+          "tags": ["printing", "workflow"],
+          "difficulty": "intermediate",
+          "priority": "high",
+          "related_settings": []
+        },
+        {
+          "id": "tip-114",
+          "title": "Card and List View for Print Files",
+          "content": "The Print Select panel offers two ways to browse your files: card view with large thumbnails, or a compact list view with sortable columns.\n\nToggle between them using the view icon in the top-right corner. List view is great when you have many files; card view is better for visual browsing.",
+          "tags": ["printing", "files", "navigation"],
+          "difficulty": "beginner",
+          "priority": "medium",
+          "related_settings": []
+        },
+        {
+          "id": "tip-115",
+          "title": "Sort Your Print Files",
+          "content": "In list view on the Print Select panel, tap any column header to sort your files by name, size, modification date, or estimated print time.\n\nTap the same header again to reverse the sort order. This makes it easy to find your most recent uploads or longest prints.",
+          "tags": ["printing", "files", "navigation"],
+          "difficulty": "beginner",
+          "priority": "low",
+          "related_settings": []
+        },
+        {
+          "id": "tip-116",
+          "title": "Automatic LED State Changes",
+          "content": "HelixScreen can automatically change your LED strip colors based on printer state — one color when idle, another while heating, a different one during printing, and a warning color on errors.\n\nSet it up in Settings > LEDs > Auto-State. Pick a color for each state and HelixScreen handles the transitions. You can also set LEDs to turn on automatically at startup with a configurable brightness level.",
+          "tags": ["leds", "automation", "settings"],
+          "difficulty": "intermediate",
+          "priority": "medium",
+          "related_settings": []
+        },
+        {
+          "id": "tip-132",
+          "title": "Control Your LEDs",
+          "content": "Tap the LED widget on your home panel or the LED button on the Controls panel to open the LED control overlay. From there you can adjust brightness with a slider, pick colors with the color wheel, and toggle individual LED strips on or off.\n\nConfigure which LED strips to use and set up startup brightness in Settings. HelixScreen supports Klipper native LEDs, LED Effect plugin, WLED network devices, and macro-based LED control.",
+          "tags": ["leds", "controls", "widgets"],
+          "difficulty": "beginner",
+          "priority": "medium",
+          "related_settings": []
+        },
+        {
+          "id": "tip-117",
+          "title": "Fan Speed Arc Slider",
+          "content": "The Fan Carousel widget includes an arc slider that lets you drag to adjust fan speed directly from the home panel — no need to open the full controls.\n\nSwitch to carousel mode by tapping the gear icon on a fan widget in Edit Mode. The arc gives you precise control from 0-100%.",
+          "tags": ["fans", "widgets", "controls"],
+          "difficulty": "intermediate",
+          "priority": "medium",
+          "related_settings": []
+        },
+        {
+          "id": "tip-118",
+          "title": "Rename Your Fans",
+          "content": "Klipper fan names like 'heater_fan hotend_fan' or 'fan_generic bed_fans' aren't the friendliest. Long-press any fan in the Fan Control overlay to give it a custom name like 'Hotend' or 'Bed Fans'.\n\nYour custom names appear everywhere in HelixScreen — widgets, controls, and overlays.",
+          "tags": ["fans", "customization", "gestures"],
+          "difficulty": "beginner",
+          "priority": "low",
+          "related_settings": []
+        },
+        {
+          "id": "tip-119",
+          "title": "Dynamic Spool Temperature Presets",
+          "content": "When a spool is loaded via your filament management system (AMS, AFC, Happy Hare, etc.), HelixScreen automatically creates a temperature preset button showing the material name and recommended temperature.\n\nNo more guessing what temp to set — just tap the dynamic preset and it's done.",
+          "tags": ["filament", "temperature", "workflow"],
+          "difficulty": "beginner",
+          "priority": "medium",
+          "related_settings": []
+        },
+        {
+          "id": "tip-120",
+          "title": "Spoolman Filament Tracking",
+          "content": "Connect Spoolman to track your entire filament inventory from HelixScreen. See spool details, remaining weight, material info, and vendor data right on the filament panel.\n\nSpoolman runs as a separate service alongside Moonraker. Once connected, HelixScreen automatically associates loaded spools with your inventory.",
+          "tags": ["filament", "spoolman", "integration"],
+          "difficulty": "intermediate",
+          "priority": "medium",
+          "related_settings": []
+        },
+        {
+          "id": "tip-121",
+          "title": "Print QR Labels for Your Spools",
+          "content": "If you have a label printer (Brother, Phomemo, Niimbot, or MakeID), you can print QR code labels for your spools directly from HelixScreen.\n\nOpen the Spool Info modal in the Filament panel and tap Print Label. Each label includes a QR code that HelixScreen can scan to instantly identify the spool — no more guessing what's on the roll.",
+          "tags": ["filament", "spoolman", "labels", "qr"],
+          "difficulty": "advanced",
+          "priority": "low",
+          "related_settings": []
+        },
+        {
+          "id": "tip-130",
+          "title": "Scan QR Codes to Identify Spools",
+          "content": "If your printer has a camera, you can scan QR codes on your filament spools to instantly identify them in HelixScreen. This works with QR labels you've printed from Spoolman or vendor QR codes.\n\nOpen the QR scanner from the Filament panel to scan. The spool's material, color, and temperature settings are loaded automatically.",
+          "tags": ["filament", "spoolman", "qr", "camera"],
+          "difficulty": "intermediate",
+          "priority": "medium",
+          "related_settings": []
+        },
+        {
+          "id": "tip-131",
+          "title": "Track Your Filament with Spoolman",
+          "content": "Tired of guessing how much filament is left on a roll? Spoolman tracks your entire inventory — weight remaining, material type, vendor, color, and print history per spool.\n\nSpoolman is a free service that runs alongside Moonraker. Once connected, HelixScreen shows spool details everywhere: filament panel, AMS slots, and temperature presets. Set it up at spoolman.io.",
+          "tags": ["filament", "spoolman", "integration"],
+          "difficulty": "beginner",
+          "priority": "high",
+          "related_settings": []
+        },
+        {
+          "id": "tip-122",
+          "title": "Notification History",
+          "content": "Missed a notification? Tap the bell icon in the status bar to see a history of past notifications including connection events, print completions, warnings, and errors.\n\nNotifications are color-coded: blue for info, yellow for warnings, and red for errors.",
+          "tags": ["notifications", "navigation"],
+          "difficulty": "beginner",
+          "priority": "medium",
+          "related_settings": []
+        },
+        {
+          "id": "tip-123",
+          "title": "Interactive Temperature Graph",
+          "content": "Tap the temperature graph widget to open a detailed overlay showing all your temperature sensors over time.\n\nTap the sensor chips above the graph to show or hide individual traces. This is great for diagnosing heating issues or verifying PID tuning.",
+          "tags": ["temperature", "widgets", "diagnostics"],
+          "difficulty": "beginner",
+          "priority": "medium",
+          "related_settings": []
+        },
+        {
+          "id": "tip-124",
+          "title": "17 Color Themes",
+          "content": "HelixScreen comes with 17 built-in color themes. Go to Settings > Appearance to browse them, or use the live theme editor to create your own custom color scheme.\n\nChanges preview in real-time so you can see exactly how your printer's display will look.",
+          "tags": ["appearance", "customization", "settings"],
+          "difficulty": "beginner",
+          "priority": "low",
+          "related_settings": []
+        },
+        {
+          "id": "tip-125",
+          "title": "Emergency Stop Is Always Accessible",
+          "content": "During a print, the red Emergency Stop button appears in the top-right corner of the screen. It stays accessible even when the screen is PIN-locked.\n\nSafety first — you can always stop your printer in an emergency, no matter what screen you're on.",
+          "tags": ["safety", "printing"],
+          "difficulty": "beginner",
+          "priority": "high",
+          "related_settings": []
+        },
+        {
+          "id": "tip-126",
+          "title": "Quick Screen Lock",
+          "content": "Add a Lock widget to your home panel for one-tap screen locking — great for preventing accidental touches during a print or when cleaning around the printer.\n\nFor added security, set up a PIN code in Settings > Security.",
+          "tags": ["security", "widgets", "home"],
+          "difficulty": "beginner",
+          "priority": "low",
+          "related_settings": []
+        },
+        {
+          "id": "tip-127",
+          "title": "G-Code Console on Your Dashboard",
+          "content": "Need quick access to the Klipper console? Add the G-Code Console widget to your home panel for instant command entry without leaving the dashboard.\n\nYou can also find the full console in the Advanced panel with command history and scrollback.",
+          "tags": ["home", "widgets", "console"],
+          "difficulty": "intermediate",
+          "priority": "low",
+          "related_settings": []
+        },
+        {
+          "id": "tip-128",
+          "title": "Multiple Filament System Support",
+          "content": "HelixScreen supports six different filament management backends: Happy Hare, AFC, ACE, CFS, AD5X IFS, and generic tool changers.\n\nIf your printer has more than one system connected, use the backend dropdown selector to switch between them.",
+          "tags": ["filament", "ams", "integration"],
+          "difficulty": "intermediate",
+          "priority": "medium",
+          "related_settings": []
+        },
+        {
+          "id": "tip-129",
+          "title": "One-Tap Firmware Restart",
+          "content": "Add the Firmware Restart widget to your home panel for instant Klipper restarts when you need to reload printer.cfg changes.\n\nYou can also restart firmware from the Advanced panel or by typing FIRMWARE_RESTART in the console.",
+          "tags": ["home", "widgets", "workflow"],
+          "difficulty": "beginner",
+          "priority": "low",
+          "related_settings": []
+        }
+      ]
+    }
+  }
+}

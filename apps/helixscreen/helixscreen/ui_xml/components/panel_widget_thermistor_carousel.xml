@@ -1,0 +1,3 @@
+<?xml version="1.0"?><component><view name="panel_widget_thermistor_carousel"
+        extends="lv_obj" height="100%" flex_grow="1" style_pad_all="#space_sm" scrollable="false"><bind_state_if_not_eq subject="printer_connection_state" state="disabled" ref_value="2"/><ui_carousel name="thermistor_carousel"
+                 width="100%" height="100%" wrap="true" show_indicators="true" auto_scroll_ms="5000"/></view></component>

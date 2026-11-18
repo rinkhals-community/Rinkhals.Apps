@@ -1,0 +1,8 @@
+<?xml version="1.0"?><component><view name="filament_mapping_modal"
+        extends="ui_dialog" width="70%" height="90%" align="center" flex_flow="column" style_flex_main_place="start"
+        style_pad_gap="0"><modal_header icon_src="palette" icon_variant="info" title="Filament Mapping" title_tag="Filament Mapping"/><lv_obj name="mapping_tool_list"
+            width="100%" flex_grow="1" style_pad_left="#space_lg" style_pad_right="#space_lg" style_pad_top="#space_sm"
+            style_pad_bottom="#space_sm" flex_flow="column" style_pad_gap="#space_xs" scrollable="true"
+            scrollbar_mode="active"></lv_obj><modal_button_row secondary_text="Cancel"
+                      secondary_callback="on_modal_cancel_clicked" primary_text="Done"
+                      primary_callback="on_modal_ok_clicked"/></view></component>

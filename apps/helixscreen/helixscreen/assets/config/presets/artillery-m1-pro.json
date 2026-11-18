@@ -1,0 +1,58 @@
+{
+  "preset": "artillery-m1-pro",
+  "wizard_completed": false,
+  "disable_sound": true,
+  "input": {
+    "calibration": {
+      "a": 1.6390706300735474,
+      "b": -0.009474396705627441,
+      "c": 5.091810703277588,
+      "d": -0.00891044456511736,
+      "e": 1.8266410827636719,
+      "f": -2.2605438232421875,
+      "valid": true
+    },
+    "scroll_limit": 10,
+    "scroll_throw": 25
+  },
+  "printer": {
+    "heaters": {
+      "bed": "heater_bed",
+      "hotend": "extruder"
+    },
+    "temp_sensors": {
+      "bed": "heater_bed",
+      "hotend": "extruder"
+    },
+    "fans": {
+      "hotend": "heater_fan hotend_fan",
+      "part": "fan",
+      "chamber": "fan_generic filter_fan"
+    },
+    "hardware": {
+      "expected": [
+        "heater_bed",
+        "extruder",
+        "fan",
+        "heater_fan hotend_fan",
+        "led M1_led",
+        "fan_generic auxiliary_fan",
+        "heater_fan _ptc_fan",
+        "fan_generic _Secondary_Fan"
+      ]
+    },
+    "leds": {
+      "strip": "led M1_led",
+      "selected_strips": ["led M1_led"],
+      "led_on_at_start": true,
+      "startup_brightness": 51
+    },
+    "default_macros": {
+      "cooldown": "SET_HEATER_TEMPERATURE HEATER=extruder TARGET=0\nSET_HEATER_TEMPERATURE HEATER=heater_bed TARGET=0\nSET_HEATER_TEMPERATURE HEATER=chamber TARGET=0",
+      "load_filament": { "label": "Load", "gcode": "LOAD_FILAMENT" },
+      "unload_filament": { "label": "Unload", "gcode": "UNLOAD_FILAMENT" },
+      "macro_1": { "label": "Clean Nozzle", "gcode": "HELIX_CLEAN_NOZZLE" },
+      "macro_2": { "label": "Bed Level", "gcode": "HELIX_BED_MESH_IF_NEEDED" }
+    }
+  }
+}

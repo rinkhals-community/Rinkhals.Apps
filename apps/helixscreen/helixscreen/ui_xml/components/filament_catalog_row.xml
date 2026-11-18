@@ -1,0 +1,12 @@
+<?xml version="1.0"?><component><view name="catalog_row"
+        extends="lv_obj" width="100%" height="content" flex_flow="row" style_flex_cross_place="center"
+        style_pad_hor="#space_md" style_pad_ver="#space_sm" style_pad_gap="#space_sm" style_radius="#border_radius"
+        style_bg_opa="0" scrollable="false" clickable="true"><style name="styles.press_wash" selector="pressed"/><event_cb trigger="clicked" callback="catalog_row_clicked_cb"/><lv_label name="check_indicator"
+              text="" style_text_font="#icon_font_xs" style_min_width="16" clickable="false" event_bubble="true"/><lv_label name="name_label"
+              text="" flex_grow="1" long_mode="dots" style_text_font="#font_body" style_text_color="#text"
+              clickable="false" event_bubble="true"/><lv_label name="variant_chip"
+              text="" hidden="true" style_text_font="#font_body" style_text_color="#text_muted" clickable="false"
+              event_bubble="true"/><lv_label name="temp_label"
+              text="" style_text_font="#font_body" style_text_color="#text" clickable="false" event_bubble="true"/><lv_label name="edit_icon"
+              text="#icon_pencil" hidden="true" style_text_font="#icon_font_xs" style_text_color="#text_muted"
+              style_min_width="20" style_text_align="center" clickable="true"><event_cb trigger="clicked" callback="catalog_row_edit_cb"/></lv_label></view></component>

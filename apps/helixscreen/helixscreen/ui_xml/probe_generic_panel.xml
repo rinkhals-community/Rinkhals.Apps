@@ -1,0 +1,10 @@
+<?xml version="1.0"?><component><view name="probe_generic_panel"
+        extends="lv_obj" width="100%" height="content" style_pad_all="0" flex_flow="column" style_pad_gap="#space_sm"
+        scrollable="false"><lv_obj name="klicky_controls"
+            width="100%" height="content" style_pad_all="0" flex_flow="column" style_pad_gap="#space_sm"
+            scrollable="false"><bind_flag_if_eq subject="probe_is_klicky" flag="hidden" ref_value="0"/><setting_section_header title="KLICKY CONTROLS" title_tag="KLICKY CONTROLS" icon="magnet"/><lv_obj width="100%"
+              height="content" style_pad_all="0" flex_flow="row" style_pad_gap="#space_sm" scrollable="false"><ui_button name="btn_klicky_deploy"
+                   width="1" height="#button_height_sm" flex_grow="1" variant="secondary" text="Deploy"
+                   translation_tag="Deploy" icon="arrow_down"><event_cb trigger="clicked" callback="on_klicky_deploy"/></ui_button><ui_button name="btn_klicky_dock"
+                   width="1" height="#button_height_sm" flex_grow="1" variant="secondary" text="Dock"
+                   translation_tag="Dock" icon="arrow_up"><event_cb trigger="clicked" callback="on_klicky_dock"/></ui_button></lv_obj></lv_obj></view></component>

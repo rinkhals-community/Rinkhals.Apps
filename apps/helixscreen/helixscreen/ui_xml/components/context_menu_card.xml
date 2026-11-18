@@ -1,0 +1,11 @@
+<?xml version="1.0"?><component><api><prop name="title" type="string" default=""/><prop name="title_tag" type="string" default=""/><prop name="title_name" type="string" default="card_title"/><prop name="title_grow" type="string" default="0"/><prop name="title_long_mode" type="string" default="wrap"/><prop name="close_icon" type="string" default="close"/><prop name="close_text" type="string" default=""/><prop name="close_text_tag" type="string" default=""/><prop name="hide_close" type="string" default="false"/><prop name="width" type="string" default="content"/><prop name="min_width" type="string" default="0"/><prop name="pad_all" type="string" default="#space_sm"/><prop name="pad_gap" type="string" default="#space_sm"/><prop name="scrollable" type="string" default="false"/><prop name="hide_divider" type="string" default="false"/></api><view name="context_menu"
+        extends="lv_obj" width="$width" height="content" style_min_width="$min_width" style_bg_color="#elevated_bg"
+        style_bg_opa="255" style_radius="#border_radius" style_pad_all="$pad_all" style_pad_gap="$pad_gap"
+        flex_flow="column" style_flex_main_place="start" style_flex_cross_place="start" scrollable="$scrollable"
+        clickable="true"><lv_obj width="100%"
+            height="content" flex_flow="row" style_flex_main_place="space_between" style_flex_cross_place="center"
+            style_pad_all="0" scrollable="false" clickable="false" event_bubble="true"><text_small name="$title_name"
+                  text="$title" translation_tag="$title_tag" flex_grow="$title_grow" long_mode="$title_long_mode"
+                  clickable="false" event_bubble="true"/><ui_button name="btn_close"
+                 width="content" height="content" hidden="$hide_close" variant="ghost" icon="$close_icon"
+                 text="$close_text" translation_tag="$close_text_tag" style_pad_right="0"><event_cb trigger="clicked" callback="context_menu_close_cb"/></ui_button></lv_obj><divider_horizontal color="#text_muted" opacity="38" hidden="$hide_divider" clickable="false" event_bubble="true"/></view></component>

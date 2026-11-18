@@ -1,0 +1,7 @@
+<?xml version="1.0"?><component><view name="upgrade_banner"
+        extends="lv_obj" width="100%" height="content" style_bg_color="#elevated_bg" style_bg_opa="255"
+        style_border_width="#border_width" style_border_color="#border" style_border_side="bottom"
+        style_pad_all="#space_sm" style_pad_gap="#space_sm" flex_flow="row" style_flex_main_place="space_between"
+        style_flex_cross_place="center" scrollable="false" clickable="false"><lv_obj width="1"
+            height="content" flex_grow="1" style_pad_all="0" style_pad_gap="#space_sm" flex_flow="row"
+            style_flex_cross_place="center" style_bg_opa="0" style_border_width="0" scrollable="false" clickable="false"><icon name="upgrade_banner_icon" src="arrow_up_circle" size="sm" variant="info"/><text_body name="upgrade_banner_message" width="1" flex_grow="1" bind_text="upgrade_banner_text" long_mode="dots"/></lv_obj><ui_button name="upgrade_banner_update_btn" text="Update" translation_tag="Update" variant="primary"><event_cb trigger="clicked" callback="on_upgrade_banner_update"/></ui_button><ui_button name="upgrade_banner_dismiss_btn" icon="xmark" variant="ghost"><event_cb trigger="clicked" callback="on_upgrade_banner_dismiss"/></ui_button></view></component>

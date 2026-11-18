@@ -1,0 +1,27 @@
+{
+  "name": "Yami",
+  "dark": {
+    "screen_bg": "#13141A",
+    "overlay_bg": "#1D1F26",
+    "card_bg": "#272A33",
+    "elevated_bg": "#323540",
+    "border": "#4E5566",
+    "text": "#EBEBEB",
+    "text_muted": "#C2C2C2",
+    "text_subtle": "#ADADAD",
+    "primary": "#476BD7",
+    "secondary": "#16B1F3",
+    "tertiary": "#805FD3",
+    "info": "#3DBEF5",
+    "success": "#37D247",
+    "warning": "#E5AF24",
+    "danger": "#E33B57",
+    "focus": "#718CDC"
+  },
+  "border_radius_size": 3,
+  "border_width": 1,
+  "border_opacity": 40,
+  "shadow_intensity": 0,
+  "shadow_opa": 0,
+  "shadow_offset_y": 2
+}

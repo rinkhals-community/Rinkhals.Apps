@@ -1,0 +1,8 @@
+<?xml version="1.0"?><component><view name="temp_graph_config_modal"
+        extends="ui_dialog" width="70%" height="content" align="center" flex_flow="column" style_flex_main_place="start"
+        style_pad_gap="0"><modal_header icon_src="chart_line" icon_variant="accent" title="Configure Graph" title_tag="Configure Graph"/><divider_horizontal/><lv_obj name="sensor_list"
+            width="100%" height="content" style_max_height="#dialog_content_max" flex_flow="column" style_pad_gap="0"
+            style_pad_left="#space_md" style_pad_right="#space_md" style_pad_top="#space_sm"
+            style_pad_bottom="#space_sm" scrollbar_mode="auto"/><divider_horizontal/><modal_button_row secondary_text="Cancel"
+                      secondary_callback="on_modal_cancel_clicked" primary_text="OK"
+                      primary_callback="on_modal_ok_clicked"/></view></component>

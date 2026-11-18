@@ -1,0 +1,27 @@
+{
+  "name": "Dracula",
+  "dark": {
+    "screen_bg": "#282A36",
+    "overlay_bg": "#21222C",
+    "card_bg": "#44475A",
+    "elevated_bg": "#6272A4",
+    "border": "#6272A4",
+    "text": "#F8F8F2",
+    "text_muted": "#F8F8F2",
+    "text_subtle": "#6272A4",
+    "primary": "#BD93F9",
+    "secondary": "#FF79C6",
+    "tertiary": "#50FA7B",
+    "info": "#8BE9FD",
+    "success": "#50FA7B",
+    "warning": "#F1FA8C",
+    "danger": "#FF5555",
+    "focus": "#BD93F9"
+  },
+  "border_radius_size": 3,
+  "border_width": 1,
+  "border_opacity": 40,
+  "shadow_intensity": 0,
+  "shadow_opa": 0,
+  "shadow_offset_y": 2
+}

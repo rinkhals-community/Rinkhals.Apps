@@ -1,0 +1,63 @@
+{
+  "name": "Creality K1",
+  "description": "Print start patterns for Creality K1 series (K1, K1C, K1 SE, K1 Max) with Creality firmware CX_ macros",
+  "progress_mode": "weighted",
+  "position_signals": true,
+  "signal_formats": [
+    {
+      "prefix": "print prepared",
+      "mappings": {
+        "": {
+          "phase": "COMPLETE",
+          "message": "Prepared"
+        }
+      }
+    }
+  ],
+  "response_patterns": [
+    {
+      "pattern": "not prepare",
+      "phase": "INITIALIZING",
+      "message": "Preparing Print...",
+      "weight": 5
+    },
+    {
+      "pattern": "x_axes:\\s*xyz",
+      "phase": "HOMING",
+      "message": "Homing...",
+      "weight": 10
+    },
+    {
+      "pattern": "CLEAR_NOZZLE|clear_nozzle",
+      "phase": "CLEANING",
+      "message": "Cleaning Nozzle...",
+      "weight": 15
+    },
+    {
+      "pattern": "CX_PRINT_LEVELING|BED_MESH_CALIBRATE|probe at",
+      "phase": "BED_MESH",
+      "message": "Bed Leveling...",
+      "weight": 15
+    },
+    {
+      "pattern": "can_break_flag\\s*=\\s*0",
+      "phase": "HEATING_NOZZLE",
+      "message": "Heating Nozzle...",
+      "weight": 30
+    },
+    {
+      "pattern": "can_break_flag\\s*(=\\s*3|is\\s+3)",
+      "phase": "PURGING",
+      "message": "Purging...",
+      "weight": 20
+    }
+  ],
+  "phase_weights": {
+    "INITIALIZING": 5,
+    "HOMING": 10,
+    "CLEANING": 15,
+    "BED_MESH": 15,
+    "HEATING_NOZZLE": 30,
+    "PURGING": 20
+  }
+}

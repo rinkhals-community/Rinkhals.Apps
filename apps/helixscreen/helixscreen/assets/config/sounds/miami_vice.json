@@ -1,0 +1,211 @@
+{
+  "name": "miami_vice",
+  "description": "Miami Vice — punchy electronic 80s synth, staccato hits, driving rhythm, neon-soaked E minor",
+  "version": 1,
+  "defaults": {
+    "wave": "square",
+    "vel": 0.85,
+    "env": { "a": 3, "d": 30, "s": 0.5, "r": 40 }
+  },
+  "sounds": {
+    "button_tap": {
+      "description": "Sharp staccato electronic hit — punchy square wave snap",
+      "steps": [
+        { "note": "B5", "dur": 20, "wave": "square", "vel": 0.90, "duty": 0.4,
+          "env": { "a": 1, "d": 12, "s": 0.0, "r": 8 } }
+      ]
+    },
+    "toggle_on": {
+      "description": "Quick rising electronic chirps — snappy two-note square",
+      "steps": [
+        { "note": "E5", "dur": 30, "wave": "square", "vel": 0.85, "duty": 0.35,
+          "env": { "a": 2, "d": 15, "s": 0.2, "r": 15 } },
+        { "note": "B5", "dur": 50, "wave": "saw", "vel": 0.90,
+          "filter": { "type": "lowpass", "cutoff": 1000, "sweep_to": 3500 },
+          "env": { "a": 3, "d": 20, "s": 0.3, "r": 35 } }
+      ]
+    },
+    "toggle_off": {
+      "description": "Quick falling electronic chirps — snappy two-note descend",
+      "steps": [
+        { "note": "B5", "dur": 30, "wave": "square", "vel": 0.85, "duty": 0.35,
+          "env": { "a": 2, "d": 15, "s": 0.2, "r": 15 } },
+        { "note": "E5", "dur": 50, "wave": "saw", "vel": 0.78,
+          "filter": { "type": "lowpass", "cutoff": 2000, "sweep_to": 500 },
+          "env": { "a": 3, "d": 20, "s": 0.25, "r": 35 } }
+      ]
+    },
+    "nav_forward": {
+      "description": "Fast ascending square sweep with filter pop",
+      "bpm": 140,
+      "steps": [
+        { "note": "E5", "dur": "16n", "wave": "square", "vel": 0.80, "duty": 0.5,
+          "env": { "a": 2, "d": 12, "s": 0.3, "r": 10 } },
+        { "note": "G5", "dur": "16n", "wave": "square", "vel": 0.85, "duty": 0.5,
+          "env": { "a": 2, "d": 12, "s": 0.35, "r": 12 } },
+        { "note": "B5", "dur": "8n", "wave": "saw", "vel": 0.90,
+          "filter": { "type": "lowpass", "cutoff": 800, "sweep_to": 4000 },
+          "env": { "a": 3, "d": 25, "s": 0.4, "r": 40 } }
+      ]
+    },
+    "nav_back": {
+      "description": "Fast descending square sweep with filter close",
+      "bpm": 140,
+      "steps": [
+        { "note": "B5", "dur": "16n", "wave": "square", "vel": 0.85, "duty": 0.5,
+          "env": { "a": 2, "d": 12, "s": 0.35, "r": 10 } },
+        { "note": "G5", "dur": "16n", "wave": "square", "vel": 0.80, "duty": 0.5,
+          "env": { "a": 2, "d": 12, "s": 0.30, "r": 10 } },
+        { "note": "E5", "dur": "8n", "wave": "saw", "vel": 0.73,
+          "filter": { "type": "lowpass", "cutoff": 3000, "sweep_to": 600 },
+          "env": { "a": 3, "d": 25, "s": 0.35, "r": 40 } }
+      ]
+    },
+    "dropdown_open": {
+      "description": "Electronic pop — square wave attack with fast filter punch",
+      "steps": [
+        { "freq": 1480, "dur": 15, "wave": "square", "vel": 0.88, "duty": 0.3,
+          "env": { "a": 1, "d": 10, "s": 0.0, "r": 6 } },
+        { "freq": 2200, "dur": 20, "wave": "saw", "vel": 0.72,
+          "filter": { "type": "lowpass", "cutoff": 3500, "sweep_to": 800 },
+          "env": { "a": 1, "d": 15, "s": 0.0, "r": 10 } }
+      ]
+    },
+    "print_complete": {
+      "description": "Energetic E minor victory sequence — driving staccato hits then soaring lead",
+      "bpm": 120,
+      "steps": [
+        { "note": "E5", "dur": "16n", "wave": "square", "vel": 0.88, "duty": 0.5,
+          "env": { "a": 2, "d": 15, "s": 0.3, "r": 10 } },
+        { "pause": 40 },
+        { "note": "E5", "dur": "16n", "wave": "square", "vel": 0.88, "duty": 0.5,
+          "env": { "a": 2, "d": 15, "s": 0.3, "r": 10 } },
+        { "pause": 40 },
+        { "note": "G5", "dur": "8n", "wave": "square", "vel": 0.90, "duty": 0.5,
+          "env": { "a": 2, "d": 18, "s": 0.4, "r": 15 } },
+        { "note": "A5", "dur": "8n", "wave": "saw", "vel": 0.88,
+          "filter": { "type": "lowpass", "cutoff": 1200, "sweep_to": 3000 },
+          "env": { "a": 3, "d": 20, "s": 0.5, "r": 20 } },
+        { "note": "B5", "dur": "8n", "wave": "saw", "vel": 0.90,
+          "filter": { "type": "lowpass", "cutoff": 1500, "sweep_to": 3500 },
+          "env": { "a": 3, "d": 22, "s": 0.55, "r": 25 } },
+        { "note": "D6", "dur": "8n", "wave": "saw", "vel": 0.92,
+          "filter": { "type": "lowpass", "cutoff": 1800, "sweep_to": 4200 },
+          "env": { "a": 3, "d": 25, "s": 0.60, "r": 30 } },
+        { "note": "E6", "dur": "4n.", "wave": "saw", "vel": 0.95,
+          "lfo": { "target": "freq", "rate": 6, "depth": 12 },
+          "filter": { "type": "lowpass", "cutoff": 2200, "sweep_to": 5000 },
+          "env": { "a": 5, "d": 60, "s": 0.75, "r": 180 } }
+      ]
+    },
+    "print_cancelled": {
+      "description": "Electronic descending E minor — punchy decay into silence",
+      "bpm": 110,
+      "steps": [
+        { "note": "E6", "dur": "8n", "wave": "square", "vel": 0.88, "duty": 0.5,
+          "env": { "a": 2, "d": 20, "s": 0.45, "r": 20 } },
+        { "note": "D6", "dur": "8n", "wave": "square", "vel": 0.82, "duty": 0.5,
+          "env": { "a": 2, "d": 22, "s": 0.40, "r": 22 } },
+        { "note": "B5", "dur": "8n", "wave": "saw", "vel": 0.76,
+          "filter": { "type": "lowpass", "cutoff": 3000, "sweep_to": 1200 },
+          "env": { "a": 3, "d": 25, "s": 0.35, "r": 30 } },
+        { "pause": 50 },
+        { "note": "G5", "dur": "8n", "wave": "saw", "vel": 0.68,
+          "filter": { "type": "lowpass", "cutoff": 2000, "sweep_to": 800 },
+          "env": { "a": 3, "d": 30, "s": 0.28, "r": 40 } },
+        { "note": "E5", "dur": "4n", "wave": "saw", "vel": 0.58,
+          "filter": { "type": "lowpass", "cutoff": 1400, "sweep_to": 400 },
+          "env": { "a": 4, "d": 50, "s": 0.20, "r": 80 } }
+      ]
+    },
+    "error_alert": {
+      "description": "Aggressive buzzy square alarm — rapid-fire with amplitude tremolo",
+      "steps": [
+        { "freq": 987, "dur": 90, "wave": "square", "vel": 1.0, "duty": 0.2,
+          "lfo": { "target": "amplitude", "rate": 18, "depth": 0.65 },
+          "env": { "a": 1, "d": 8, "s": 0.92, "r": 8 } },
+        { "pause": 40 },
+        { "freq": 740, "dur": 90, "wave": "square", "vel": 0.95, "duty": 0.2,
+          "lfo": { "target": "amplitude", "rate": 18, "depth": 0.65 },
+          "env": { "a": 1, "d": 8, "s": 0.88, "r": 8 } },
+        { "pause": 40 }
+      ],
+      "repeat": 3
+    },
+    "error_tone": {
+      "description": "Sharp electronic error — buzzy square hit with quick decay",
+      "steps": [
+        { "note": "B4", "dur": 50, "wave": "square", "vel": 0.88, "duty": 0.2,
+          "env": { "a": 1, "d": 18, "s": 0.45, "r": 15 } },
+        { "pause": 25 },
+        { "note": "G4", "dur": 80, "wave": "square", "vel": 0.78, "duty": 0.2,
+          "env": { "a": 1, "d": 25, "s": 0.30, "r": 20 } }
+      ]
+    },
+    "alarm_urgent": {
+      "description": "Intense rapid-fire alarm — alternating saw hits with pitch LFO",
+      "steps": [
+        { "freq": 988, "dur": 120, "wave": "saw", "vel": 1.0,
+          "lfo": { "target": "freq", "rate": 15, "depth": 180 },
+          "env": { "a": 2, "d": 10, "s": 0.92, "r": 10 } },
+        { "pause": 40 },
+        { "freq": 740, "dur": 120, "wave": "saw", "vel": 0.95,
+          "lfo": { "target": "freq", "rate": 15, "depth": 180 },
+          "env": { "a": 2, "d": 10, "s": 0.90, "r": 10 } },
+        { "pause": 40 }
+      ],
+      "repeat": 7
+    },
+    "test_beep": {
+      "description": "Electronic signature test — E minor square hit with filter bloom",
+      "steps": [
+        { "note": "E5", "dur": 60, "wave": "square", "vel": 0.85, "duty": 0.5,
+          "env": { "a": 2, "d": 20, "s": 0.4, "r": 25 } },
+        { "note": "B5", "dur": 100, "wave": "saw", "vel": 0.88,
+          "filter": { "type": "lowpass", "cutoff": 800, "sweep_to": 3800 },
+          "env": { "a": 3, "d": 35, "s": 0.5, "r": 60 } }
+      ]
+    },
+    "startup": {
+      "description": "Miami Vice main theme lead — staccato E4 hits then ascending E minor melody with filter bloom",
+      "bpm": 120,
+      "steps": [
+        { "note": "E4", "dur": "16n", "wave": "square", "vel": 0.88, "duty": 0.45,
+          "env": { "a": 2, "d": 15, "s": 0.0, "r": 8 } },
+        { "pause": 50 },
+        { "note": "E4", "dur": "16n", "wave": "square", "vel": 0.88, "duty": 0.45,
+          "env": { "a": 2, "d": 15, "s": 0.0, "r": 8 } },
+        { "pause": 50 },
+        { "note": "E4", "dur": "16n", "wave": "square", "vel": 0.88, "duty": 0.45,
+          "env": { "a": 2, "d": 15, "s": 0.0, "r": 8 } },
+        { "pause": 80 },
+        { "note": "G4", "dur": "8n", "wave": "square", "vel": 0.85, "duty": 0.5,
+          "env": { "a": 2, "d": 18, "s": 0.3, "r": 15 } },
+        { "note": "A4", "dur": "8n", "wave": "square", "vel": 0.87, "duty": 0.5,
+          "env": { "a": 2, "d": 18, "s": 0.35, "r": 15 } },
+        { "note": "B4", "dur": "8n", "wave": "square", "vel": 0.90, "duty": 0.5,
+          "env": { "a": 2, "d": 20, "s": 0.4, "r": 18 } },
+        { "pause": 60 },
+        { "note": "B4", "dur": "4n", "wave": "saw", "vel": 0.88,
+          "filter": { "type": "lowpass", "cutoff": 1000, "sweep_to": 2800 },
+          "env": { "a": 4, "d": 30, "s": 0.55, "r": 50 } },
+        { "note": "D5", "dur": "4n", "wave": "saw", "vel": 0.90,
+          "filter": { "type": "lowpass", "cutoff": 1300, "sweep_to": 3200 },
+          "env": { "a": 4, "d": 32, "s": 0.58, "r": 55 } },
+        { "note": "E5", "dur": "4n", "wave": "saw", "vel": 0.92,
+          "filter": { "type": "lowpass", "cutoff": 1600, "sweep_to": 3800 },
+          "env": { "a": 4, "d": 35, "s": 0.60, "r": 60 } },
+        { "note": "D5", "dur": "4n", "wave": "saw", "vel": 0.88,
+          "filter": { "type": "lowpass", "cutoff": 2000, "sweep_to": 2000 },
+          "env": { "a": 4, "d": 30, "s": 0.55, "r": 55 } },
+        { "note": "B4", "dur": "4n", "wave": "saw", "vel": 0.84,
+          "filter": { "type": "lowpass", "cutoff": 2500, "sweep_to": 1200 },
+          "env": { "a": 4, "d": 28, "s": 0.50, "r": 50 } },
+        { "note": "G4", "dur": "2n", "wave": "saw", "vel": 0.80,
+          "lfo": { "target": "freq", "rate": 5.5, "depth": 10 },
+          "filter": { "type": "lowpass", "cutoff": 2800, "sweep_to": 800 },
+          "env": { "a": 5, "d": 60, "s": 0.45, "r": 200 } }
+      ]
+    }
+  }
+}

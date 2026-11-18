@@ -1,0 +1,10 @@
+<?xml version="1.0"?><component><api><prop name="sensor_name" type="string" default="Accelerometer"/><prop name="sensor_type" type="string" default="adxl345"/></api><view name="sensor_row"
+        extends="lv_obj" width="100%" height="content" style_pad_left="#space_sm" style_pad_right="#space_sm"
+        style_pad_top="#space_md" style_pad_bottom="#space_md" scrollable="false" flex_flow="column"
+        style_pad_gap="#space_sm"><lv_obj width="100%"
+            height="content" style_pad_all="0" scrollable="false" flex_flow="row" style_flex_main_place="space_between"
+            style_flex_cross_place="center"><lv_obj height="content"
+              style_pad_all="0" scrollable="false" flex_flow="row" style_flex_cross_place="center"
+              style_pad_gap="#space_sm"><icon src="vibrate" size="sm" variant="primary"/><text_body name="name_label" text="$sensor_name"/><status_pill name="type_label" text="$sensor_type" variant="muted"/></lv_obj><lv_obj height="content"
+              style_pad_all="0" scrollable="false" flex_flow="row" style_flex_cross_place="center"
+              style_pad_gap="#space_sm"><text_small text="Enabled" translation_tag="Enabled"/><ui_switch name="enable_toggle" size="tiny"/></lv_obj></lv_obj><divider_horizontal style_margin_top="#space_xs"/></view></component>

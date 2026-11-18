@@ -35,13 +35,20 @@ is_app_installed() {
 DEPENDS=$(sed '/^[[:space:]]*\/\//d' $APP_ROOT/app.json 2> /dev/null | tr -d '\n\r' \
     | sed -n 's/.*"depends"[[:space:]]*:[[:space:]]*\[\([^]]*\)\].*/\1/p' | tr -d '" \t' | tr ',' ' ')
 
+# An entry can name alternatives separated by |: any one of them will do
 MISSING=""
 for DEPEND in $DEPENDS; do
-    is_app_installed $DEPEND || MISSING="$MISSING $DEPEND"
+    MET=0
+    for ALTERNATIVE in $(echo $DEPEND | tr '|' ' '); do
+        is_app_installed $ALTERNATIVE && MET=1
+    done
+    if [ "$MET" = "0" ]; then
+        MISSING="$MISSING${MISSING:+, }$(echo $DEPEND | sed 's/|/ or /g')"
+    fi
 done
 
 if [ -n "$MISSING" ]; then
-    MESSAGE="Can't install $APP. It needs these apps installed first:$MISSING"
+    MESSAGE="Can't install $APP. It needs these apps installed first: $MISSING"
     echo "$MESSAGE"
 
     # Installing from a USB stick, there is no screen to say so on: leave a

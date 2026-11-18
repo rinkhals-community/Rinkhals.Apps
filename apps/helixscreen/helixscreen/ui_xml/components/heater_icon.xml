@@ -1,0 +1,2 @@
+<?xml version="1.0"?><component><api><prop name="size" type="string" default="#icon_size"/><prop name="src" type="string" default="radiator"/><prop name="glyph_name" type="string" default=""/></api><view name="heater_icon"
+        width="content" height="content" style_pad_all="0" scrollable="false" clickable="false" event_bubble="true"><icon name="$glyph_name" src="$src" size="$size" variant="secondary" clickable="false" event_bubble="true"/></view></component>

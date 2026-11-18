@@ -1,0 +1,4 @@
+<?xml version="1.0"?><component><api><prop name="swatch_color" type="string" default="0xFFFFFF"/></api><px name="swatch_size" value="40"/><view name="led_color_swatch"
+        extends="lv_obj" width="#swatch_size" height="#swatch_size" style_radius="#border_radius" style_bg_opa="255"
+        style_border_width="#border_width" style_border_color="#border" style_border_opa="#border_opacity"
+        clickable="true" scrollable="false" style_bg_color="$swatch_color"/></component>

@@ -1,0 +1,13 @@
+<?xml version="1.0"?><component><view name="theme_save_as_modal"
+        extends="ui_dialog" width="70%" height="content" align="center" flex_flow="column" style_flex_main_place="start"
+        style_pad_gap="0"><lv_obj name="save_as_form_container"
+            width="100%" height="content" style_min_height="180" style_pad_left="#space_lg" style_pad_right="#space_lg"
+            style_pad_top="#space_lg" style_pad_bottom="#space_lg" flex_flow="column" style_flex_cross_place="center"
+            style_pad_gap="#space_md"><text_heading width="100%" text="Save Theme As" translation_tag="Save Theme As" style_text_align="center"/><text_small width="100%"
+                  text="Enter a name for your custom theme:" translation_tag="Enter a name for your custom theme:"
+                  style_text_align="center" style_text_color="#text_muted"/><text_input name="theme_name_input"
+                  width="100%" height="#input_height" placeholder_text="My Custom Theme"
+                  placeholder_tag="My Custom Theme" translation_tag="My Custom Theme" style_margin_top="#space_sm"/><text_small name="save_as_status"
+                  width="100%" text="" style_text_align="center" style_text_color="#danger" hidden="true"/></lv_obj><modal_button_row primary_text="Save"
+                      secondary_text="Cancel" primary_callback="on_theme_save_as_confirm"
+                      secondary_callback="on_theme_save_as_cancel"/></view></component>

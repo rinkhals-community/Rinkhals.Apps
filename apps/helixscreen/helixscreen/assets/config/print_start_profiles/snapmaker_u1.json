@@ -1,0 +1,49 @@
+{
+  "name": "Snapmaker U1",
+  "description": "Snapmaker U1 — patterns matched against the ACTUAL firmware gcode_response / action-code strings captured live from /oem/printer_data/logs/klippy.log + Moonraker gcode_store on 2026-06-18 (reprint of lid_PLA_6m28s, heads 0+3). The U1 PRINT_START gcode_macro is essentially empty — the whole pre-print (homing, Z touch, bed inspect, extruder switch check, per-lane auto-feed, flow calibrate, plate detect, nozzle clean, bed mesh, prime line) is inlined into the OrcaSlicer gcode and executed by custom Klipper extras (print_task_config / feed / defect_detection / inductance_coil). Several of those steps emit NO observable gcode_response (FEED_AUTO, FLOW_CALIBRATE, *_CLEAN_NOZZLE, BED_MESH_CALIBRATE are klippy-internal only, NOT in Moonraker's gcode_store) — but NO patterns are invented for them. silent_progression is intentionally empty: the U1 sets print_stats.state=printing the instant the SD job opens and idles ~90s before its first action code, with heater targets set/cleared throughout, so the collector's temps_ready timer fires unreliably (often with ext_target=0 during the early idle gap) and a temps-ready-based phase nudge would announce 'Priming...' before the printer has even homed (live finding U1 @ 192.168.30.103, 2026-06-11). The signal-less clean/mesh/prime stretch is therefore left to the last action-code phase + weighted progress rather than a wall-clock timer. Heating is concurrent/background and detected from temperature state by the collector, not from gcode, so it carries phase_weights but no patterns. The real first model layer is signalled by print_stats.info.current_layer 0->1 (PrinterPrintState / should_complete_preprint), not by any action code.",
+  "progress_mode": "weighted",
+  "adaptive_meshing": true,
+  "signal_formats": [
+    {
+      "prefix": "// Success: Set action code ",
+      "mappings": {
+        "PRINT_BED_DETECTING":   { "phase": "BED_MESH",     "message": "Inspecting bed..." },
+        "PRINT_SWITCH_CHECKING": { "phase": "INITIALIZING", "message": "Checking extruders..." },
+        "PRINT_AUTO_FEEDING":    { "phase": "INITIALIZING", "message": "Loading filament..." },
+        "PRINT_REPLENISHING":    { "phase": "INITIALIZING", "message": "Replenishing filament..." },
+        "DETECT_PLATE":          { "phase": "BED_MESH",     "message": "Detecting plate..." },
+        "BED_PREHEATING":        { "phase": "HEATING_BED",  "message": "Heat Soak" },
+        "BED_PRESCANNING":       { "phase": "BED_MESH",     "message": "Validating bed mesh..." },
+        "BED_LEVELING":          { "phase": "BED_MESH",     "message": "Bed mesh..." },
+        "PRINT_PREEXTRUDING":    { "phase": "PURGING",      "message": "Priming..." },
+        "PRINT_RESUMING":        { "phase": "INITIALIZING", "message": "Resuming print..." }
+      }
+    },
+    {
+      "prefix": "// Success: Changed main state to PRINTING with action ",
+      "mappings": {
+        "PRINT_BED_DETECTING":   { "phase": "BED_MESH",     "message": "Inspecting bed..." },
+        "PRINT_SWITCH_CHECKING": { "phase": "INITIALIZING", "message": "Checking extruders..." },
+        "DETECT_PLATE":          { "phase": "BED_MESH",     "message": "Detecting plate..." },
+        "BED_PREHEATING":        { "phase": "HEATING_BED",  "message": "Heat Soak" },
+        "BED_PRESCANNING":       { "phase": "BED_MESH",     "message": "Validating bed mesh..." },
+        "BED_LEVELING":          { "phase": "BED_MESH",     "message": "Bed mesh..." },
+        "PRINT_PREEXTRUDING":    { "phase": "PURGING",      "message": "Priming..." }
+      }
+    }
+  ],
+  "response_patterns": [
+    { "pattern": "^// trigger_mcu_pos: \\{", "phase": "HOMING", "message": "Homing axes...", "weight": 5 },
+    { "pattern": "^// z offset: ",            "phase": "HOMING", "message": "Probing Z...",   "weight": 2 }
+  ],
+  "silent_progression": [],
+  "phase_weights": {
+    "HOMING": 6,
+    "HEATING_BED": 22,
+    "HEATING_NOZZLE": 22,
+    "INITIALIZING": 14,
+    "BED_MESH": 26,
+    "CLEANING": 5,
+    "PURGING": 5
+  }
+}

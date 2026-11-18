@@ -1,0 +1,59 @@
+{
+  "preset": "ad5x",
+  "wizard_completed": false,
+  "display": {
+    "backlight_enable_ioctl": false,
+    "hardware_blank": 1,
+    "sleep_backlight_off": true,
+    "animations_enabled": false
+  },
+  "printer": {
+    "input": {
+      "scroll_limit": 10,
+      "scroll_throw": 25,
+      "scroll_guard": true
+    },
+    "heaters": {
+      "bed": "heater_bed",
+      "hotend": "extruder"
+    },
+    "temp_sensors": {
+      "bed": "heater_bed",
+      "hotend": "extruder"
+    },
+    "fans": {
+      "hotend": "heater_fan heat_fan",
+      "part": "fan_generic fanM106",
+      "aux": "fan_generic chamber_fan"
+    },
+    "filament_sensors": {
+      "master_enabled": true,
+      "sensors": [
+        {
+          "enabled": true,
+          "klipper_name": "filament_switch_sensor head_switch_sensor",
+          "role": "runout",
+          "type": "switch"
+        }
+      ]
+    },
+    "hardware": {
+      "expected": [
+        "heater_bed",
+        "extruder",
+        "fan_generic fanM106",
+        "heater_fan heat_fan",
+        "fan_generic chamber_fan",
+        "fan_generic pcb_fan",
+        "filament_switch_sensor head_switch_sensor"
+      ]
+    },
+    "default_macros": {
+      "cooldown": "SET_HEATER_TEMPERATURE HEATER=extruder TARGET=0\nSET_HEATER_TEMPERATURE HEATER=heater_bed TARGET=0",
+      "load_filament": { "label": "Load", "gcode": "LOAD_FILAMENT" },
+      "unload_filament": { "label": "Unload", "gcode": "UNLOAD_FILAMENT" },
+      "macro_1": { "label": "Clean Nozzle", "gcode": "CLEAR_NOZZLE" },
+      "macro_2": { "label": "Bed Level", "gcode": "AUTO_FULL_BED_LEVEL" }
+    }
+  }
+}

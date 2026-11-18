@@ -1,0 +1,12 @@
+<?xml version="1.0"?><component><view name="panel_widget_power_device"
+        extends="lv_obj" height="100%" flex_grow="1" scrollable="false" style_pad_top="#space_sm" style_pad_bottom="0"
+        style_pad_left="0" style_pad_right="0" flex_flow="column" style_flex_main_place="center"
+        style_flex_cross_place="center" style_flex_track_place="center" clickable="true"><bind_state_if_not_eq subject="moonraker_connection_state" state="disabled" ref_value="1"/><event_cb trigger="clicked" callback="power_device_clicked_cb"/><lv_obj name="power_badge"
+            width="#icon_badge_size" height="#icon_badge_size" style_radius="#icon_badge_radius" style_bg_opa="40"
+            style_bg_color="#secondary" style_border_width="0" style_pad_all="0" clickable="false" scrollable="false"><icon name="power_icon"
+            src="power_cycle" size="md" variant="secondary" clickable="false" event_bubble="true" align="center"/><icon name="power_lock_icon"
+            src="lock" size="xs" variant="muted" clickable="false" event_bubble="true" hidden="true"
+            align="bottom_right"/></lv_obj><text_tiny name="power_device_name"
+               width="100%" text="Configure" translation_tag="Configure" style_text_align="center"
+               style_text_color="#text" long_mode="wrap" clickable="false" event_bubble="true"/><text_tiny name="power_device_status"
+               text="" style_text_align="center" style_text_color="#text_muted" clickable="false" event_bubble="true"/></view></component>

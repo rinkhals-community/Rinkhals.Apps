@@ -1,0 +1,12 @@
+<?xml version="1.0"?><component><consts><str name="step_title" value="Printer Setup: Heaters" value_tag="Printer Setup: Heaters"/><str name="step_subtitle"
+         value="Select the heaters Klipper uses for your bed and hotend"
+         value_tag="Select the heaters Klipper uses for your bed and hotend"/><int name="step_order" value="4"/></consts><view name="wizard_heater_select_root"
+        extends="lv_obj" width="100%" height="100%" style_bg_opa="0" style_border_width="0" style_pad_all="0"
+        flex_flow="column" style_flex_main_place="start" style_flex_cross_place="center"><ui_card width="100%"
+             flex_grow="1" style_radius="#border_radius" style_pad_all="#space_lg" style_pad_gap="#space_md"
+             flex_flow="column" style_flex_main_place="start" style_flex_cross_place="start"><text_body text="Bed Heater" translation_tag="Bed Heater" style_pad_bottom="#space_sm"/><lv_dropdown name="bed_heater_dropdown"
+                   width="100%" height="#header_height" options="heater_bed" style_border_opa="100%"
+                   style_radius="#border_radius" style_pad_all="#space_lg"><event_cb trigger="value_changed" callback="on_bed_heater_dropdown_changed"/></lv_dropdown><text_body text="Hotend Heater"
+                 translation_tag="Hotend Heater" style_pad_top="#space_md" style_pad_bottom="#space_sm"/><lv_dropdown name="hotend_heater_dropdown"
+                   width="100%" height="#header_height" options="extruder" style_border_opa="100%"
+                   style_radius="#border_radius" style_pad_all="#space_lg"><event_cb trigger="value_changed" callback="on_hotend_heater_dropdown_changed"/></lv_dropdown></ui_card></view></component>

@@ -1,0 +1,60 @@
+#!/bin/sh /etc/rc.common
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# The service-shaped starter and supervisor for the stock Creality
+# web-server on K2 series printers, so the LAN web interface keeps serving
+# while HelixScreen owns the screen (prestonbrown/helixscreen#1617,
+# prestonbrown/helixscreen#1665). web-server serves that interface only:
+# ports 80/443 redirect to Fluidd on :4408, 9998 is its HTTPS listener,
+# 9999 the local status websocket.
+#
+# The stock /etc/init.d/app procd service starts the whole Creality set;
+# HelixScreen keeps it disabled — display-server contends for the
+# framebuffer, and Monitor and the master/app pair are the stock UI
+# watchdog and AI failure detection the install announces as removed.
+# That service's `stop` runs killall -9 over the set, so it takes down ANY
+# web-server — this one included — at every HelixScreen start; `disable`
+# only removes the app's rc.d links. Liveness therefore rests on procd
+# respawning the instance registered below plus hooks-k2.sh's restore at
+# the end of every HelixScreen start. The rc.d boot entry enable installs
+# is belt-and-braces beside those.
+#
+# The rc.common shebang is the dispatch contract; a DEPEND directive is
+# optional for boot dispatch.
+
+# Harden PATH against third-party mods that prepend command-shim directories
+# (e.g. k2-improvements' /mnt/UDISK/bin wrappers). Stock system directories
+# first, so pidof resolves to the real binary at boot.
+export PATH="/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
+
+# Read by /etc/rc.common, which sources this script at dispatch time —
+# nothing in this file references them.
+# shellcheck disable=SC2034  # rc.common boot-slot directive
+START=99
+# shellcheck disable=SC2034  # rc.common shutdown-slot directive
+STOP=01
+# shellcheck disable=SC2034  # rc.common dependency directive; optional for boot dispatch
+DEPEND="done"
+# shellcheck disable=SC2034  # rc.common supervision switch: rc.common supplies stop/restart/status
+USE_PROCD=1
+
+WEBSERVER_BIN="/usr/bin/web-server"
+
+start_service() {
+    # Whoever's web-server is already running, the port is served; never
+    # register a second instance to fight it for the bind.
+    pidof web-server >/dev/null 2>&1 && return 0
+    # A firmware without the Creality stack has nothing to start.
+    [ -x "$WEBSERVER_BIN" ] || return 0
+    procd_open_instance
+    procd_set_param command "$WEBSERVER_BIN"
+    # Mirror the stock app's instance env, which runs its set under root's
+    # home.
+    procd_set_param env HOME=/root
+    # The carve-out must outlive arbitrary crashes, so retry indefinitely:
+    # a bounded retry that gives up during a long outage leaves the LAN
+    # interface dark (retry 0 = respawn forever).
+    # shellcheck disable=SC2086  # three separate integer args is the point
+    procd_set_param respawn ${HELIX_WS_RESPAWN_THRESHOLD:-3600} ${HELIX_WS_RESPAWN_TIMEOUT:-5} ${HELIX_WS_RESPAWN_RETRY:-0}
+    procd_close_instance
+}

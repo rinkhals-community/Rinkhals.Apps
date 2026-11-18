@@ -1,0 +1,236 @@
+{
+  "name": "crocketts_theme",
+  "description": "Crockett's Theme — warm 80s Miami Vice synth, Jan Hammer saw waves with filter sweeps and long sustains",
+  "version": 1,
+  "defaults": {
+    "wave": "saw",
+    "vel": 0.75,
+    "env": { "a": 10, "d": 60, "s": 0.7, "r": 120 }
+  },
+  "sounds": {
+    "button_tap": {
+      "description": "Soft filtered saw tap with gentle filter bloom",
+      "steps": [
+        { "note": "G5", "dur": 45, "wave": "saw", "vel": 0.65,
+          "filter": { "type": "lowpass", "cutoff": 800, "sweep_to": 2200 },
+          "env": { "a": 5, "d": 30, "s": 0.3, "r": 60 } }
+      ]
+    },
+    "toggle_on": {
+      "description": "Gentle two-note saw with filter bloom opening up",
+      "steps": [
+        { "note": "Bb4", "dur": 80, "wave": "saw", "vel": 0.65,
+          "filter": { "type": "lowpass", "cutoff": 600, "sweep_to": 1800 },
+          "env": { "a": 8, "d": 40, "s": 0.5, "r": 80 } },
+        { "note": "F5", "dur": 120, "wave": "saw", "vel": 0.75,
+          "filter": { "type": "lowpass", "cutoff": 1000, "sweep_to": 3000 },
+          "env": { "a": 10, "d": 50, "s": 0.6, "r": 120 } }
+      ]
+    },
+    "toggle_off": {
+      "description": "Gentle two-note saw descending with filter closing",
+      "steps": [
+        { "note": "F5", "dur": 80, "wave": "saw", "vel": 0.70,
+          "filter": { "type": "lowpass", "cutoff": 2000, "sweep_to": 800 },
+          "env": { "a": 8, "d": 40, "s": 0.5, "r": 80 } },
+        { "note": "Bb4", "dur": 120, "wave": "saw", "vel": 0.60,
+          "filter": { "type": "lowpass", "cutoff": 1200, "sweep_to": 400 },
+          "env": { "a": 10, "d": 50, "s": 0.4, "r": 120 } }
+      ]
+    },
+    "nav_forward": {
+      "description": "Smooth ascending sweep with gentle vibrato",
+      "steps": [
+        { "note": "Bb4", "dur": 70, "wave": "saw", "vel": 0.65,
+          "filter": { "type": "lowpass", "cutoff": 800, "sweep_to": 2000 },
+          "env": { "a": 8, "d": 30, "s": 0.5, "r": 60 } },
+        { "note": "Eb5", "dur": 70, "wave": "saw", "vel": 0.70,
+          "filter": { "type": "lowpass", "cutoff": 1200, "sweep_to": 2800 },
+          "env": { "a": 8, "d": 30, "s": 0.55, "r": 80 } },
+        { "note": "Gb5", "dur": 100, "wave": "saw", "vel": 0.75,
+          "lfo": { "target": "freq", "rate": 5.5, "depth": 8 },
+          "filter": { "type": "lowpass", "cutoff": 1600, "sweep_to": 3500 },
+          "env": { "a": 10, "d": 50, "s": 0.6, "r": 120 } }
+      ]
+    },
+    "nav_back": {
+      "description": "Smooth descending sweep with gentle vibrato",
+      "steps": [
+        { "note": "Gb5", "dur": 70, "wave": "saw", "vel": 0.75,
+          "filter": { "type": "lowpass", "cutoff": 2800, "sweep_to": 1200 },
+          "env": { "a": 8, "d": 30, "s": 0.55, "r": 60 } },
+        { "note": "Eb5", "dur": 70, "wave": "saw", "vel": 0.68,
+          "filter": { "type": "lowpass", "cutoff": 2000, "sweep_to": 800 },
+          "env": { "a": 8, "d": 30, "s": 0.5, "r": 80 } },
+        { "note": "Bb4", "dur": 100, "wave": "saw", "vel": 0.60,
+          "lfo": { "target": "freq", "rate": 5.5, "depth": 6 },
+          "filter": { "type": "lowpass", "cutoff": 1200, "sweep_to": 500 },
+          "env": { "a": 10, "d": 50, "s": 0.45, "r": 120 } }
+      ]
+    },
+    "dropdown_open": {
+      "description": "Filtered saw pop — warm and smooth",
+      "steps": [
+        { "note": "Eb5", "dur": 55, "wave": "saw", "vel": 0.65,
+          "filter": { "type": "lowpass", "cutoff": 500, "sweep_to": 2500 },
+          "env": { "a": 5, "d": 35, "s": 0.3, "r": 70 } }
+      ]
+    },
+    "print_complete": {
+      "description": "Triumphant cinematic ascending melody with filter sweeps opening up — Bb minor key",
+      "bpm": 100,
+      "steps": [
+        { "note": "Bb4", "dur": "4n", "wave": "saw", "vel": 0.70,
+          "filter": { "type": "lowpass", "cutoff": 800, "sweep_to": 2000 },
+          "env": { "a": 12, "d": 60, "s": 0.65, "r": 120 } },
+        { "note": "Db5", "dur": "4n", "wave": "saw", "vel": 0.73,
+          "filter": { "type": "lowpass", "cutoff": 1000, "sweep_to": 2500 },
+          "env": { "a": 12, "d": 60, "s": 0.68, "r": 120 } },
+        { "note": "Eb5", "dur": "4n", "wave": "saw", "vel": 0.76,
+          "filter": { "type": "lowpass", "cutoff": 1200, "sweep_to": 3000 },
+          "env": { "a": 12, "d": 60, "s": 0.70, "r": 120 } },
+        { "note": "F5", "dur": "4n", "wave": "saw", "vel": 0.80,
+          "filter": { "type": "lowpass", "cutoff": 1500, "sweep_to": 3500 },
+          "env": { "a": 12, "d": 60, "s": 0.72, "r": 120 } },
+        { "note": "Gb5", "dur": "4n.", "wave": "saw", "vel": 0.83,
+          "lfo": { "target": "freq", "rate": 5, "depth": 10 },
+          "filter": { "type": "lowpass", "cutoff": 1800, "sweep_to": 4000 },
+          "env": { "a": 14, "d": 80, "s": 0.75, "r": 200 } },
+        { "note": "Bb5", "dur": "2n", "wave": "saw", "vel": 0.88,
+          "lfo": { "target": "freq", "rate": 5.5, "depth": 14 },
+          "filter": { "type": "lowpass", "cutoff": 2200, "sweep_to": 5000 },
+          "env": { "a": 15, "d": 100, "s": 0.80, "r": 300 } }
+      ]
+    },
+    "print_cancelled": {
+      "description": "Melancholy descending Bb minor melody — cinematic and forlorn",
+      "bpm": 88,
+      "steps": [
+        { "note": "Bb5", "dur": "4n", "wave": "saw", "vel": 0.72,
+          "filter": { "type": "lowpass", "cutoff": 3000, "sweep_to": 1500 },
+          "env": { "a": 12, "d": 70, "s": 0.65, "r": 140 } },
+        { "note": "Ab5", "dur": "4n", "wave": "saw", "vel": 0.68,
+          "filter": { "type": "lowpass", "cutoff": 2500, "sweep_to": 1200 },
+          "env": { "a": 12, "d": 70, "s": 0.60, "r": 140 } },
+        { "note": "Gb5", "dur": "4n", "wave": "saw", "vel": 0.63,
+          "filter": { "type": "lowpass", "cutoff": 2000, "sweep_to": 900 },
+          "env": { "a": 12, "d": 70, "s": 0.55, "r": 150 } },
+        { "note": "Eb5", "dur": "4n", "wave": "saw", "vel": 0.58,
+          "filter": { "type": "lowpass", "cutoff": 1500, "sweep_to": 700 },
+          "env": { "a": 12, "d": 80, "s": 0.50, "r": 160 } },
+        { "note": "Db5", "dur": "2n", "wave": "saw", "vel": 0.52,
+          "lfo": { "target": "freq", "rate": 4.5, "depth": 7 },
+          "filter": { "type": "lowpass", "cutoff": 1200, "sweep_to": 500 },
+          "env": { "a": 14, "d": 100, "s": 0.42, "r": 300 } }
+      ]
+    },
+    "error_alert": {
+      "description": "Tense pulsing saw — unsettling and urgent",
+      "steps": [
+        { "freq": 466, "dur": 120, "wave": "saw", "vel": 0.80,
+          "lfo": { "target": "amplitude", "rate": 8, "depth": 0.5 },
+          "filter": { "type": "lowpass", "cutoff": 1200, "sweep_to": 2800 },
+          "env": { "a": 8, "d": 20, "s": 0.75, "r": 40 } },
+        { "pause": 60 },
+        { "freq": 392, "dur": 120, "wave": "saw", "vel": 0.75,
+          "lfo": { "target": "amplitude", "rate": 8, "depth": 0.5 },
+          "filter": { "type": "lowpass", "cutoff": 1000, "sweep_to": 2400 },
+          "env": { "a": 8, "d": 20, "s": 0.70, "r": 40 } },
+        { "pause": 60 }
+      ],
+      "repeat": 3
+    },
+    "error_tone": {
+      "description": "Short tense two-note error — minor second interval",
+      "steps": [
+        { "note": "Bb4", "dur": 80, "wave": "saw", "vel": 0.70,
+          "filter": { "type": "lowpass", "cutoff": 1500, "sweep_to": 800 },
+          "env": { "a": 8, "d": 30, "s": 0.55, "r": 80 } },
+        { "pause": 30 },
+        { "note": "A4", "dur": 120, "wave": "saw", "vel": 0.60,
+          "filter": { "type": "lowpass", "cutoff": 1200, "sweep_to": 500 },
+          "env": { "a": 10, "d": 50, "s": 0.40, "r": 120 } }
+      ]
+    },
+    "alarm_urgent": {
+      "description": "Intense saw alarm with pitch wobble — cinematic danger",
+      "steps": [
+        { "freq": 466, "dur": 200, "wave": "saw", "vel": 0.90,
+          "lfo": { "target": "freq", "rate": 7, "depth": 30 },
+          "filter": { "type": "lowpass", "cutoff": 800, "sweep_to": 3500 },
+          "env": { "a": 6, "d": 15, "s": 0.88, "r": 30 } },
+        { "pause": 80 },
+        { "freq": 349, "dur": 200, "wave": "saw", "vel": 0.88,
+          "lfo": { "target": "freq", "rate": 7, "depth": 30 },
+          "filter": { "type": "lowpass", "cutoff": 700, "sweep_to": 3000 },
+          "env": { "a": 6, "d": 15, "s": 0.85, "r": 30 } },
+        { "pause": 80 }
+      ],
+      "repeat": 6
+    },
+    "test_beep": {
+      "description": "Warm saw tone with filter sweep — Crockett's Theme signature sound",
+      "steps": [
+        { "note": "Bb4", "dur": 120, "wave": "saw", "vel": 0.70,
+          "filter": { "type": "lowpass", "cutoff": 600, "sweep_to": 2500 },
+          "env": { "a": 10, "d": 60, "s": 0.65, "r": 130 } },
+        { "note": "F5", "dur": 180, "wave": "saw", "vel": 0.78,
+          "lfo": { "target": "freq", "rate": 5, "depth": 10 },
+          "filter": { "type": "lowpass", "cutoff": 1200, "sweep_to": 3500 },
+          "env": { "a": 12, "d": 80, "s": 0.70, "r": 180 } }
+      ]
+    },
+    "startup": {
+      "description": "Crockett's Theme — melody extracted from hkvalhe MED arrangement (Ab major)",
+      "steps": [
+        { "pause": 320 },
+        { "note": "Ab4", "dur": 160, "wave": "saw", "vel": 0.78,
+          "filter": { "type": "lowpass", "cutoff": 1400, "sweep_to": 3500 },
+          "env": { "a": 12, "d": 60, "s": 0.72, "r": 100 } },
+        { "note": "F#4", "dur": 160, "wave": "saw", "vel": 0.75,
+          "filter": { "type": "lowpass", "cutoff": 1200, "sweep_to": 3200 },
+          "env": { "a": 12, "d": 60, "s": 0.70, "r": 100 } },
+        { "note": "Eb4", "dur": 320, "wave": "saw", "vel": 0.72,
+          "filter": { "type": "lowpass", "cutoff": 1000, "sweep_to": 2800 },
+          "env": { "a": 14, "d": 70, "s": 0.68, "r": 120 } },
+        { "note": "B3", "dur": 160, "wave": "saw", "vel": 0.68,
+          "filter": { "type": "lowpass", "cutoff": 900, "sweep_to": 2400 },
+          "env": { "a": 12, "d": 60, "s": 0.65, "r": 100 } },
+        { "note": "C#4", "dur": 480, "wave": "saw", "vel": 0.74,
+          "lfo": { "target": "freq", "rate": 5, "depth": 6 },
+          "filter": { "type": "lowpass", "cutoff": 1100, "sweep_to": 3000 },
+          "env": { "a": 14, "d": 80, "s": 0.70, "r": 140 } },
+        { "note": "B3", "dur": 160, "wave": "saw", "vel": 0.68,
+          "filter": { "type": "lowpass", "cutoff": 900, "sweep_to": 2400 },
+          "env": { "a": 12, "d": 60, "s": 0.65, "r": 100 } },
+        { "note": "C#4", "dur": 800, "wave": "saw", "vel": 0.76,
+          "lfo": { "target": "freq", "rate": 5, "depth": 8 },
+          "filter": { "type": "lowpass", "cutoff": 1200, "sweep_to": 3500 },
+          "env": { "a": 15, "d": 100, "s": 0.72, "r": 200 } },
+        { "note": "C#4", "dur": 320, "wave": "saw", "vel": 0.72,
+          "filter": { "type": "lowpass", "cutoff": 1100, "sweep_to": 2800 },
+          "env": { "a": 12, "d": 70, "s": 0.68, "r": 120 } },
+        { "note": "B3", "dur": 160, "wave": "saw", "vel": 0.68,
+          "filter": { "type": "lowpass", "cutoff": 900, "sweep_to": 2400 },
+          "env": { "a": 12, "d": 60, "s": 0.65, "r": 100 } },
+        { "note": "C#4", "dur": 640, "wave": "saw", "vel": 0.75,
+          "lfo": { "target": "freq", "rate": 5, "depth": 7 },
+          "filter": { "type": "lowpass", "cutoff": 1200, "sweep_to": 3200 },
+          "env": { "a": 14, "d": 90, "s": 0.70, "r": 160 } },
+        { "note": "B3", "dur": 160, "wave": "saw", "vel": 0.68,
+          "filter": { "type": "lowpass", "cutoff": 900, "sweep_to": 2400 },
+          "env": { "a": 12, "d": 60, "s": 0.65, "r": 100 } },
+        { "note": "C#4", "dur": 320, "wave": "saw", "vel": 0.72,
+          "filter": { "type": "lowpass", "cutoff": 1100, "sweep_to": 2800 },
+          "env": { "a": 12, "d": 70, "s": 0.68, "r": 120 } },
+        { "note": "B3", "dur": 160, "wave": "saw", "vel": 0.68,
+          "filter": { "type": "lowpass", "cutoff": 900, "sweep_to": 2400 },
+          "env": { "a": 12, "d": 60, "s": 0.65, "r": 100 } },
+        { "note": "Ab3", "dur": 800, "wave": "saw", "vel": 0.70,
+          "lfo": { "target": "freq", "rate": 4.5, "depth": 8 },
+          "filter": { "type": "lowpass", "cutoff": 800, "sweep_to": 2000 },
+          "env": { "a": 15, "d": 120, "s": 0.65, "r": 300 } }
+      ]
+    }
+  }
+}

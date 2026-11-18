@@ -1,0 +1,13 @@
+<?xml version="1.0"?><component><view name="probe_beacon_panel"
+        extends="lv_obj" width="100%" height="content" style_pad_all="0" flex_flow="column" style_pad_gap="#space_sm"
+        scrollable="false"><setting_section_header title="BEACON" title_tag="BEACON" icon="sine_wave"/><ui_card width="100%"
+             height="content" style_border_width="0" style_pad_all="#space_md" scrollable="false" flex_flow="column"
+             style_pad_gap="#space_sm"><lv_obj width="100%"
+              height="content" style_pad_all="0" flex_flow="row" style_flex_cross_place="center"
+              style_pad_gap="#space_md" scrollable="false"><icon src="thermometer" size="sm" variant="secondary"/><text_body text="Sensor Temperature" translation_tag="Sensor Temperature" flex_grow="1"/><text_body bind_text="probe_beacon_temp" style_text_color="#primary"/></lv_obj><lv_obj width="100%"
+              height="content" style_pad_all="0" flex_flow="row" style_flex_cross_place="center"
+              style_pad_gap="#space_md" scrollable="false"><icon src="check_circle" size="sm" variant="secondary"/><text_body text="Temp Compensation" translation_tag="Temp Compensation" flex_grow="1"/><text_small bind_text="probe_beacon_temp_comp_status" style_text_color="#text_muted"/></lv_obj></ui_card><lv_obj width="100%" height="content" style_pad_all="0" flex_flow="row" style_pad_gap="#space_sm" scrollable="false"><ui_button name="btn_beacon_calibrate"
+                 width="1" height="#button_height_sm" flex_grow="1" variant="secondary" text="Calibrate"
+                 translation_tag="Calibrate" icon="target"><event_cb trigger="clicked" callback="on_beacon_calibrate"/></ui_button><ui_button name="btn_beacon_auto_cal"
+                 width="1" height="#button_height_sm" flex_grow="1" variant="secondary" text="Auto Cal"
+                 translation_tag="Auto Cal" icon="tune"><event_cb trigger="clicked" callback="on_beacon_auto_cal"/></ui_button></lv_obj></view></component>

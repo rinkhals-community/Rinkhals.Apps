@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# polkit local authority rule: allow HelixScreen service user to manage
+# NetworkManager connections (Wi-Fi connect/disconnect/scan)
+# Installed by HelixScreen for non-root service operation
+[HelixScreen NetworkManager access]
+Identity=unix-user:@@HELIX_USER@@
+Action=org.freedesktop.NetworkManager.*
+ResultAny=yes
+ResultInactive=yes
+ResultActive=yes

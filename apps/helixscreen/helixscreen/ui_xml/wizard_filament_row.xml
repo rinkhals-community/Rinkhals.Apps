@@ -1,0 +1,7 @@
+<?xml version="1.0"?><component><styles><style name="selected_style"
+           border_width="#space_xs" border_side="left" border_color="#primary" bg_color="#elevated_bg"/></styles><view name="wizard_filament_row"
+        extends="lv_button" width="100%" height="content" style_bg_opa="0" style_border_width="0" style_shadow_width="0"
+        style_pad_all="#space_sm" style_radius="#border_radius" flex_flow="row" style_flex_cross_place="center"
+        style_pad_gap="#space_sm" clickable="true" scrollable="false"><style name="selected_style" selector="checked"/><lv_obj name="color_swatch"
+            width="20" height="20" style_radius="10" style_bg_color="#text_muted" style_bg_opa="255"
+            style_border_width="1" style_border_color="#border" clickable="false" scrollable="false"/><text_body name="filament_material" flex_grow="1" text="PLA" long_mode="dots" clickable="false"/><text_small name="filament_temps" text="200-220°C" style_text_color="#text_muted" clickable="false"/><event_cb trigger="clicked" callback="on_wizard_filament_selected"/></view></component>

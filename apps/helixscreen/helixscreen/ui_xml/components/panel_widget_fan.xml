@@ -1,0 +1,7 @@
+<?xml version="1.0"?><component><view name="panel_widget_fan"
+        extends="lv_obj" height="100%" flex_grow="1" style_pad_all="0" scrollable="false" flex_flow="column"
+        style_flex_main_place="center" style_flex_cross_place="center" style_flex_track_place="center" clickable="true"><bind_state_if_not_eq subject="printer_connection_state" state="disabled" ref_value="2"/><event_cb trigger="clicked" callback="fan_widget_clicked_cb"/><lv_obj width="100%"
+            height="content" style_pad_all="0" scrollable="false" flex_flow="row" style_flex_main_place="center"
+            style_flex_cross_place="center" style_pad_gap="#space_xs" clickable="false" event_bubble="true"><icon name="fan_widget_icon" src="fan" size="#icon_size" variant="secondary" clickable="false" event_bubble="true"/><text_body name="fan_speed" text="--" clickable="false" event_bubble="true"/></lv_obj><text_tiny name="fan_name"
+               width="100%" text="Select fan" translation_tag="Select fan" style_text_align="center" long_mode="dots"
+               clickable="false" event_bubble="true"/></view></component>

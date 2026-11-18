@@ -1,0 +1,5 @@
+<?xml version="1.0"?><component><view name="thermistor_configure_picker" extends="context_menu_backdrop"><context_menu_card title="Select Sensors"
+                       title_tag="Select Sensors" close_icon="check" close_text="Done" close_text_tag="Done"
+                       scrollable="true"><lv_obj name="sensor_list"
+              width="100%" height="content" flex_flow="column" style_pad_all="#space_xs" style_pad_gap="0"
+              scrollable="true"/><divider_horizontal color="#text_muted" opacity="38" clickable="false" event_bubble="true"/></context_menu_card></view></component>

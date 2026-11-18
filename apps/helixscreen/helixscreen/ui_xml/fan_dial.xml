@@ -1,0 +1,9 @@
+<?xml version="1.0"?><component><api><prop name="fan_name" type="string" default="Fan"/><prop name="fan_id" type="string" default="fan"/><prop name="initial_value" type="number" default="0"/></api><view name="fan_dial_root"
+        extends="ui_card" width="#fan_card_base_width" height="#fan_card_height" style_min_width="#fan_card_min_width"
+        style_max_width="#fan_card_max_width" flex_flow="column" style_flex_main_place="start"
+        style_flex_cross_place="center" style_pad_all="#space_sm" style_pad_bottom="#space_xs" style_pad_gap="0"
+        scrollable="false"><text_small name="name_label" text="$fan_name" clickable="false" event_bubble="true"/><fan_arc_core initial_value="$initial_value"/><text_tiny name="name_label_bottom"
+               text="$fan_name" hidden="true" style_margin_top="-4" style_pad_all="0" clickable="false"
+               event_bubble="true"/><lv_obj name="button_row"
+            width="100%" height="content" style_pad_all="0" scrollable="false" flex_flow="row"
+            style_flex_main_place="center" style_flex_cross_place="center" style_pad_gap="#space_sm"><ui_switch name="onoff_switch" size="tiny"><event_cb trigger="value_changed" callback="on_fan_dial_switch_changed"/></ui_switch><text_small name="onoff_label" text="Off" translation_tag="Off" clickable="false" event_bubble="true"/></lv_obj></view></component>
