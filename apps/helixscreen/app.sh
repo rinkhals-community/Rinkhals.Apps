@@ -183,6 +183,21 @@ run_helix() {
             --log-dest file --log-file $LOG --log-level info > /dev/null 2>&1 &
 }
 
+# HelixScreen asks Klipper for live status once, right after it connects. At
+# boot Klipper can be too busy to answer in time: the request times out,
+# HelixScreen never asks again, and the screen takes touches but shows nothing
+# changing. It says so in its log, so the supervisor looks there for the first
+# few minutes of each run and starts HelixScreen again when it happened.
+#
+# Only this run's part of the log counts: $1 is the log's size when the run
+# started. Two short programs per look, and only during those minutes.
+subscription_failed() {
+    tail -c +$(($1 + 1)) $LOG 2> /dev/null | grep -q "printer.objects.subscribe failed"
+}
+log_size() {
+    if [ -f $LOG ]; then wc -c < $LOG; else echo 0; fi
+}
+
 kill_helix() {
     PIDS=$(helix_pids)
     [ "$PIDS" = "" ] && return
@@ -198,6 +213,7 @@ kill_helix() {
 #     started at boot, and after one is stopped, removed or has fallen back
 #   - HelixScreen won't stay up: K3SysUi, for good
 #   - the ANYCUBIC_SCREEN macro was run: K3SysUi, until the app is started again
+#   - HelixScreen didn't get live status from Klipper: started again, twice at most
 # A change has to be seen twice in a row before it is acted on, so a Klipper
 # app restarting doesn't flip the screen back and forth.
 supervise() {
@@ -211,6 +227,12 @@ supervise() {
     STARTED=0
     SEEN=0
     OWNER=
+
+    # Looking for a failed status request: every 5th round (15 s) for the
+    # first 100 rounds (5 minutes) of a run
+    LOOKS_LEFT=0
+    LOG_START=0
+    RESTARTS=0
 
     while true; do
         if goklipper_running; then WANT=sysui; else WANT=helix; fi
@@ -265,7 +287,23 @@ supervise() {
             fi
 
             STARTED=$NOW
+            LOG_START=$(log_size)
+            LOOKS_LEFT=100
             run_helix
+        elif [ "$OWNER" = "helix" ] && [ $LOOKS_LEFT -gt 0 ]; then
+            LOOKS_LEFT=$((LOOKS_LEFT - 1))
+            if [ $((LOOKS_LEFT % 5)) -eq 0 ] && subscription_failed $LOG_START; then
+                if [ $RESTARTS -lt 2 ]; then
+                    RESTARTS=$((RESTARTS + 1))
+                    log "helixscreen: Klipper didn't answer HelixScreen's request for live status, starting HelixScreen again"
+                    kill_helix
+                    # Not one of the quick exits that give the screen back to K3SysUi
+                    STARTED=0
+                else
+                    log "helixscreen: Klipper still doesn't answer HelixScreen's request for live status. Leaving HelixScreen as it is: restart the app once Klipper is ready (see $LOG)"
+                    LOOKS_LEFT=0
+                fi
+            fi
         fi
 
         sleep 3
