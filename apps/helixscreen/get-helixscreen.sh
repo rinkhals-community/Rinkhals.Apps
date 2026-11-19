@@ -20,7 +20,7 @@ set -e
 HELIXSCREEN_VERSION=1.0.10
 # Bump when this app changes without a new HelixScreen version, so that the
 # app store offers the update. Back to 1 with every new HelixScreen version.
-PACKAGE_REVISION=2
+PACKAGE_REVISION=3
 HELIXSCREEN_PACKAGE_SHA256=cc71cf3e886b1bacfa360f568745099349e32f659f4cd034bc2b4d9aa7310b18
 
 APP=$(cd "$(dirname "$0")" && pwd)

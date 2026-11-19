@@ -41,9 +41,10 @@ interface (K3SysUi) is stopped. That has consequences:
 - **Wi-Fi setup, Anycubic firmware updates and the Rinkhals touch menu are not
   reachable** while HelixScreen is up. Use the Rinkhals web portal
   (`http://<printer-ip>:8090`) for apps and updates.
-- **To get Anycubic's screen back**, disable or stop this app from the web
-  portal. K3SysUi starts again within a few seconds. When it starts it
-  re-checks the network, so expect a short network blip.
+- **To get Anycubic's screen back**, run the **ANYCUBIC_SCREEN** macro from
+  HelixScreen (see below), or stop this app from the web portal. K3SysUi
+  starts again within a few seconds. When it starts it re-checks the network,
+  so expect a short network blip.
 - If HelixScreen can't stay up (three quick exits in a row), the app gives the
   screen back to K3SysUi by itself and says so in the Rinkhals log.
 - At boot, Anycubic's screen shows for a few seconds first. HelixScreen takes
@@ -51,6 +52,31 @@ interface (K3SysUi) is stopped. That has consequences:
 
 Memory is not a concern: HelixScreen uses about 20 MB where K3SysUi uses 40 MB
 or more.
+
+## Switching back to Anycubic's screen
+
+With Klipper (vanilla), the app gives Klipper a macro called
+**ANYCUBIC_SCREEN**. Running it stops HelixScreen and brings Anycubic's screen
+back, within about ten seconds.
+
+- It is in HelixScreen's macro list. To get a button for it on the home
+  screen, long-press the home screen, add a macro button and pick
+  ANYCUBIC_SCREEN.
+- The macro appears after Klipper has restarted once with the app installed.
+  The first time the app starts, it adds the macro to your Klipper config and
+  says so in the Rinkhals log; restart Klipper (or power cycle) to load it.
+- **To return to HelixScreen**, start the app again: on the printer under
+  Settings > Rinkhals > Apps > HelixScreen, or from the web portal. It also
+  comes back after a reboot, as long as the app is enabled.
+
+It costs nothing while you aren't using it. A Klipper macro can't run a
+program, so the macro saves a count with Klipper's `SAVE_VARIABLE`, and the app
+only looks at whether that file on the printer has changed. Nothing asks
+Moonraker or Klipper anything.
+
+With a tunneled Klipper there is no such button: Klipper's files are on your
+other machine, where the app can't see them. Stop the app from the web portal
+instead.
 
 ## First start
 
@@ -94,9 +120,10 @@ HelixScreen's own updater is switched off. New versions come with this app.
 `get-helixscreen.sh` rebuilds all of it, and is the pointer to the exact
 sources. HelixScreen is licensed under the GPL-3.0; so is this packaging.
 
-Two things in this app are ours: `app.sh`, and `rinkhals-kobra.json`, which
-teaches HelixScreen's printer detection the host names Rinkhals gives the
-printers (`kobra-ks1-xxxx` and so on).
+Three things in this app are ours: `app.sh`, `helixscreen.cfg` with the
+ANYCUBIC_SCREEN macro, and `rinkhals-kobra.json`, which teaches HelixScreen's
+printer detection the host names Rinkhals gives the printers
+(`kobra-ks1-xxxx` and so on).
 
 ## Not checked yet
 

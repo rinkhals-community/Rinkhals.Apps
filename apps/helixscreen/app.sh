@@ -113,6 +113,37 @@ start_sysui() {
     )
 }
 
+# Klipper's files, when Klipper runs on this printer (Klipper (vanilla))
+KLIPPER_CONFIG=/userdata/app/gk/printer_data/config/printer.klipper.cfg
+KLIPPER_VARIABLES=/userdata/app/gk/printer_data/config/saved_variables.cfg
+VARIABLES_SEEN=$STATE_DIR/saved_variables.seen
+
+# Gives Klipper the ANYCUBIC_SCREEN macro, the button to go back to Anycubic's
+# screen (see helixscreen.cfg). With a tunneled Klipper the config is on the
+# other machine, out of reach, and there is no such button.
+install_macro() {
+    [ -f $KLIPPER_CONFIG ] || return
+
+    cp -f $APP_ROOT/helixscreen.cfg $(dirname $KLIPPER_CONFIG)/helixscreen.cfg
+
+    if ! grep -q '^\[include helixscreen.cfg\]' $KLIPPER_CONFIG; then
+        sed -i 's/^\[include printer_generic_macros.cfg\][ \t]*$/&\n[include helixscreen.cfg]/' $KLIPPER_CONFIG
+        if grep -q '^\[include helixscreen.cfg\]' $KLIPPER_CONFIG; then
+            log "helixscreen: added the ANYCUBIC_SCREEN macro to printer.klipper.cfg. It appears in HelixScreen after Klipper restarts"
+        fi
+    fi
+}
+
+# How often ANYCUBIC_SCREEN was run, from the file Klipper saves variables to.
+# Read with the shell alone: this is in the supervisor's loop.
+screen_requests() {
+    COUNT=0
+    while IFS=' =' read -r KEY VALUE; do
+        [ "$KEY" = "helixscreen_anycubic_screen" ] && COUNT=$VALUE
+    done 2> /dev/null < $KLIPPER_VARIABLES
+    echo $COUNT
+}
+
 prepare_config() {
     mkdir -p $CONFIG_DIR/printer_database.d $STATE_DIR
 
@@ -166,10 +197,15 @@ kill_helix() {
 #   - GoKlipper in charge: K3SysUi. That is the case before a Klipper app has
 #     started at boot, and after one is stopped, removed or has fallen back
 #   - HelixScreen won't stay up: K3SysUi, for good
+#   - the ANYCUBIC_SCREEN macro was run: K3SysUi, until the app is started again
 # A change has to be seen twice in a row before it is acted on, so a Klipper
 # app restarting doesn't flip the screen back and forth.
 supervise() {
     echo $$ > $SUPERVISOR_PID
+
+    # Only a count that goes up while we run is a request
+    REQUESTS=$(screen_requests)
+    : > $VARIABLES_SEEN
 
     FAILURES=0
     STARTED=0
@@ -197,6 +233,20 @@ supervise() {
             OWNER=$WANT
             SEEN=0
             FAILURES=0
+        fi
+
+        # Klipper rewrote its variables file: was that ANYCUBIC_SCREEN? Comparing
+        # two files' times costs nothing, and the file is only read when it changed
+        if [ $KLIPPER_VARIABLES -nt $VARIABLES_SEEN ]; then
+            : > $VARIABLES_SEEN
+            NOW_REQUESTS=$(screen_requests)
+            if [ "$OWNER" = "helix" ] && [ "$NOW_REQUESTS" -gt "$REQUESTS" ] 2> /dev/null; then
+                log "helixscreen: ANYCUBIC_SCREEN was run, giving the screen back to K3SysUi until the app is started again"
+                kill_helix
+                start_sysui
+                return
+            fi
+            REQUESTS=$NOW_REQUESTS
         fi
 
         if [ "$OWNER" = "helix" ] && [ "$(helix_pids)" = "" ]; then
@@ -230,6 +280,7 @@ start() {
 
     stop_helix
     prepare_config
+    install_macro
     chmod +x $PAYLOAD/bin/helix-screen
 
     # The supervisor takes the screen once Klipper is in charge. Detached, with
