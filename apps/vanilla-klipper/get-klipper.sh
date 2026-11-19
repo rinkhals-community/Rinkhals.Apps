@@ -34,6 +34,23 @@ cp -p "$KLIPPER/scripts/klippy-requirements.txt" "$APP/"
 cd "$APP"
 patch -p0 < klippy.patch
 
+# Tell Klipper which version it is. It works that out from a git checkout, and
+# what we ship is a copy of one commit, so it reported "?" to Moonraker and
+# every client behind it. Without a checkout it reads klippy/.version. The name
+# is what "git describe" gives for the pinned commit in Kobra-S1's fork
+# (V1.3.1-54-g880188b), from a clone that fetches the history only, no files.
+# If that fails, the short commit id still beats "?".
+describe=
+if git clone -q --bare --filter=tree:0 https://github.com/Kobra-S1/klipper-kobra-s1 /work/klipper.git; then
+    describe=$(git -C /work/klipper.git describe --tags --long "$KLIPPER_VERSION" || true)
+fi
+if [ -z "$describe" ]; then
+    echo "WARNING: could not work out Klipper's version name, using the commit id" >&2
+    describe=$(echo "$KLIPPER_VERSION" | cut -c1-7)
+fi
+echo "Klipper version: $describe"
+echo "$describe" > "$APP/klippy/.version"
+
 # SHAPER_CALIBRATE without numpy: klippy.patch makes shaper_calibrate.py fall
 # back to this module, which runs the compiled shaper-calibrate/shaper-calibrate
 # (built by shaper-calibrate/build.sh)
