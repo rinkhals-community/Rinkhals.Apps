@@ -17,11 +17,11 @@
 
 set -e
 
-HELIXSCREEN_VERSION=1.0.10
+HELIXSCREEN_VERSION=1.0.11
 # Bump when this app changes without a new HelixScreen version, so that the
 # app store offers the update. Back to 1 with every new HelixScreen version.
-PACKAGE_REVISION=4
-HELIXSCREEN_PACKAGE_SHA256=cc71cf3e886b1bacfa360f568745099349e32f659f4cd034bc2b4d9aa7310b18
+PACKAGE_REVISION=1
+HELIXSCREEN_PACKAGE_SHA256=6f2102441e1a2b3c69be5e9a42aec28c3f5fb896cc55305e10a6b7799b11a104
 
 APP=$(cd "$(dirname "$0")" && pwd)
 WORK=${WORK:-$APP/../../build/tmp/helixscreen-build}
@@ -70,5 +70,7 @@ docker volume rm -f helixscreen-build > /dev/null
 
 APP_VERSION=$HELIXSCREEN_VERSION
 [ "$PACKAGE_REVISION" != "1" ] && APP_VERSION=$HELIXSCREEN_VERSION-$PACKAGE_REVISION
-sed -i "s/\"version\": *\"[^\"]*\"/\"version\": \"$APP_VERSION\"/" "$APP/app.json"
+# -i.bak works with both GNU and BSD (macOS) sed
+sed -i.bak "s/\"version\": *\"[^\"]*\"/\"version\": \"$APP_VERSION\"/" "$APP/app.json"
+rm -f "$APP/app.json.bak"
 echo "Done. Check the result on a printer before committing it."

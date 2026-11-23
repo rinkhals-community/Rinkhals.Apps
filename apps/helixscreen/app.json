@@ -3,7 +3,7 @@
 
     "name": "HelixScreen",
     "description": "A touch screen interface for Klipper, in place of Anycubic's own screen: print files, temperatures, the ACE Pro, the chamber light and more. Needs Klipper (vanilla) or a tunneled Klipper, and takes over the printer's screen while it is enabled. With Klipper (vanilla) there is nothing to set up. With a tunneled Klipper, open this app's settings, set \"Moonraker host\" to the address of the machine running Klipper, then restart the app. Kobra S1 only for now. By prestonbrown.",
-    "version": "1.0.10-4",
+    "version": "1.0.11",
 
     "depends": [ "vanilla-klipper|tunneled-klipper|lan-tunneled-klipper" ],
 

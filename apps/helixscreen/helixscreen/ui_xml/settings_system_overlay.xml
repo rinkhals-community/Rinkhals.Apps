@@ -33,4 +33,8 @@
                             callback="on_restart_helix_settings_clicked"/><setting_action_row name="row_factory_reset"
                             label="Factory Reset" label_tag="Factory Reset" icon="refresh"
                             description="Reset all settings and restart wizard"
-                            description_tag="Reset all settings and restart wizard" callback="on_factory_reset_clicked"/></setting_group></lv_obj></view></component>
+                            description_tag="Reset all settings and restart wizard" callback="on_factory_reset_clicked"/><setting_action_row name="row_restore_stock_screen"
+                            label="Restore Stock Screen" label_tag="Restore Stock Screen" icon="undo"
+                            description="Switch back to the Snapmaker screen"
+                            description_tag="Switch back to the Snapmaker screen"
+                            callback="on_restore_stock_screen_clicked"><bind_flag_if_eq subject="u1_restore_stock_offered" flag="hidden" ref_value="0"/></setting_action_row></setting_group></lv_obj></view></component>
