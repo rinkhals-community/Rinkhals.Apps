@@ -34,6 +34,19 @@ start() {
         return 0
     fi
 
+    # The app is written for Anycubic's GoKlipper: its heat sequences use
+    # GoKlipper's macros, it reads the mesh layout from objects the Rinkhals
+    # Moonraker patch builds from printer_mutable.cfg, and it writes the result
+    # back into printer_mutable.cfg. With Klipper (vanilla) or a tunneled
+    # Klipper in charge, gklib isn't running and none of that holds: the mesh
+    # would be probed by another Klipper with its own probe settings and saved
+    # where only GoKlipper reads it, to be used the next time GoKlipper runs.
+    if ! ps | grep -q '[.]/gklib '; then
+        log "${APP_NAME}: refusing to run, Anycubic's GoKlipper (gklib) isn't running"
+        set_app_property $APP_NAME last_result "Not run: Anycubic's firmware (GoKlipper) isn't running the printer. This app only works with it, so disable Klipper (vanilla) or a tunneled Klipper, reboot, then use Start"
+        return 0
+    fi
+
     PIDS=$(running_pids)
     if [ "$PIDS" != "" ]; then
         log "${APP_NAME} already running (pids: $PIDS), nothing to do"

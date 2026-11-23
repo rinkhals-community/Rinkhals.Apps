@@ -30,6 +30,8 @@ Other models heat, wipe and park differently (the S1 family has no `MOVE_HEAT_PO
 
 ## Before you run it
 
+The printer has to be running Anycubic's own firmware. With Klipper (vanilla) or a tunneled Klipper enabled, the app refuses to start: it uses GoKlipper's macros and writes the mesh where only GoKlipper reads it.
+
 Run a normal `BED_MESH_CALIBRATE` at least once on the current geometry first. That fills in `printer_mutable.cfg`, and this app reads `mesh_min`, `mesh_max`, `probe_count`, `mesh_x_pps`, `mesh_y_pps`, `algo`, and `tension` from it. If the file is empty, for example after you change the `[bed_mesh]` section, the app stops with a clear message.
 
 ## Running it
