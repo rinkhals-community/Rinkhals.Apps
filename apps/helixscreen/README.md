@@ -109,7 +109,7 @@ HelixScreen's own updater is switched off. New versions come with this app.
 
 ## Where it comes from
 
-`helixscreen/` is HelixScreen 1.0.10, unmodified:
+`helixscreen/` is HelixScreen 1.0.11, unmodified:
 
 - The data files are from HelixScreen's release package for the FlashForge
   AD5M, a fully static ARMv7 build for a framebuffer screen.
