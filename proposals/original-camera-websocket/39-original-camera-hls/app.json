@@ -1,0 +1,29 @@
+{
+  "$version": "1",
+  "name": "Anycubic Original Camera - WebSocket Bridge",
+  "description": "Original camera without MJPEG; low latency H264 by default, HLS fallback. Diagnostics at /webcam/status.html.",
+  "version": "1.0.0-rc2",
+  "depends": [
+    "cloud2lan-bridge"
+  ],
+  "properties": {
+    "stream_mode": {
+      "display": "Streaming mode (restart camera app to apply while idle)",
+      "type": "enum",
+      "options": [
+        "Low Latency",
+        "HLS"
+      ],
+      "default": "Low Latency"
+    },
+    "install_sounds": {
+      "display": "USB install/update/rollback result sounds (app-specific)",
+      "type": "enum",
+      "options": [
+        "On",
+        "Off"
+      ],
+      "default": "On"
+    }
+  }
+}
